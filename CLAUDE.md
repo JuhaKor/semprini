@@ -4,28 +4,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-The build of a semantics repository and its compiler, at the point where implementation is about to
-start. There is no code yet, no git repo, no build — the directory currently holds one authoritative
-document and one prior-project prototype:
+**This repo is the product, not a deployment.** It builds the RDF Knowledge Plane: an openly licensed
+Python package (`rdf-knowledge-plane`, import `rkp`) plus a metamodel ontology, core SHACL shapes, CI
+templates and an instance scaffold. Organizations run `rkp init` to create their *own* separate
+repository holding their config, sources, identity registry and generated RDF. One plane, many
+instances — nothing here is ever specific to one customer.
 
-- `rdf-repo-and-compiler-spec.md` — **authoritative.** It specifies both deliverables: a semantics Git
-  repository (versioned RDF/Turtle system of record) and a Python compiler that generates its contents
-  from Ellie and Excel. It is explicitly self-contained ("no other background material is required to
-  implement it"). When anything conflicts with it, the spec wins, and a behaviour change means editing
-  the spec in the same change.
+Implementation has not started. The directory currently holds one authoritative document and one
+prior-project prototype:
+
+- `rdf-repo-and-compiler-spec.md` — **authoritative** (v0.2). Specifies the metamodel, the compiler,
+  the two repository layouts, versioning, licensing and governance. Self-contained: "no other
+  background material is required to implement it." When anything conflicts with it, the spec wins,
+  and a behaviour change means editing the spec in the same change. Spec §4.1 places this document at
+  `docs/` — it has not been moved yet.
 - `background-material/kg-converter-old/` — a working converter from an **earlier, similar but
-  different** project. Not maintained, and **not authoritative for any specification decision** —
-  mine it for learnings, never cite it as a requirement.
+  different** project. Not maintained, **not authoritative for any specification decision** — mine it
+  for learnings, never cite it as a requirement.
 
-Implementation is expected to grow here, following the layout of spec §4 (`compiler/`, `generated/`,
-`overlays/`, `sources/`, `mappings/`, `shapes/`, `config/`, `.github/workflows/`) — Python 3.12,
-Poetry, `rdflib` / `openpyxl` / `requests` / `pyshacl`, CLI per §5.1.
+Target layout is spec §4.1 (`src/rkp/`, `templates/instance/`, `workflows/`, `tests/fixtures/acme/`),
+Python 3.12+, `rdflib` / `openpyxl` / `requests` / `pyshacl`, CLI per §5.1. Do **not** create
+`generated/`, `overlays/`, `sources/`, `mappings/` or `config/` here — those belong to an instance
+(§4.2), and this repo contains no instance content by policy (§9.2 rule 5).
 
 ## Blocking open decision
 
-Spec §9 #1: the base IRI domain is still the placeholder `semantics.example.com`. Because IRIs are
-permanent once minted, **no real compilation can happen until it is chosen**. Keep the placeholder in
-examples; don't silently pick a domain.
+Spec §11 #1: the `sem:` metamodel namespace `https://w3id.org/rdf-knowledge-plane/ontology#` is not
+registered yet. It must resolve before any instance mints IRIs against it. Don't substitute a
+different namespace to unblock local work — the whole multi-deployment design rests on every instance
+sharing this one.
+
+Base IRIs are no longer a project-level decision: each instance chooses its own at bootstrap and the
+namespace lock freezes it (§3.4). Keep `semantics.acme.com` / `https://semantics.example.com/` as
+example values only.
 
 ## The old project solved a different problem — mine it, don't copy it
 
@@ -36,16 +47,17 @@ fundamentally different RDF. Treating prototype behaviour as a requirement is th
 |---|---|---|
 | Modelling | OWL: entity → `owl:Class`, attribute → `owl:DatatypeProperty`, relationship → `owl:ObjectProperty` (+ `owl:inverseOf`) | SKOS-based `sem:` metamodel: `sem:Entity`/`sem:Attribute`/reified `sem:Relationship`, all `skos:Concept` subclasses |
 | Taxonomy↔model join | OWL 2 punning (class doubles as `skos:ConceptScheme`) | `sem:enumerates` from scheme to entity; no punning |
-| Namespaces | one namespace per source model, everything in it | partitioned by *kind* (`c:`, `r:`, `sch:`, `v:`) — never by domain |
-| Input | Ellie JSON export file | Ellie REST API with a model allowlist |
-| Output style | commented, sectioned, human-flavoured Turtle | comment-free canonical Turtle, byte-deterministic |
+| Namespaces | one namespace per source model, everything in it | fixed `sem:` metamodel + per-instance content namespaces partitioned by *kind* (`c:`, `r:`, `sch:`, `v:`) |
+| Input | Ellie JSON export file | plugin adapters; Ellie via REST API with a model allowlist |
+| Output style | commented, sectioned, human-flavoured Turtle | comment-free canonical Turtle, byte-deterministic, no blank nodes |
 | Identity | Ellie UUID / readable local names derived on the fly | persistent `mappings/id-map.csv` is authoritative over the minting formula |
 | Lifecycle | none (one run = one file) | deprecation, `dcterms:isReplacedBy`, merge register |
+| Deployment | one script run, one output file | installable package, pinned per instance, migrations across versions |
 
 What is still worth mining from it: the Ellie export field semantics (README §1.1 tables, including
 the `superType`/`subType` and label-`direction` cases), the Excel ragged-hierarchy reading logic
 (`taxonomy_to_rdf.py`), and `rdf_serialize.py` as evidence that rdflib's own Turtle output must be
-wrapped to get stable ordering — the spec §5.4 canonical serializer is a stricter version of the same
+wrapped to get stable ordering — the spec §5.5 canonical serializer is a stricter version of the same
 idea.
 
 ## Spec invariants — check code and spec edits against these
@@ -53,20 +65,29 @@ idea.
 These are load-bearing. A design choice that violates one is wrong even if it passes tests, and a
 deliberate change to one usually implies changes elsewhere in the spec.
 
-- **Deterministic serialization is the point.** PR diffs are the governance interface (§1.1), so
-  §5.4's fixed prefix block, sorted subjects/predicates, and the CI byte-identity check (§6.5) all
-  exist to serve it. Any output-format proposal must survive "would this diff cleanly?".
+- **Deterministic serialization is the point.** PR diffs are the governance interface (§1.2), so
+  §5.5's fixed prefix block, sorted subjects/predicates, no-blank-nodes rule, no timestamps, and the
+  CI byte-identity check (§6.1.7) all exist to serve it. Any output-format proposal must survive
+  "would this diff cleanly?" — and a serialization change is a **major** version bump requiring a
+  migration (§7).
 - **IRIs are opaque and permanent.** No names, codes, or domains in IRIs; domain membership is data
-  (`skos:inScheme`). Never deleted, never reused.
-- **The ID map, not the formula, is authoritative** (§5.3) — that is what lets codes and minting
-  rules change without breaking identity.
+  (`skos:inScheme`). Never deleted, never reused. The namespace lock (§3.4) exists because an edited
+  base IRI would silently mint a parallel universe of IRIs.
+- **The ID map, not the formula, is authoritative** (§5.4) — that is what lets codes, minting rules,
+  and compiler versions change without breaking identity.
 - **`generated/` is machine-owned**; `overlays/` is the only hand-written RDF. Enforced by the
   `.manifest.json` hash check, not convention.
 - **Deprecation is evaluated against the union of all configured sources**, never one source or
-  model — hence `--source X` runs skip deprecation outside their scope (§5.3).
-- **Adapters stay source-agnostic** (`BaseAdapter.fetch() -> InternalModel`, generic
-  `source_refs: dict[str, str]`) because Collibra and Knowledge Catalog adapters are planned (§8).
-  v1 choices must not close those doors.
+  model — hence `--source X` runs skip deprecation outside their scope (§5.4).
+- **Nothing customer-specific enters this repo** (§9.2 rule 5). Test fixtures are synthetic
+  (`tests/fixtures/acme/`); no instance's content is ever used as one.
+- **Extension happens without forking.** New sources are entry-point plugins (§5.2); org-specific
+  terms go in the instance's own `x:` namespace and never redefine `sem:` (§3.6); local shapes are
+  additive only (§6.1.5). If a change would force an adopter to fork, it's the wrong change.
+- **No core term names a vendor.** `sem:sourceRef` carries `"<source-name>:<source-key>"` rather than
+  a per-tool property — v0.1's `sem:ellieId` was removed for exactly this reason (§3.3).
+- **All logic lives in the CLI**, never in workflow YAML (§6.3), so adopters on GitLab or Azure
+  DevOps port a config file rather than reimplementing checks.
 
 ## Running the old prototype
 
