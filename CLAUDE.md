@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**This repo is the product, not a deployment.** It builds the RDF Knowledge Plane: an openly licensed
-Python package (`rdf-knowledge-plane`, import `rkp`) plus a metamodel ontology, core SHACL shapes, CI
-templates and an instance scaffold. Organizations run `rkp init` to create their *own* separate
+**This repo is the product, not a deployment.** It builds Semprini — the knowledge plane itself: an
+openly licensed Python package (`semprini`) plus a metamodel ontology, core SHACL shapes, CI
+templates and an instance scaffold. Organizations run `semprini init` to create their *own* separate
 repository holding their config, sources, identity registry and generated RDF. One plane, many
 instances — nothing here is ever specific to one customer.
 
@@ -25,14 +25,14 @@ prior-project prototype:
   different** project. Not maintained, **not authoritative for any specification decision** — mine it
   for learnings, never cite it as a requirement.
 
-Target layout is spec §4.1 (`src/rkp/`, `templates/instance/`, `workflows/`, `tests/fixtures/acme/`),
+Target layout is spec §4.1 (`src/semprini/`, `templates/instance/`, `workflows/`, `tests/fixtures/acme/`),
 Python 3.12+, `rdflib` / `openpyxl` / `requests` / `pyshacl`, CLI per §5.1. Do **not** create
 `generated/`, `overlays/`, `sources/`, `mappings/` or `config/` here — those belong to an instance
 (§4.2), and this repo contains no instance content by policy (§9.2 rule 5).
 
 ## Blocking open decision
 
-Spec §11 #1: the `sem:` metamodel namespace `https://w3id.org/rdf-knowledge-plane/ontology#` is not
+Spec §11 #1: the `sem:` metamodel namespace `https://w3id.org/semprini/ontology#` is not
 registered yet. It must resolve before any instance mints IRIs against it. Don't substitute a
 different namespace to unblock local work — the whole multi-deployment design rests on every instance
 sharing this one.

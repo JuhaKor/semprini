@@ -1,6 +1,6 @@
 # TASKS.md — implementation plan
 
-Build order for the RDF Knowledge Plane. One task per working session; each is
+Build order for Semprini. One task per working session; each is
 independently implementable and verifiable, and later tasks assume earlier ones are
 done and green.
 
@@ -22,31 +22,31 @@ done and green.
 
 - [ ] **A1 · Repository foundations and package skeleton**
   **Spec:** §4.1, §5.1 (CLI surface and exit codes), §8
-  **Deliver:** `pyproject.toml` for the `rdf-knowledge-plane` distribution (import name
-  `rkp`, console script `rkp`), the `src/rkp/` module skeleton of §4.1, `LICENSE` and
+  **Deliver:** `pyproject.toml` for the `semprini` distribution (import name
+  `semprini`, console script `semprini`), the `src/semprini/` module skeleton of §4.1, `LICENSE` and
   `LICENSE-DOCS`, `CHANGELOG.md`, dev tooling (pytest, ruff, mypy), and a CI workflow
-  running lint + tests for this repository. Implement `rkp version` and the exit-code
+  running lint + tests for this repository. Implement `semprini version` and the exit-code
   contract; every other subcommand is a stub that exits non-zero.
-  **Verify:** `pip install -e .` in a clean venv; `rkp version` prints compiler and
-  ontology versions; `rkp` with no arguments exits 2; lint, type check and the (empty)
+  **Verify:** `pip install -e .` in a clean venv; `semprini version` prints compiler and
+  ontology versions; `semprini` with no arguments exits 2; lint, type check and the (empty)
   test suite pass in CI.
 
 - [ ] **A2 · Register the `sem:` namespace on w3id.org** *(external lead time — start
   now, runs in parallel, blocks only A3's final URL and any real IRI minting)*
   **Spec:** §3.1, §11 #1
   **Deliver:** a PR to the w3id.org repository creating
-  `/rdf-knowledge-plane/` with content-negotiated redirects to wherever the ontology
+  `/semprini/` with content-negotiated redirects to wherever the ontology
   will be served, plus the hosting itself.
-  **Verify:** `curl -sIL -H 'Accept: text/turtle' https://w3id.org/rdf-knowledge-plane/ontology`
+  **Verify:** `curl -sIL -H 'Accept: text/turtle' https://w3id.org/semprini/ontology`
   resolves to the ontology document; an HTML `Accept` header resolves to documentation.
 
 - [ ] **A3 · Metamodel ontology (`sem.ttl`)**
   **Spec:** §3.1, §3.2, §3.3, §7 (ontology versioning)
-  **Deliver:** `src/rkp/ontology/sem.ttl` declaring exactly the classes of §3.2 and
+  **Deliver:** `src/semprini/ontology/sem.ttl` declaring exactly the classes of §3.2 and
   properties of §3.3, with `owl:versionInfo` and term-level `rdfs:comment`s.
   **Verify:** the file parses; a test asserts the emitted term inventory equals the
   §3.2/§3.3 tables exactly — no missing terms and, importantly, **no extra ones**, so
-  the vocabulary cannot drift from the spec silently. `rkp version` reports the
+  the vocabulary cannot drift from the spec silently. `semprini version` reports the
   ontology version read from this file.
   **Depends:** A1
 
@@ -56,7 +56,7 @@ done and green.
 
 - [ ] **B1 · Canonical Turtle serializer**
   **Spec:** §5.5 (all eight rules)
-  **Deliver:** `src/rkp/serialize.py`. This is the linchpin of the whole design — every
+  **Deliver:** `src/semprini/serialize.py`. This is the linchpin of the whole design — every
   later guarantee (reviewable diffs, safe upgrades, the CI determinism check) reduces to
   this module being correct.
   **Verify:** one test per rule 1–8, plus: building the same graph from randomly shuffled
@@ -67,7 +67,7 @@ done and green.
 
 - [ ] **B2 · Internal model and run context**
   **Spec:** §5.1 (pipeline stages), §5.2 (`InternalModel`, `source_refs`, `RunContext`)
-  **Deliver:** `src/rkp/model.py` — the dataclasses adapters return and the core
+  **Deliver:** `src/semprini/model.py` — the dataclasses adapters return and the core
   consumes. Frozen/immutable where practical, since adapters must not mutate shared
   state.
   **Verify:** type checks clean under mypy; construction and merge-by-`source_refs`
@@ -75,7 +75,7 @@ done and green.
   **Depends:** A1
 
 - [ ] **B3 · Configuration loading**
-  **Spec:** §5.1 (`config/plane.yaml`), exit code 2
+  **Spec:** §5.1 (`config/semprini.yaml`), exit code 2
   **Deliver:** parsing and validation of instance configuration, including resolving
   `token_env` without ever reading a credential into the config object.
   **Verify:** valid fixture config loads; each malformed case (missing base IRI,
@@ -85,7 +85,7 @@ done and green.
 
 - [ ] **B4 · Identity: ID map, minting, namespace lock**
   **Spec:** §3.4, §5.4
-  **Deliver:** `src/rkp/identity.py` — ID-map read/append, minting per §3.4.2, UUIDv5
+  **Deliver:** `src/semprini/identity.py` — ID-map read/append, minting per §3.4.2, UUIDv5
   namespace constant, collision detection, namespace lock write/verify.
   **Verify:** lookup hit reuses an IRI; miss mints and appends exactly one row; two
   source keys colliding on one IRI raises; a removed row is detected against a base
@@ -122,9 +122,9 @@ done and green.
 ## Phase D — Adapters
 
 - [ ] **D1 · Adapter interface and plugin discovery**
-  **Spec:** §5.2, §5.1 (`rkp adapters`)
+  **Spec:** §5.2, §5.1 (`semprini adapters`)
   **Deliver:** `BaseAdapter`, entry-point discovery for group
-  `rdf_knowledge_plane.adapters`, and the `rkp adapters` command.
+  `semprini.adapters`, and the `semprini adapters` command.
   **Deliver also:** a shared adapter contract test suite third-party authors can run
   against their own adapter — the plugin promise of §1.2 is empty without one.
   **Verify:** a dummy adapter installed from a separate test distribution is discovered
@@ -134,7 +134,7 @@ done and green.
 
 - [ ] **D2 · Excel taxonomy adapter, and the fixture instance**
   **Spec:** §5.3 (Excel adapter), §6.1 (fixture instance), §9.2 rule 5
-  **Deliver:** `src/rkp/adapters/excel_taxonomy.py`, plus `tests/fixtures/acme/` — a
+  **Deliver:** `src/semprini/adapters/excel_taxonomy.py`, plus `tests/fixtures/acme/` — a
   complete synthetic instance (config, workbook, ID map, golden TTL). Chosen before the
   Ellie adapter because it needs no network mocking, so it is the cheapest path to a
   working end-to-end pipeline. The fixture is **synthetic**; no real instance content
@@ -146,7 +146,7 @@ done and green.
 
 - [ ] **D3 · Ellie adapter**
   **Spec:** §5.3 (Ellie adapter)
-  **Deliver:** `src/rkp/adapters/ellie.py` against the Ellie REST API, with recorded
+  **Deliver:** `src/semprini/adapters/ellie.py` against the Ellie REST API, with recorded
   responses for tests. Reuse the field semantics documented in
   `background-material/kg-converter-old/README.md` §1.1 — that project read the same
   data and its field tables are trustworthy, though nothing about its RDF mapping is.
@@ -173,7 +173,7 @@ done and green.
   and is rejected when either IRI is unknown to the ID map.
   **Depends:** C2, D2
 
-- [ ] **E2 · `rkp run` orchestration**
+- [ ] **E2 · `semprini run` orchestration**
   **Spec:** §5.1 (pipeline and flags)
   **Deliver:** the full fetch → normalize → resolve → build → lifecycle → serialize →
   write sequence, with `--source` and `--dry-run`.
@@ -188,13 +188,13 @@ done and green.
 
 - [ ] **F1 · Core SHACL shapes**
   **Spec:** §6.1.5
-  **Deliver:** `src/rkp/shapes/` covering every constraint listed, with the
+  **Deliver:** `src/semprini/shapes/` covering every constraint listed, with the
   missing-definition rule as a warning.
   **Verify:** each constraint has a conforming and a violating fixture; the fixture
   instance conforms; warnings do not fail the run.
   **Depends:** D2
 
-- [ ] **F2 · `rkp check` pipeline**
+- [ ] **F2 · `semprini check` pipeline**
   **Spec:** §6.1 items 1–7
   **Deliver:** the full check sequence, including the version-drift check (§7) and the
   determinism re-serialization check.
@@ -219,10 +219,10 @@ done and green.
 
 ## Phase G — Distribution and operations
 
-- [ ] **G1 · Instance scaffold and `rkp init`**
+- [ ] **G1 · Instance scaffold and `semprini init`**
   **Spec:** §4.2, §5.7
   **Deliver:** `templates/instance/` and the `init` command, all six steps.
-  **Verify:** init into a temp directory then `rkp check` passes on the fresh, empty
+  **Verify:** init into a temp directory then `semprini check` passes on the fresh, empty
   instance; re-running init where `namespace.lock` exists refuses; a socket guard
   asserts init makes **no** network calls; the generated tree matches §4.2 exactly.
   **Depends:** F2
@@ -232,18 +232,18 @@ done and green.
   **Deliver:** `workflows/` templates for `compile.yml` and `validate.yml`, materialized
   by `init`.
   **Verify:** a test asserts each workflow contains no logic beyond installing the
-  pinned version, invoking `rkp`, and (for compile) opening a PR — the mechanical guard
+  pinned version, invoking `semprini`, and (for compile) opening a PR — the mechanical guard
   on §6.3. Run both against the fixture instance in a container and confirm a compile
   PR body carries the run report.
   **Depends:** G1
 
 - [ ] **G3 · Versioning, drift and migrations**
   **Spec:** §7
-  **Deliver:** `src/rkp/migrate/`, the migration registry, and `rkp migrate --to`.
+  **Deliver:** `src/semprini/migrate/`, the migration registry, and `semprini migrate --to`.
   **Verify:** a synthetic output-affecting change ships a migration that takes the
   fixture instance from vN to vN+1 deterministically; migrations never mint new IRIs for
   existing objects and never drop ID-map rows (asserted, not assumed); post-migration
-  `rkp check` passes including drift.
+  `semprini check` passes including drift.
   **Depends:** F2
 
 - [ ] **G4 · Project documentation**
@@ -260,7 +260,7 @@ done and green.
   **Deliver:** tagged release process, CHANGELOG discipline, publication of the package
   and of the ontology at its w3id target.
   **Verify:** install the tagged version in a clean venv from the chosen channel;
-  `rkp version` matches the tag; `rkp init` from that install produces an instance whose
+  `semprini version` matches the tag; `semprini init` from that install produces an instance whose
   workflows pin that same version.
   **Depends:** A2, G3, G4
 

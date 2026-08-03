@@ -1,4 +1,4 @@
-# RDF Knowledge Plane — implementation specification
+# Semprini — implementation specification
 
 **Status:** Draft v0.2 · **Author:** Juha Korpela / Datakor · **Date:** August 2026
 
@@ -9,11 +9,17 @@ product repository and instance repositories (4); the compiler becomes an instal
 package with plugin adapters (5.1, 5.2); versioning, licensing and project governance
 are specified (7, 8, 9.2).
 
+**Naming:** the project is called **Semprini**. It was previously "RDF Knowledge
+Plane"; the package, CLI, entry-point group, configuration file and metamodel namespace
+all follow the new name. *Knowledge plane* remains the architectural term for what
+Semprini is — a shared semantic layer over an organization's data — and is used as such
+throughout. The `sem:` prefix is unchanged.
+
 ---
 
 ## 1. Purpose
 
-This document specifies the **RDF Knowledge Plane**: an openly licensed toolchain for
+This document specifies **Semprini**: an openly licensed knowledge-plane toolchain for
 turning an organization's semantic content — business concepts, their relationships,
 and taxonomies — into versioned, validated RDF held in Git.
 
@@ -85,7 +91,7 @@ configuration, source content, overlays, or local shapes.
 - Bundled adapters: Ellie API, Excel taxonomy files
 - Identity management (IRI minting, the persistent ID map, the namespace lock)
 - Core SHACL shapes and CI validation, with portable workflow templates
-- Instance bootstrap (`rkp init`) and compile orchestration producing pull requests
+- Instance bootstrap (`semprini init`) and compile orchestration producing pull requests
 - Versioning, compatibility and migration policy; licensing; project governance
 
 ### Out of scope (v1) — designed-for extension points
@@ -109,7 +115,7 @@ implementation can serve many deployments.
 
 | Prefix | Namespace | Use |
 |---|---|---|
-| `sem:` | `https://w3id.org/rdf-knowledge-plane/ontology#` | Metamodel classes and properties |
+| `sem:` | `https://w3id.org/semprini/ontology#` | Metamodel classes and properties |
 
 The metamodel namespace is served through **w3id.org**, a community-maintained
 permanent-identifier service, so that resolution does not depend on any single
@@ -128,7 +134,7 @@ written against `sem:` works against every instance.
 | `x:` | `{base}ext#` | The organization's own extension terms (3.6) |
 
 `{base}` is the instance's base IRI (e.g. `https://semantics.acme.com/`), set in
-`config/plane.yaml` and frozen by the namespace lock (3.4). **Once minted, IRIs are
+`config/semprini.yaml` and frozen by the namespace lock (3.4). **Once minted, IRIs are
 permanent** — the domain must be one the organization controls and intends to keep.
 
 **Reused standard namespaces:** `skos:`
@@ -212,7 +218,7 @@ tell the same story.
      recorded in the ID map; treat it as opaque thereafter (renaming the glossary does
      not change the slug).
    - Objects with no source UUID (e.g. taxonomy values) → `v:{uuid5}` where
-     `uuid5 = UUIDv5(NAMESPACE_RKP, scheme-slug + "|" + source-row-key)`. The
+     `uuid5 = UUIDv5(NAMESPACE_SEMPRINI, scheme-slug + "|" + source-row-key)`. The
      source-row-key is the taxonomy code column if codes are declared stable for that
      file, otherwise an explicit `id` column that maintainers must add. The resulting
      mapping is **persisted in the ID map** (5.4), which is authoritative from then on:
@@ -221,7 +227,7 @@ tell the same story.
    `sem:status "deprecated"`; merges add `dcterms:isReplacedBy`.
 4. **The base IRI is frozen by a namespace lock.** At bootstrap the compiler writes
    `mappings/namespace.lock` (JSON: base IRI, instance id, ontology version, date). On
-   every subsequent run it compares the lock to `config/plane.yaml` and **aborts** on
+   every subsequent run it compares the lock to `config/semprini.yaml` and **aborts** on
    mismatch. Without this, an edited base IRI would silently mint a parallel set of
    IRIs alongside an ID map still holding the old ones. Changing it is a migration, not
    a configuration edit: it requires `--force-namespace-change`, which rewrites the ID
@@ -294,7 +300,7 @@ v:9c1f... a skos:Concept ;
 ### 4.1 The plane repository (this project)
 
 ```
-rdf-knowledge-plane/
+semprini/
 ├── README.md
 ├── LICENSE                        # Apache-2.0 — code (8)
 ├── LICENSE-DOCS                   # CC BY 4.0 — ontology, shapes, this spec (8)
@@ -302,7 +308,7 @@ rdf-knowledge-plane/
 ├── pyproject.toml                 # package metadata, adapter entry points
 ├── docs/
 │   └── rdf-repo-and-compiler-spec.md   # this document (normative)
-├── src/rkp/
+├── src/semprini/
 │   ├── cli.py                     # the whole CLI surface (5.1)
 │   ├── model.py                   # internal model dataclasses
 │   ├── identity.py                # ID map, minting, namespace lock
@@ -316,7 +322,7 @@ rdf-knowledge-plane/
 │   ├── ontology/
 │   │   └── sem.ttl                # the metamodel, versioned (3.1, 7)
 │   └── shapes/                    # core SHACL shapes (6.1)
-├── templates/instance/            # the scaffold `rkp init` materializes (4.2)
+├── templates/instance/            # the scaffold `semprini init` materializes (4.2)
 ├── workflows/                     # reusable/portable CI definitions (6.2, 6.3)
 └── tests/
     └── fixtures/acme/             # a complete synthetic instance + golden TTL (6.1)
@@ -346,7 +352,7 @@ rdf-knowledge-plane/
 │   └── namespace.lock             # frozen base IRI (3.4)
 ├── shapes/local/              # additive, organization-specific shapes (6.1)
 ├── config/
-│   └── plane.yaml                 # instance identity + source configuration (5.1)
+│   └── semprini.yaml                 # instance identity + source configuration (5.1)
 └── .github/workflows/
     ├── compile.yml                # ~10 lines; pins the plane version
     └── validate.yml               # ~10 lines; pins the plane version
@@ -374,22 +380,22 @@ instance from Git alone, without installing the package.
 
 ### 5.1 Packaging and CLI
 
-A Python 3.12+ package distributed as **`rdf-knowledge-plane`** (import name `rkp`),
+A Python 3.12+ package distributed as **`semprini`** (import name `semprini`),
 using `rdflib` for graph construction, `openpyxl` for Excel, `requests` for HTTP
 sources, `pyshacl` for validation. It installs from PyPI (or a Git tag) and exposes a
 console script:
 
 ```
-rkp init      --base-iri <IRI> --org <slug> [--dir <path>]   # bootstrap an instance (5.7)
-rkp run       [--source <name>] [--dry-run]                  # fetch, compile, write
-rkp check                                                    # validate only, no writes
-rkp migrate   --to <version>                                 # apply migrations (7)
-rkp adapters                                                 # list discovered plugins
-rkp version                                                  # compiler + ontology versions
+semprini init      --base-iri <IRI> --org <slug> [--dir <path>]   # bootstrap an instance (5.7)
+semprini run       [--source <name>] [--dry-run]                  # fetch, compile, write
+semprini check                                                    # validate only, no writes
+semprini migrate   --to <version>                                 # apply migrations (7)
+semprini adapters                                                 # list discovered plugins
+semprini version                                                  # compiler + ontology versions
 ```
 
 All commands operate on the instance repository in the working directory and read
-`config/plane.yaml`. Exit codes are part of the contract, so any CI system can act on
+`config/semprini.yaml`. Exit codes are part of the contract, so any CI system can act on
 them: `0` success · `1` validation or compile failure · `2` configuration or namespace-lock
 error · `3` a configured source was unreachable.
 
@@ -410,10 +416,10 @@ The compiler is **stateless between runs** except for what is in the instance
 repository (previous TTL, ID map, namespace lock). It must produce identical results
 locally and in CI.
 
-Instance configuration (`config/plane.yaml`):
+Instance configuration (`config/semprini.yaml`):
 
 ```yaml
-plane:
+semprini:
   base_iri: https://semantics.acme.com/
   instance_id: acme
   default_language: en
@@ -451,9 +457,9 @@ operator's shell.
 ### 5.2 Adapter interface (plugins)
 
 Adapters are **discovered, not imported**. The package declares an entry-point group
-`rdf_knowledge_plane.adapters`; any installed distribution may contribute to it, so a
+`semprini.adapters`; any installed distribution may contribute to it, so a
 new source system — proprietary, third-party, or organization-internal — is added by
-installing a package and naming it in `config/plane.yaml`. No fork, no patch to this
+installing a package and naming it in `config/semprini.yaml`. No fork, no patch to this
 project.
 
 ```python
@@ -465,7 +471,7 @@ class BaseAdapter(ABC):
     @abstractmethod
     def fetch(self) -> InternalModel: ...
 
-    def validate_config(self) -> list[Issue]:   # called by `rkp check`
+    def validate_config(self) -> list[Issue]:   # called by `semprini check`
         return []
 ```
 
@@ -487,7 +493,7 @@ so a third-party adapter is never a second-class citizen.
 **Ellie adapter (`ellie`).**
 
 - Reads via Ellie's REST API (token from the environment variable named by
-  `token_env`; endpoint in `config/plane.yaml`).
+  `token_env`; endpoint in `config/semprini.yaml`).
 - **Model allowlist.** Ellie contains many models; only explicitly registered,
   validated domain models are ingested, keyed by Ellie's model ID — nothing is fetched
   that is not listed. The compiler fails the run (rather than skipping silently) if a
@@ -518,7 +524,7 @@ so a third-party adapter is never a second-class citizen.
 **Excel taxonomy adapter (`excel-taxonomy`).**
 
 - Input: one workbook per taxonomy under `sources/taxonomies/`, registered in
-  `config/plane.yaml` with file path, scheme slug, scheme label, target entity IRI (for
+  `config/semprini.yaml` with file path, scheme slug, scheme label, target entity IRI (for
   `sem:enumerates`, optional), and whether the `code` column is id-stable.
 - Expected sheet format (first sheet, header row required):
 
@@ -543,8 +549,8 @@ so a third-party adapter is never a second-class citizen.
   Hit → reuse IRI. Miss → mint per 3.4, append a row.
 - The ID map, not the minting formula, is authoritative. This makes identity survive
   code renames, file moves, changes to the minting rules, and compiler upgrades.
-- `source_name` is the name given to a source in `config/plane.yaml`. Renaming a
-  configured source therefore breaks identity resolution; `rkp check` treats a
+- `source_name` is the name given to a source in `config/semprini.yaml`. Renaming a
+  configured source therefore breaks identity resolution; `semprini check` treats a
   `source_name` present in the ID map but absent from configuration as an error, with a
   documented rename procedure that rewrites the column in one reviewable commit.
 - CI fails if a run would produce an IRI collision (two source keys → one IRI) or
@@ -582,7 +588,7 @@ rules:
 4. One triple per line; two-space indentation; `;` continuation style as in 3.7.
 5. UTF-8, LF line endings, newline at EOF. No comments in generated files.
 6. Language tags always present on `skos:prefLabel`/`skos:definition` (default `@en`;
-   set per instance in `config/plane.yaml`).
+   set per instance in `config/semprini.yaml`).
 7. **No blank nodes in generated output.** Every node the compiler emits has an IRI.
    Blank-node labels are not stable across runs and would defeat the determinism check;
    any construct that would need one must instead use a deterministically minted IRI
@@ -602,10 +608,10 @@ compile workflow pastes this into the PR description — it is the reviewer's su
 
 ### 5.7 Bootstrapping an instance
 
-`rkp init --base-iri https://semantics.acme.com/ --org acme`:
+`semprini init --base-iri https://semantics.acme.com/ --org acme`:
 
 1. Materializes `templates/instance/` into the target directory (4.2).
-2. Writes `config/plane.yaml` with the base IRI, instance id and default language, and
+2. Writes `config/semprini.yaml` with the base IRI, instance id and default language, and
    an empty `sources:` list.
 3. Writes `mappings/namespace.lock` (3.4) and empty `id-map.csv` / `merges.csv` with
    headers.
@@ -622,7 +628,7 @@ The command refuses to run in a directory that already contains a `namespace.loc
 
 ### 6.1 Checks
 
-All checks are implemented in `rkp check` — CI invokes the CLI and nothing else (6.3).
+All checks are implemented in `semprini check` — CI invokes the CLI and nothing else (6.3).
 Steps, all blocking unless noted:
 
 1. **Syntax**: every `.ttl` parses (rdflib).
@@ -632,7 +638,7 @@ Steps, all blocking unless noted:
    match the versions actually running. This makes a plane upgrade a deliberate,
    separately reviewable "recompile with `<version>`" PR rather than a surprise reflow
    of every file mixed into a content change (7).
-4. **Namespace lock**: `config/plane.yaml`'s base IRI matches `mappings/namespace.lock`
+4. **Namespace lock**: `config/semprini.yaml`'s base IRI matches `mappings/namespace.lock`
    (3.4); every generated subject IRI falls under it.
 5. **SHACL** (`pyshacl`), core shapes from the package plus every shape in
    `shapes/local/`:
@@ -670,9 +676,9 @@ adopters rather than merely asserted.
 Each instance has two workflows, both thin:
 
 - **`validate.yml`** — on every PR and on main: install the pinned plane version, run
-  `rkp check`.
+  `semprini check`.
 - **`compile.yml`** — on a schedule and on manual dispatch: install the pinned plane
-  version, run `rkp run`, and if `generated/` or `mappings/` changed, open a PR (branch
+  version, run `semprini run`, and if `generated/` or `mappings/` changed, open a PR (branch
   `compile/<date>`) with `generated/.report.md` as the description. It never pushes to
   main.
 
@@ -686,7 +692,7 @@ the package, run a command, and (for `compile.yml`) open a PR. Consequences:
 
 - An adopter on GitLab, Azure DevOps or on-prem Bitbucket ports the plane by
   contributing a YAML file, not by reimplementing logic.
-- `rkp check` behaves identically on a developer's laptop and in CI, so failures are
+- `semprini check` behaves identically on a developer's laptop and in CI, so failures are
   reproducible locally.
 - The plane depends on no GitHub-only feature for correctness; PR creation is the one
   platform-specific step, isolated in the workflow layer.
@@ -699,7 +705,7 @@ Adopters upgrade on their own schedule, so compatibility is a published contract
 
 **Two version numbers.**
 
-- **Compiler version** — semantic versioning of the `rdf-knowledge-plane` package.
+- **Compiler version** — semantic versioning of the `semprini` package.
 - **Ontology version** — the `sem:` metamodel's own version (`owl:versionInfo` in
   `sem.ttl`), incremented independently. A metamodel change is breaking for adopters
   even when the Python API is untouched.
@@ -718,7 +724,7 @@ Both are recorded in `generated/.manifest.json` and enforced by the drift check 
 | IRI minting rule change | major | — | none, if the ID map is honoured (5.4) |
 
 **Migrations.** A release that changes emitted output ships a migration invoked by
-`rkp migrate --to <version>`, which rewrites `generated/` (and, where necessary, the ID
+`semprini migrate --to <version>`, which rewrites `generated/` (and, where necessary, the ID
 map) deterministically in one commit. An upgrade is therefore always reviewable: the
 adopter sees a migration diff, not an unexplained reflow. Migrations never mint new
 IRIs for existing objects and never remove ID-map rows.
@@ -814,14 +820,14 @@ Each deployment adopts these rules; they are what the CI checks enforce.
 
 | # | Decision | Default if not decided |
 |---|---|---|
-| 1 | Register the `w3id.org/rdf-knowledge-plane` namespace (PR to the w3id.org repository); confirm the redirect target that will host the ontology | **Blocks the first release** — the metamodel namespace must resolve before any instance mints IRIs against it |
+| 1 | Register the `w3id.org/semprini` namespace (PR to the w3id.org repository); confirm the redirect target that will host the ontology | **Blocks the first release** — the metamodel namespace must resolve before any instance mints IRIs against it |
 | 2 | Confirm Apache-2.0 / CC BY 4.0 (8), or choose AGPL for the code if hosted-service competition is a concern | Apache-2.0 + CC BY 4.0 |
 | 3 | Distribution channel: PyPI, or Git tags only at first | PyPI once the interface is stable; Git tags until then |
 | 4 | Which adapters are bundled versus separately distributed (5.3) | Ellie and Excel bundled; all later adapters evaluated case by case |
 | 5 | Default language tag(s); multilingual labels needed? | `@en` only, set per instance |
 | 6 | Definition coverage: when the missing-definition warning becomes blocking | per instance, after pilot review |
 | 7 | Ellie API rate limits / pagination specifics | verify against Ellie API docs at build time |
-| 8 | Whether `rkp init` also creates the remote repository (`gh repo create`) or stays offline | stays offline (5.7) |
+| 8 | Whether `semprini init` also creates the remote repository (`gh repo create`) or stays offline | stays offline (5.7) |
 
 Per-instance decisions — base IRI, source allowlist, stewards and CODEOWNERS — are made
 at bootstrap by each adopting organization and are deliberately not listed here.
