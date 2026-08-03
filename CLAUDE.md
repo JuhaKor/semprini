@@ -26,7 +26,9 @@ prior-project prototype:
   for learnings, never cite it as a requirement.
 
 Target layout is spec §4.1 (`src/semprini/`, `templates/instance/`, `workflows/`, `tests/fixtures/acme/`),
-Python 3.12+, `rdflib` / `openpyxl` / `requests` / `pyshacl`, CLI per §5.1. Do **not** create
+Python 3.12+, `rdflib` / `openpyxl` / `requests` / `pyshacl`, CLI per §5.1. Dependencies here
+are managed with **Poetry** (`poetry.lock` committed); the shipped wheel is plain, so instances
+install it with `pip` and never need Poetry — don't add Poetry to instance templates or workflows. Do **not** create
 `generated/`, `overlays/`, `sources/`, `mappings/` or `config/` here — those belong to an instance
 (§4.2), and this repo contains no instance content by policy (§9.2 rule 5).
 

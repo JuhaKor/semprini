@@ -22,14 +22,23 @@ done and green.
 
 - [ ] **A1 · Repository foundations and package skeleton**
   **Spec:** §4.1, §5.1 (CLI surface and exit codes), §8
-  **Deliver:** `pyproject.toml` for the `semprini` distribution (import name
-  `semprini`, console script `semprini`), the `src/semprini/` module skeleton of §4.1, `LICENSE` and
-  `LICENSE-DOCS`, `CHANGELOG.md`, dev tooling (pytest, ruff, mypy), and a CI workflow
-  running lint + tests for this repository. Implement `semprini version` and the exit-code
-  contract; every other subcommand is a stub that exits non-zero.
-  **Verify:** `pip install -e .` in a clean venv; `semprini version` prints compiler and
-  ontology versions; `semprini` with no arguments exits 2; lint, type check and the (empty)
-  test suite pass in CI.
+  **Deliver:** a Poetry `pyproject.toml` for the `semprini` distribution (import name
+  `semprini`, console script `semprini`, `poetry-core` build backend) plus a committed
+  `poetry.lock`, the `src/semprini/` module skeleton of §4.1, `LICENSE` and
+  `LICENSE-DOCS` (both © Datakor Consulting Oy), `CHANGELOG.md`, dev tooling (pytest,
+  ruff, mypy), and a CI workflow running lint + tests for this repository. Implement
+  `semprini version` and the exit-code contract; every other subcommand is a stub that
+  exits non-zero.
+  **Verify:** `poetry install` in a clean checkout, and `pip install .` into a bare venv —
+  the wheel must install without Poetry, since instances use pip (§6.2); `semprini version`
+  prints compiler and ontology versions; `semprini` with no arguments exits 2; lint, type
+  check and the (empty) test suite pass in CI.
+  **Decided during planning:** A1 ships a placeholder `ontology/sem.ttl` carrying only
+  `owl:versionInfo "0.0.0"` so `semprini version` has something to read before A3 writes
+  the real metamodel; stub subcommands exit `1`, leaving `2` for genuine configuration and
+  argument errors; the plane's own CI lives in `.github/workflows/` (the §4.1 tree lists
+  only `workflows/`, which holds the portable *instance* templates of §6.2 — extend §4.1 in
+  the same commit); compiler version starts at `0.1.0`.
 
 - [ ] **A2 · Register the `sem:` namespace on w3id.org** *(external lead time — start
   now, runs in parallel, blocks only A3's final URL and any real IRI minting)*

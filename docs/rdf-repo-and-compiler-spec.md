@@ -305,7 +305,8 @@ semprini/
 ├── LICENSE                        # Apache-2.0 — code (8)
 ├── LICENSE-DOCS                   # CC BY 4.0 — ontology, shapes, this spec (8)
 ├── CHANGELOG.md                   # compiler and ontology versions (7)
-├── pyproject.toml                 # package metadata, adapter entry points
+├── pyproject.toml                 # Poetry: package metadata, dependencies, adapter entry points
+├── poetry.lock                    # committed — reproducible dev and CI environments
 ├── docs/
 │   └── rdf-repo-and-compiler-spec.md   # this document (normative)
 ├── src/semprini/
@@ -398,6 +399,13 @@ All commands operate on the instance repository in the working directory and rea
 `config/semprini.yaml`. Exit codes are part of the contract, so any CI system can act on
 them: `0` success · `1` validation or compile failure · `2` configuration or namespace-lock
 error · `3` a configured source was unreachable.
+
+Dependencies, the development environment and releases of the plane itself are managed
+with **Poetry**: `pyproject.toml` is a Poetry project built by `poetry-core`, and
+`poetry.lock` is committed so local development and CI resolve to identical versions.
+This is a project-internal choice with no reach into instances — the published artifact
+is a standard wheel, so adopters and instance workflows install it with plain `pip`
+(6.2) and never need Poetry.
 
 Pipeline stages for `run`:
 
@@ -746,7 +754,8 @@ The project is released as two artifact classes, licensed by convention for thei
 
 Both licences are carried in the repository (`LICENSE`, `LICENSE-DOCS`) and the split
 is stated in `README.md`, since a single top-level `LICENSE` would otherwise be read as
-governing the vocabulary too.
+governing the vocabulary too. The copyright holder for both is **Datakor Consulting
+Oy**, named in the notice of each licence file and in the package metadata.
 
 **Content produced by an instance is the adopting organization's own**, under no
 licence from this project. Nothing in the generated RDF carries an obligation back to
@@ -821,7 +830,7 @@ Each deployment adopts these rules; they are what the CI checks enforce.
 | # | Decision | Default if not decided |
 |---|---|---|
 | 1 | Register the `w3id.org/semprini` namespace (PR to the w3id.org repository); confirm the redirect target that will host the ontology | **Blocks the first release** — the metamodel namespace must resolve before any instance mints IRIs against it |
-| 2 | Confirm Apache-2.0 / CC BY 4.0 (8), or choose AGPL for the code if hosted-service competition is a concern | Apache-2.0 + CC BY 4.0 |
+| 2 | ~~Confirm Apache-2.0 / CC BY 4.0 (8), or choose AGPL for the code if hosted-service competition is a concern~~ | **Resolved:** Apache-2.0 + CC BY 4.0, copyright Datakor Consulting Oy (8) |
 | 3 | Distribution channel: PyPI, or Git tags only at first | PyPI once the interface is stable; Git tags until then |
 | 4 | Which adapters are bundled versus separately distributed (5.3) | Ellie and Excel bundled; all later adapters evaluated case by case |
 | 5 | Default language tag(s); multilingual labels needed? | `@en` only, set per instance |
