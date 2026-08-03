@@ -309,6 +309,7 @@ semprini/
 ├── poetry.lock                    # committed — reproducible dev and CI environments
 ├── docs/
 │   └── rdf-repo-and-compiler-spec.md   # this document (normative)
+├── .github/workflows/             # this repository's own CI — lint, types, tests
 ├── src/semprini/
 │   ├── cli.py                     # the whole CLI surface (5.1)
 │   ├── model.py                   # internal model dataclasses
@@ -324,7 +325,7 @@ semprini/
 │   │   └── sem.ttl                # the metamodel, versioned (3.1, 7)
 │   └── shapes/                    # core SHACL shapes (6.1)
 ├── templates/instance/            # the scaffold `semprini init` materializes (4.2)
-├── workflows/                     # reusable/portable CI definitions (6.2, 6.3)
+├── workflows/                     # reusable/portable CI definitions for *instances* (6.2, 6.3)
 └── tests/
     └── fixtures/acme/             # a complete synthetic instance + golden TTL (6.1)
 ```
@@ -472,14 +473,14 @@ project.
 
 ```python
 class BaseAdapter(ABC):
-    name: str                      # entry-point name, e.g. "ellie"
+    name: str  # entry-point name, e.g. "ellie"
 
     def __init__(self, source_name: str, config: dict, ctx: RunContext): ...
 
     @abstractmethod
     def fetch(self) -> InternalModel: ...
 
-    def validate_config(self) -> list[Issue]:   # called by `semprini check`
+    def validate_config(self) -> list[Issue]:  # called by `semprini check`
         return []
 ```
 

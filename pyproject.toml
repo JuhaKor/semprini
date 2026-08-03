@@ -1,0 +1,69 @@
+[project]
+name = "semprini"
+version = "0.1.0"
+description = "Compiles modelled business vocabularies into a governed RDF knowledge graph."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE", "LICENSE-DOCS"]
+authors = [{ name = "Datakor Consulting Oy" }]
+keywords = ["rdf", "skos", "knowledge-graph", "ontology", "semantic-layer"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Compilers",
+]
+dependencies = [
+    "rdflib (>=7.1,<8.0)",
+    "openpyxl (>=3.1,<4.0)",
+    "requests (>=2.32,<3.0)",
+    "pyshacl (>=0.26,<1.0)",
+]
+
+[project.urls]
+Homepage = "https://github.com/JuhaKor/semprini"
+Repository = "https://github.com/JuhaKor/semprini"
+Changelog = "https://github.com/JuhaKor/semprini/blob/main/CHANGELOG.md"
+
+[project.scripts]
+semprini = "semprini.cli:main"
+
+# Bundled adapters register themselves in the `semprini.adapters` entry-point group
+# (spec 5.2) — third-party distributions extend the plane by contributing to the same
+# group. Declared once the adapter classes exist (tasks C1/C2); pointing an entry point
+# at a module that has no adapter yet would break discovery for `semprini adapters`.
+# [project.entry-points."semprini.adapters"]
+# ellie = "semprini.adapters.ellie:EllieAdapter"
+# excel-taxonomy = "semprini.adapters.excel_taxonomy:ExcelTaxonomyAdapter"
+
+[tool.poetry]
+packages = [{ include = "semprini", from = "src" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0"
+ruff = ">=0.6"
+mypy = ">=1.11"
+types-requests = ">=2.32"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"

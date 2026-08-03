@@ -1,0 +1,74 @@
+name: CI
+
+# This repository's own checks. The portable workflow templates that instances run
+# (spec 6.2) live in workflows/ and are materialized by `semprini init`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor of the supported range (spec 5.1) and the current release, so a
+        # 3.12 incompatibility cannot reach a release unnoticed.
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Lint
+        run: poetry run ruff check .
+
+      - name: Check formatting
+        run: poetry run ruff format --check .
+
+      - name: Type check
+        run: poetry run mypy
+
+      - name: Test
+        run: poetry run pytest
+
+  wheel:
+    # Instances install the published wheel with plain pip (spec 6.2, 6.3), so the
+    # build must not depend on Poetry being present at install time.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Build the wheel
+        run: poetry build --format wheel
+
+      - name: Install it into a bare virtual environment
+        run: |
+          python -m venv /tmp/bare
+          /tmp/bare/bin/pip install --no-cache-dir dist/*.whl
+
+      - name: Console script and packaged ontology work from the installed wheel
+        run: |
+          /tmp/bare/bin/semprini version
+          /tmp/bare/bin/semprini version | grep -q '^ontology '
+          /tmp/bare/bin/semprini || [ $? -eq 2 ]

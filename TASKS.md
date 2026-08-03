@@ -20,7 +20,7 @@ done and green.
 
 ## Phase A — Foundations
 
-- [ ] **A1 · Repository foundations and package skeleton**
+- [x] **A1 · Repository foundations and package skeleton**
   **Spec:** §4.1, §5.1 (CLI surface and exit codes), §8
   **Deliver:** a Poetry `pyproject.toml` for the `semprini` distribution (import name
   `semprini`, console script `semprini`, `poetry-core` build backend) plus a committed
@@ -33,12 +33,25 @@ done and green.
   the wheel must install without Poetry, since instances use pip (§6.2); `semprini version`
   prints compiler and ontology versions; `semprini` with no arguments exits 2; lint, type
   check and the (empty) test suite pass in CI.
-  **Decided during planning:** A1 ships a placeholder `ontology/sem.ttl` carrying only
-  `owl:versionInfo "0.0.0"` so `semprini version` has something to read before A3 writes
-  the real metamodel; stub subcommands exit `1`, leaving `2` for genuine configuration and
-  argument errors; the plane's own CI lives in `.github/workflows/` (the §4.1 tree lists
-  only `workflows/`, which holds the portable *instance* templates of §6.2 — extend §4.1 in
-  the same commit); compiler version starts at `0.1.0`.
+  **Done.** 15 tests green; ruff, ruff format and mypy (strict) clean; the wheel installs
+  into a bare venv with pip and `semprini version` prints `compiler 0.1.0` / `ontology
+  0.0.0`. §4.1 gained `.github/workflows/`, and `workflows/` is now labelled as holding the
+  *instance* templates, since the distinction was ambiguous. Notes for later sessions:
+  - `ontology/sem.ttl` is a **placeholder** carrying only `owl:versionInfo "0.0.0"`, so that
+    the ontology version has one source before A3. Version `0.0.0` means "must not be used
+    to mint IRIs". A3 replaces the document; `tests/test_ontology.py` already pins the
+    single-`owl:Ontology` and fixed-IRI rules and should keep passing unchanged.
+  - Exit codes: stubs return `1` (well-formed invocation, absent feature), leaving `2` for
+    configuration and argument errors — argparse already exits `2` on its own. `ExitCode` in
+    `cli.py` is the one definition; don't re-spell the numbers.
+  - The `semprini.adapters` entry-point group is written but **commented out** in
+    `pyproject.toml`: an entry point pointing at a module with no adapter class would break
+    discovery. D1 uncomments it as the adapter classes land.
+  - Every stub module names the task that fills it, and `cli.py` maps each unimplemented
+    subcommand to its task (`init`→G1, `run`→E2, `check`→F2, `migrate`→G3, `adapters`→D1).
+    Keep that map honest when task IDs move.
+  - CI runs the matrix on 3.12 and 3.14 only; 3.12 is the supported floor and cannot be
+    checked locally, since this machine has 3.14 alone.
 
 - [ ] **A2 · Register the `sem:` namespace on w3id.org** *(external lead time — start
   now, runs in parallel, blocks only A3's final URL and any real IRI minting)*

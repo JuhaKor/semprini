@@ -1,0 +1,17 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# Placeholder metamodel. The classes of spec 3.2 and properties of 3.3 are declared in
+# task A3; until then this document exists so that the ontology version has a single
+# source (spec 7) and `semprini version` has something to read. Version 0.0.0 marks a
+# metamodel that must not be used to mint IRIs.
+#
+# The namespace https://w3id.org/semprini/ontology# is not yet registered on w3id.org
+# (task A2, spec 11 #1). It is declared here regardless: every instance shares this one
+# namespace, so substituting another to unblock local work would be a design change.
+
+<https://w3id.org/semprini/ontology>
+    a owl:Ontology ;
+    rdfs:label "Semprini metamodel" ;
+    rdfs:comment "Placeholder. The metamodel vocabulary is declared in task A3." ;
+    owl:versionInfo "0.0.0" .
