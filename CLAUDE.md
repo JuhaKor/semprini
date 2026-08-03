@@ -13,11 +13,10 @@ instances — nothing here is ever specific to one customer.
 Implementation has not started. The directory currently holds one authoritative document and one
 prior-project prototype:
 
-- `rdf-repo-and-compiler-spec.md` — **authoritative** (v0.2). Specifies the metamodel, the compiler,
-  the two repository layouts, versioning, licensing and governance. Self-contained: "no other
-  background material is required to implement it." When anything conflicts with it, the spec wins,
-  and a behaviour change means editing the spec in the same change. Spec §4.1 places this document at
-  `docs/` — it has not been moved yet.
+- `docs/rdf-repo-and-compiler-spec.md` — **authoritative** (v0.2). Specifies the metamodel, the
+  compiler, the two repository layouts, versioning, licensing and governance. Self-contained: "no
+  other background material is required to implement it." When anything conflicts with it, the spec
+  wins, and a behaviour change means editing the spec in the same change.
 - `background-material/kg-converter-old/` — a working converter from an **earlier, similar but
   different** project. Not maintained, **not authoritative for any specification decision** — mine it
   for learnings, never cite it as a requirement.
