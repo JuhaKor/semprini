@@ -17,6 +17,10 @@ prior-project prototype:
   compiler, the two repository layouts, versioning, licensing and governance. Self-contained: "no
   other background material is required to implement it." When anything conflicts with it, the spec
   wins, and a behaviour change means editing the spec in the same change.
+- `TASKS.md` — the build order, one task per session. **Start here.** Each task names the spec
+  sections it implements and defines its own verification; a task is done when that verification is
+  automated and green, not when the code exists. Tick the box and note anything the next session
+  needs before moving on.
 - `background-material/kg-converter-old/` — a working converter from an **earlier, similar but
   different** project. Not maintained, **not authoritative for any specification decision** — mine it
   for learnings, never cite it as a requirement.
