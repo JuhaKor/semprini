@@ -1,0 +1,39 @@
+# Prior-project reference material — kept locally, not part of this repo
+background-material/
+
+# Secrets / local configuration (ELLIE_API_TOKEN etc.)
+.env
+.env.*
+!.env.example
+*.local.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Excel lock files (the taxonomy workbooks under sources/ ARE committed)
+~$*.xlsx
+
+# Local compiler scratch: fetch snapshots and dry-run output.
+# NOTE: generated/*.ttl, generated/.manifest.json, generated/.report.md and
+# mappings/*.csv are the system of record — they are committed, never ignored.
+.cache/
+*.tmp
