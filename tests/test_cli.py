@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from semprini import compiler_version, ontology_version
+from semprini import cli, compiler_version, ontology_version
 from semprini.cli import ExitCode, main
 
 # Stub subcommands, with the arguments each requires, until its own task lands.
@@ -30,6 +31,23 @@ def test_version_reports_both_version_numbers(capsys: pytest.CaptureFixture[str]
 
     out = capsys.readouterr().out
     assert out == f"compiler {compiler_version()}\nontology {ontology_version()}\n"
+
+
+def test_corrupt_ontology_reports_a_message_rather_than_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # rdflib raises BadSyntax, which subclasses SyntaxError rather than ValueError.
+    # Exercised through the real parser so the caught type stays honest as A3 rewrites
+    # the bundled document.
+    corrupt = tmp_path / "sem.ttl"
+    corrupt.write_text("this is not turtle {", encoding="utf-8")
+    monkeypatch.setattr(cli, "ontology_version", lambda: ontology_version(corrupt))
+
+    assert main(["version"]) == ExitCode.FAILURE
+
+    captured = capsys.readouterr()
+    assert "cannot read the bundled ontology" in captured.err
+    assert captured.out == ""
 
 
 def test_no_arguments_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:

@@ -30,25 +30,27 @@ def compiler_version() -> str:
         return _UNINSTALLED
 
 
-def ontology_version() -> str:
-    """Return ``owl:versionInfo`` of the bundled ``sem:`` metamodel (spec 3.1, 7).
+def ontology_version(path: Path = ONTOLOGY_PATH) -> str:
+    """Return ``owl:versionInfo`` of the ``sem:`` metamodel (spec 3.1, 7).
 
     Read from ``sem.ttl`` rather than duplicated in Python, so the ontology document
-    stays the single source of its own version.
+    stays the single source of its own version. ``path`` exists for tests; production
+    callers read the document bundled with the compiler.
     """
     from rdflib import Graph
     from rdflib.namespace import OWL, RDF
 
     graph = Graph()
-    graph.parse(ONTOLOGY_PATH, format="turtle")
+    graph.parse(path, format="turtle")
 
     ontologies = list(graph.subjects(RDF.type, OWL.Ontology))
     if len(ontologies) != 1:
-        raise ValueError(
-            f"{ONTOLOGY_PATH} must declare exactly one owl:Ontology, found {len(ontologies)}"
-        )
+        raise ValueError(f"{path} must declare exactly one owl:Ontology, found {len(ontologies)}")
 
-    version = graph.value(ontologies[0], OWL.versionInfo)
-    if version is None:
-        raise ValueError(f"{ONTOLOGY_PATH} declares no owl:versionInfo")
-    return str(version)
+    # Not graph.value(): its any=True would pick arbitrarily among several
+    # owl:versionInfo triples, and a version that varies per run would surface as
+    # unexplained manifest drift in an instance rather than as an error here.
+    versions = list(graph.objects(ontologies[0], OWL.versionInfo))
+    if len(versions) != 1:
+        raise ValueError(f"{path} must declare exactly one owl:versionInfo, found {len(versions)}")
+    return str(versions[0])

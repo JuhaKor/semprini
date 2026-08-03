@@ -84,7 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
 def _version() -> int:
     try:
         ontology = ontology_version()
-    except (OSError, ValueError) as error:
+    except (OSError, SyntaxError, ValueError) as error:
+        # SyntaxError covers rdflib's BadSyntax on a corrupt sem.ttl — a malformed
+        # bundled document is a compile failure with a message, not a traceback.
         print(f"{_PROGRAM}: cannot read the bundled ontology: {error}", file=sys.stderr)
         return ExitCode.FAILURE
 

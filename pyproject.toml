@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Compiles modelled business vocabularies into a governed RDF knowledge graph."
 readme = "README.md"
 requires-python = ">=3.12"
-license = "Apache-2.0"
+# The wheel carries both artifact classes of spec 8: Apache-2.0 code, plus the CC BY 4.0
+# ontology and shapes that ship inside the package.
+license = "Apache-2.0 AND CC-BY-4.0"
 license-files = ["LICENSE", "LICENSE-DOCS"]
 authors = [{ name = "Datakor Consulting Oy" }]
 keywords = ["rdf", "skos", "knowledge-graph", "ontology", "semantic-layer"]

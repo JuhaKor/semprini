@@ -71,4 +71,8 @@ jobs:
         run: |
           /tmp/bare/bin/semprini version
           /tmp/bare/bin/semprini version | grep -q '^ontology '
-          /tmp/bare/bin/semprini || [ $? -eq 2 ]
+          set +e
+          /tmp/bare/bin/semprini
+          rc=$?
+          set -e
+          [ $rc -eq 2 ]  # no arguments is a usage error (spec 5.1)
