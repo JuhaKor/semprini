@@ -82,20 +82,29 @@ done and green.
   records the decisions above. Move the directory into a `perma-id/w3id.org` fork as
   `semprini/`.
   **Remaining, in order:**
-  1. A3, then publish the Pages site: `/`, `/ontology/` (HTML) and `/ontology/sem.ttl`.
-     Copy the Turtle from `src/semprini/ontology/sem.ttl` during the site build rather
-     than committing a second copy — a duplicated ontology drifts. Emit
-     `/ontology/<owl:versionInfo>/sem.ttl` from that same source so the versioned redirect
-     resolves from day one instead of 404ing until the first release. §6.3's
-     "no logic in workflow YAML" governs the *instance* templates an adopter ports to
-     GitLab; it does not constrain this repo's own site build.
-  2. Check what `Content-Type` GitHub Pages returns for `.ttl`. If it is not `text/turtle`,
-     that is a hosting fix (or a different host) — the w3id file does not change, since
-     `AddType` there only affects files w3id itself serves, and we redirect away.
+  1. ~~Publish the Pages site.~~ **Done.** `tools/build_site.py` generates it from
+     `src/semprini/ontology/sem.ttl` and `.github/workflows/pages.yml` deploys it as an
+     artifact — the Pages source is **GitHub Actions**, not a branch, which is what keeps
+     a generated copy of the ontology out of the repository. All five paths the
+     `.htaccess` targets return 200 and the served Turtle is byte-identical to the
+     packaged document. Note the versioned **directory** needs its own `index.html`: the
+     negotiation rule sends browsers to `/ontology/X.Y.Z/`, not to the `.ttl`, so that
+     path 404s without one. This list previously named only the versioned `.ttl`.
+  2. ~~Check the `Content-Type` for `.ttl`.~~ **Done.** GitHub Pages returns
+     `text/turtle; charset=utf-8`, so no hosting change is needed and the `.htaccess`
+     is unaffected.
   3. Open the w3id PR: one squashed commit whose message names the project, live target
      URLs in the body. w3id requires contact details and a GitHub username in **both**
      files, and asks that the rules be tested locally first.
   4. On merge, run the two `curl` checks above, then tick the box.
+  **Known gap — frozen versions do not survive a version bump.** The site build emits a
+  frozen directory for the *current* ontology version only, so publishing 0.2.0 would
+  delete `/ontology/0.1.0/`, while the `.htaccess` promises that path resolves for ever.
+  Nothing is broken today (0.1.0 is the only version and nothing is released), but the
+  first bump breaks a permanent identifier silently. **G5 owns the fix**, since it is
+  release mechanics: released ontology versions have to be published from something that
+  outlives the working tree — a tag, or per-release copies the build collects — rather
+  than from `sem.ttl` alone.
 
 - [x] **A3 · Metamodel ontology (`sem.ttl`)**
   **Spec:** §3.1, §3.2, §3.3, §7 (ontology versioning)
@@ -351,6 +360,10 @@ done and green.
   **Verify:** install the tagged version in a clean venv from the chosen channel;
   `semprini version` matches the tag; `semprini init` from that install produces an instance whose
   workflows pin that same version.
+  **Also:** every previously released ontology version must keep resolving at
+  `/ontology/X.Y.Z/` — see A2's known gap. The site build currently publishes only the
+  current version, so a bump would 404 a path w3id promises is permanent. Verify by
+  publishing a second ontology version and confirming the first still resolves.
   **Depends:** A2, G3, G4
 
 ---
