@@ -53,14 +53,49 @@ done and green.
   - CI runs the matrix on 3.12 and 3.14 only; 3.12 is the supported floor and cannot be
     checked locally, since this machine has 3.14 alone.
 
-- [ ] **A2 · Register the `sem:` namespace on w3id.org** *(external lead time — start
-  now, runs in parallel, blocks only A3's final URL and any real IRI minting)*
+- [ ] **A2 · Register the `sem:` namespace on w3id.org** *(external lead time — the w3id
+  review queue is the one delay that cannot be compressed; submit as soon as the redirect
+  target resolves)*
   **Spec:** §3.1, §11 #1
-  **Deliver:** a PR to the w3id.org repository creating
-  `/semprini/` with content-negotiated redirects to wherever the ontology
-  will be served, plus the hosting itself.
+  **Deliver:** a PR to the w3id.org repository (`perma-id/w3id.org`) creating `/semprini/`
+  — an `.htaccess` and a `README.md` — with content-negotiated redirects, **plus the
+  hosting those redirects point at**.
   **Verify:** `curl -sIL -H 'Accept: text/turtle' https://w3id.org/semprini/ontology`
   resolves to the ontology document; an HTML `Accept` header resolves to documentation.
+  **Depends:** A3 — the site has to serve the real `sem.ttl`. Publishing the `0.0.0`
+  placeholder (which means "must not be used to mint IRIs") under a permanent identifier
+  would be worse than waiting a session for A3.
+  **Redirect target — decided (§11 #1):** the product repo's own GitHub Pages site,
+  `https://juhakor.github.io/semprini/`. No further domain then has to stay registered,
+  which is the reason §3.1 gives for using w3id at all; if the repo later moves to an
+  organization account only the `.htaccess` changes, and no `sem:` IRI does.
+  **Routing, as drafted:** `/semprini/ontology` negotiates — an RDF `Accept` gets
+  `ontology/sem.ttl`, anything else (browsers, `*/*`) gets `ontology/` documentation;
+  `/semprini/ontology/X.Y.Z` does the same for a frozen release; `/semprini/ontology/sem.ttl`
+  bypasses negotiation; any other path maps to the same path on the site, so later
+  additions need no second trip through the w3id queue. Only Turtle is published, so every
+  RDF media type resolves to the one document. Redirects are `302`, not `303`: `sem:`
+  terms are hash IRIs, so the request genuinely is for the document.
+  **Drafted, not committed:** both files exist in `background-material/w3id/semprini/`,
+  rule-checked by simulation against twelve path/`Accept` combinations. That directory is
+  **gitignored** — the files are not in this repo's history, and nothing but this entry
+  records the decisions above. Move the directory into a `perma-id/w3id.org` fork as
+  `semprini/`.
+  **Remaining, in order:**
+  1. A3, then publish the Pages site: `/`, `/ontology/` (HTML) and `/ontology/sem.ttl`.
+     Copy the Turtle from `src/semprini/ontology/sem.ttl` during the site build rather
+     than committing a second copy — a duplicated ontology drifts. Emit
+     `/ontology/<owl:versionInfo>/sem.ttl` from that same source so the versioned redirect
+     resolves from day one instead of 404ing until the first release. §6.3's
+     "no logic in workflow YAML" governs the *instance* templates an adopter ports to
+     GitLab; it does not constrain this repo's own site build.
+  2. Check what `Content-Type` GitHub Pages returns for `.ttl`. If it is not `text/turtle`,
+     that is a hosting fix (or a different host) — the w3id file does not change, since
+     `AddType` there only affects files w3id itself serves, and we redirect away.
+  3. Open the w3id PR: one squashed commit whose message names the project, live target
+     URLs in the body. w3id requires contact details and a GitHub username in **both**
+     files, and asks that the rules be tested locally first.
+  4. On merge, run the two `curl` checks above, then tick the box.
 
 - [ ] **A3 · Metamodel ontology (`sem.ttl`)**
   **Spec:** §3.1, §3.2, §3.3, §7 (ontology versioning)
@@ -309,7 +344,7 @@ be deferred without stalling the build.
 
 | §11 | Decision | Blocks |
 |---|---|---|
-| 1 | w3id namespace registration | A2 → G5 (first release); no instance may mint IRIs before it |
+| 1 | w3id namespace registration — redirect target decided, PR not yet submitted | A2 → G5 (first release); no instance may mint IRIs before it |
 | 2 | Confirm Apache-2.0 / CC BY 4.0 | A1 (the licence files are written there) |
 | 3 | Distribution channel | G5 |
 | 4 | Which adapters ship bundled | D3, G4 |
@@ -320,9 +355,11 @@ be deferred without stalling the build.
 
 ## Sequencing notes
 
-- **A2 runs in parallel from day one.** It depends on a third party's review queue, and
-  it is the only prerequisite for a first release that cannot be compressed by working
-  harder.
+- **A2 runs in parallel, but is no longer parallel from day one.** Its files are drafted
+  and its redirect target is decided; what remains needs A3 and a published Pages site
+  before the PR can honestly be submitted. After that it depends on a third party's review
+  queue — the only prerequisite for a first release that cannot be compressed by working
+  harder. Treat "A3, then hosting, then submit" as the critical path.
 - **B1 before everything downstream.** Determinism cannot be retrofitted: once an
   instance holds generated files, every serializer change becomes a migration (§7).
 - **F3, G3 and D3 are the three tasks most likely to overrun.** Each has a genuinely

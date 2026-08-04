@@ -39,6 +39,10 @@ registered yet. It must resolve before any instance mints IRIs against it. Don't
 different namespace to unblock local work — the whole multi-deployment design rests on every instance
 sharing this one.
 
+Registration is under way — see TASKS.md A2, which is the only record of the routing and hosting
+decisions, since the drafted w3id files live in the gitignored `background-material/w3id/semprini/`
+and are therefore absent from this repo's history.
+
 Base IRIs are no longer a project-level decision: each instance chooses its own at bootstrap and the
 namespace lock freezes it (§3.4). Keep `semantics.acme.com` / `https://semantics.example.com/` as
 example values only.
