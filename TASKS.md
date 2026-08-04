@@ -53,9 +53,10 @@ done and green.
   - CI runs the matrix on 3.12 and 3.14 only; 3.12 is the supported floor and cannot be
     checked locally, since this machine has 3.14 alone.
 
-- [ ] **A2 · Register the `sem:` namespace on w3id.org** *(external lead time — the w3id
-  review queue is the one delay that cannot be compressed; submit as soon as the redirect
-  target resolves)*
+- [ ] **A2 · Register the `sem:` namespace on w3id.org** *(submitted 2026-08-04 as
+  [perma-id/w3id.org#6488](https://github.com/perma-id/w3id.org/pull/6488) — everything on
+  our side is done and live; what remains is a third party's review queue, so this task is
+  now waiting, not working)*
   **Spec:** §3.1, §11 #1
   **Deliver:** a PR to the w3id.org repository (`perma-id/w3id.org`) creating `/semprini/`
   — an `.htaccess` and a `README.md` — with content-negotiated redirects, **plus the
@@ -76,11 +77,9 @@ done and green.
   additions need no second trip through the w3id queue. Only Turtle is published, so every
   RDF media type resolves to the one document. Redirects are `302`, not `303`: `sem:`
   terms are hash IRIs, so the request genuinely is for the document.
-  **Drafted, not committed:** both files exist in `background-material/w3id/semprini/`,
-  rule-checked by simulation against twelve path/`Accept` combinations. That directory is
-  **gitignored** — the files are not in this repo's history, and nothing but this entry
-  records the decisions above. Move the directory into a `perma-id/w3id.org` fork as
-  `semprini/`.
+  **Where the files live:** both exist in `background-material/w3id/semprini/` and are now
+  also in the submitted PR. That directory is **gitignored** — the files are not in this
+  repo's history, and nothing but this entry records the decisions above.
   **Remaining, in order:**
   1. ~~Publish the Pages site.~~ **Done.** `tools/build_site.py` generates it from
      `src/semprini/ontology/sem.ttl` and `.github/workflows/pages.yml` deploys it as an
@@ -93,10 +92,17 @@ done and green.
   2. ~~Check the `Content-Type` for `.ttl`.~~ **Done.** GitHub Pages returns
      `text/turtle; charset=utf-8`, so no hosting change is needed and the `.htaccess`
      is unaffected.
-  3. Open the w3id PR: one squashed commit whose message names the project, live target
-     URLs in the body. w3id requires contact details and a GitHub username in **both**
-     files, and asks that the rules be tested locally first.
-  4. On merge, run the two `curl` checks above, then tick the box.
+  3. ~~Open the w3id PR.~~ **Done, 2026-08-04:**
+     [perma-id/w3id.org#6488](https://github.com/perma-id/w3id.org/pull/6488). Before
+     submission the rules were simulated against the live site over 45 path/`Accept`
+     combinations: every rule targets a URL that returns 200, apart from two that are
+     deliberately absent (an unreleased version, and the `shapes/` path the catch-all
+     reserves for later). The README gained a row for `/ontology/X.Y.Z/sem.ttl`, which the
+     `.htaccess` implemented but the documentation did not mention.
+  4. **Remaining.** On merge, run the two `curl` checks above, then tick the box. If
+     reviewers ask for changes, the files to edit are the ones in the fork — and mirror any
+     change back into `background-material/w3id/semprini/`, which is gitignored and is
+     otherwise the only copy that survives the fork being reset.
   **Known gap — frozen versions do not survive a version bump.** The site build emits a
   frozen directory for the *current* ontology version only, so publishing 0.2.0 would
   delete `/ontology/0.1.0/`, while the `.htaccess` promises that path resolves for ever.
@@ -389,7 +395,7 @@ be deferred without stalling the build.
 
 | §11 | Decision | Blocks |
 |---|---|---|
-| 1 | w3id namespace registration — redirect target decided, PR not yet submitted | A2 → G5 (first release); no instance may mint IRIs before it |
+| 1 | w3id namespace registration — hosting live, PR #6488 submitted 2026-08-04, awaiting review | A2 → G5 (first release); no instance may mint IRIs before it |
 | 2 | Confirm Apache-2.0 / CC BY 4.0 | A1 (the licence files are written there) |
 | 3 | Distribution channel | G5 |
 | 4 | Which adapters ship bundled | D3, G4 |
@@ -400,11 +406,10 @@ be deferred without stalling the build.
 
 ## Sequencing notes
 
-- **A2 runs in parallel, but is no longer parallel from day one.** Its files are drafted
-  and its redirect target is decided; what remains needs A3 and a published Pages site
-  before the PR can honestly be submitted. After that it depends on a third party's review
-  queue — the only prerequisite for a first release that cannot be compressed by working
-  harder. Treat "A3, then hosting, then submit" as the critical path.
+- **A2 is submitted and now purely a waiting game.** A3, the hosting and the PR are all
+  done; the remaining dependency is a third party's review queue, which no amount of work
+  here compresses. Nothing else is blocked by it until G5, so the build order below
+  proceeds unchanged — B1 next.
 - **B1 before everything downstream.** Determinism cannot be retrofitted: once an
   instance holds generated files, every serializer change becomes a migration (§7).
 - **F3, G3 and D3 are the three tasks most likely to overrun.** Each has a genuinely
