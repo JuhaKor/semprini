@@ -16,6 +16,10 @@ dist/
 .venv/
 venv/
 
+# The GitHub Pages site, built from src/semprini/ontology/sem.ttl by tools/build_site.py
+# and deployed from the workflow. Never committed: a second copy of the ontology drifts.
+_site/
+
 # Tooling caches
 .pytest_cache/
 .ruff_cache/
