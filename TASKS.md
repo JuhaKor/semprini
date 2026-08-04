@@ -62,9 +62,9 @@ done and green.
   hosting those redirects point at**.
   **Verify:** `curl -sIL -H 'Accept: text/turtle' https://w3id.org/semprini/ontology`
   resolves to the ontology document; an HTML `Accept` header resolves to documentation.
-  **Depends:** A3 — the site has to serve the real `sem.ttl`. Publishing the `0.0.0`
-  placeholder (which means "must not be used to mint IRIs") under a permanent identifier
-  would be worse than waiting a session for A3.
+  **Depends:** A3 — **met.** The site now has a real `sem.ttl` (ontology 0.1.0) to serve;
+  publishing the `0.0.0` placeholder under a permanent identifier was the thing worth
+  waiting a session to avoid.
   **Redirect target — decided (§11 #1):** the product repo's own GitHub Pages site,
   `https://juhakor.github.io/semprini/`. No further domain then has to stay registered,
   which is the reason §3.1 gives for using w3id at all; if the repo later moves to an
@@ -97,7 +97,7 @@ done and green.
      files, and asks that the rules be tested locally first.
   4. On merge, run the two `curl` checks above, then tick the box.
 
-- [ ] **A3 · Metamodel ontology (`sem.ttl`)**
+- [x] **A3 · Metamodel ontology (`sem.ttl`)**
   **Spec:** §3.1, §3.2, §3.3, §7 (ontology versioning)
   **Deliver:** `src/semprini/ontology/sem.ttl` declaring exactly the classes of §3.2 and
   properties of §3.3, with `owl:versionInfo` and term-level `rdfs:comment`s.
@@ -106,6 +106,38 @@ done and green.
   the vocabulary cannot drift from the spec silently. `semprini version` reports the
   ontology version read from this file.
   **Depends:** A1
+  **Done.** 28 tests green; ruff, ruff format and mypy (strict) clean; `semprini version`
+  prints `compiler 0.1.0` / `ontology 0.1.0`. Both inventory guards were mutation-checked
+  — an added term and an altered `rdfs:domain` each fail the suite — since a test of this
+  shape passes just as happily when it is asserting nothing. Decisions, for later sessions:
+  - **RDFS typing, not OWL.** Terms are `rdfs:Class` / `rdf:Property` with
+    `rdfs:domain`/`rdfs:range`; OWL appears only on the document node, which carries
+    `owl:versionInfo` (§7). The metamodel is SKOS-based, F1's SHACL states the constraints
+    once, and OWL typing on terms subclassing `skos:Concept` would license entailments
+    nothing validates. `test_owl_is_confined_to_the_document_header` pins this.
+  - The §3.2 rows for `skos:ConceptScheme` and plain `skos:Concept` are **not** declared
+    here — they are reused SKOS terms, and redeclaring them is exactly what §3.6 forbids
+    an instance from doing to `sem:`. The inventory is therefore 4 classes and 10
+    properties, and `test_the_document_describes_only_its_own_terms` keeps foreign
+    vocabulary out.
+  - `sem:isAbout` and `sem:represents` are declared but **reserved**, mirroring §3.1's
+    "declare now, use later" for `a:`/`d:`. They carry no domain, range, or
+    `rdfs:subPropertyOf`: §3.3 calls `sem:represents` a subproperty of `sem:isAbout`, but
+    asserting that before either is defined would fix semantics the spec hasn't settled.
+    The task that defines them owns that triple.
+  - The expected inventory is a **literal** in `tests/test_ontology.py`, not parsed from
+    the spec's tables, so the spec and the ontology can still drift if a table is edited
+    alone. The test is the place that comparison happens: edit table, ontology and literal
+    in one change.
+  - `sem.ttl` is hand-written and commented, and is **not** canonical-serializer output —
+    §5.5's comment-free rule governs an instance's `generated/`, whereas the term comments
+    here are the vocabulary's published documentation. B1 must not be pointed at this file.
+  - The document carries `dcterms:license` (CC BY 4.0) and `dcterms:rightsHolder`, since
+    it is served standalone at w3id and travels without the repo's `LICENSE-DOCS`.
+  - Ontology version is now **0.1.0**; `0.0.0` ("must not be used to mint IRIs") is gone
+    and `test_the_placeholder_version_is_gone` stops it returning. A2 step 1 is unblocked:
+    `src/semprini/ontology/sem.ttl` is the real document the Pages site should copy, and
+    `/ontology/0.1.0/sem.ttl` is the versioned path to emit from it.
 
 ---
 

@@ -1,17 +1,171 @@
+@prefix sem: <https://w3id.org/semprini/ontology#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-# Placeholder metamodel. The classes of spec 3.2 and properties of 3.3 are declared in
-# task A3; until then this document exists so that the ontology version has a single
-# source (spec 7) and `semprini version` has something to read. Version 0.0.0 marks a
-# metamodel that must not be used to mint IRIs.
+# The Semprini metamodel: the classes of spec 3.2 and the properties of 3.3, and
+# nothing else. tests/test_ontology.py holds the inventory as a literal list and fails
+# on a term declared here but absent from those tables, or the reverse.
 #
-# The namespace https://w3id.org/semprini/ontology# is not yet registered on w3id.org
-# (task A2, spec 11 #1). It is declared here regardless: every instance shares this one
-# namespace, so substituting another to unblock local work would be a design change.
+# Hand-written, not output of the canonical serializer (5.5): that serializer governs an
+# instance's generated/ and forbids comments, whereas this document is a source file
+# whose term-level comments are the vocabulary's documentation.
+#
+# Typed in RDFS, not OWL. The metamodel is SKOS-based, constraints are stated once in
+# SHACL (6.1.5), and OWL typing on terms that subclass skos:Concept would license
+# entailments nothing here validates. OWL appears only on the document node below,
+# because owl:versionInfo is where spec 7 puts the ontology version.
+#
+# The namespace is served through w3id.org (3.1) so resolution depends on no single
+# organization's domain. Registration is task A2.
 
 <https://w3id.org/semprini/ontology>
     a owl:Ontology ;
-    rdfs:label "Semprini metamodel" ;
-    rdfs:comment "Placeholder. The metamodel vocabulary is declared in task A3." ;
-    owl:versionInfo "0.0.0" .
+    rdfs:label "Semprini metamodel"@en ;
+    rdfs:comment """The shared vocabulary of the Semprini knowledge plane. It is identical in every
+deployment: an agent, query or SHACL shape written against sem: works against any
+instance. Instance content lives in namespaces the adopting organization owns."""@en ;
+    dcterms:license <https://creativecommons.org/licenses/by/4.0/> ;
+    dcterms:rightsHolder "Datakor Consulting Oy" ;
+    owl:versionInfo "0.1.0" .
+
+
+# --- Classes (3.2) ---------------------------------------------------------------
+#
+# skos:ConceptScheme (a glossary or a taxonomy) and plain skos:Concept (a taxonomy
+# value node) also carry meaning in this metamodel, but they belong to SKOS and are
+# reused, never redeclared here.
+
+sem:Entity
+    a rdfs:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Entity"@en ;
+    rdfs:comment "A business entity or concept, such as \"Customer\"."@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:Attribute
+    a rdfs:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Attribute"@en ;
+    rdfs:comment """An attribute that has an identity of its own, such as "Customer number". Attributes
+are nodes rather than RDF properties because the tools they come from give them
+identity, definitions and ownership."""@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:Relationship
+    a rdfs:Class ;
+    rdfs:label "Relationship"@en ;
+    rdfs:comment """A named relationship between two entities. Reified, because it carries a name and an
+identity of its own; the compiler additionally emits sem:relatesTo between the two
+entities as a traversal shortcut."""@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:BusinessTerm
+    a rdfs:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Business term"@en ;
+    rdfs:comment """A free-form glossary term: business vocabulary that is not itself an entity or an
+attribute. Supplied by a later adapter."""@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+
+# --- Properties (3.3) ------------------------------------------------------------
+#
+# rdfs:domain and rdfs:range restate the domain/range column of the 3.3 table. They
+# describe the vocabulary; they do not constrain instance data — that is SHACL's job
+# (6.1.5). Omitted where the table gives no concrete class.
+
+sem:attributeOf
+    a rdf:Property ;
+    rdfs:domain sem:Attribute ;
+    rdfs:range sem:Entity ;
+    rdfs:label "attribute of"@en ;
+    rdfs:comment "The entity an attribute belongs to."@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:source
+    a rdf:Property ;
+    rdfs:domain sem:Relationship ;
+    rdfs:range sem:Entity ;
+    rdfs:label "source"@en ;
+    rdfs:comment "The entity at the source end of a relationship."@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:target
+    a rdf:Property ;
+    rdfs:domain sem:Relationship ;
+    rdfs:range sem:Entity ;
+    rdfs:label "target"@en ;
+    rdfs:comment "The entity at the target end of a relationship."@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:relatesTo
+    a rdf:Property ;
+    rdfs:domain sem:Entity ;
+    rdfs:range sem:Entity ;
+    rdfs:label "relates to"@en ;
+    rdfs:comment """Shortcut from the source entity of a relationship to its target, emitted by the
+compiler alongside the reified sem:Relationship so that traversal does not have to go
+through the relationship node. It carries no name; the sem:Relationship node remains
+authoritative."""@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:enumerates
+    a rdf:Property ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range sem:Entity ;
+    rdfs:label "enumerates"@en ;
+    rdfs:comment """The taxonomy scheme provides the values of this entity. This is the join between a
+taxonomy and the model: the scheme and the entity stay distinct nodes."""@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:status
+    a rdf:Property ;
+    rdfs:range xsd:string ;
+    rdfs:label "status"@en ;
+    rdfs:comment """Lifecycle state of a node: "active" or "deprecated". A node that has disappeared from
+every configured source is deprecated rather than deleted, and its IRI is never
+reused (3.4, 3.5)."""@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:sourceRef
+    a rdf:Property ;
+    rdfs:range xsd:string ;
+    rdfs:label "source reference"@en ;
+    rdfs:comment """Origin of a node, as "<source-name>:<source-key>", where the source name is the one
+the instance's configuration gives that source. Repeatable: a node known to several
+sources carries one reference per source, matching the (source system, source key)
+pair the ID map is keyed by (5.4). It names no vendor by design, so a deployment
+inherits no term for a tool it does not use."""@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:schemeType
+    a rdf:Property ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range xsd:string ;
+    rdfs:label "scheme type"@en ;
+    rdfs:comment "What kind of scheme this is: \"glossary\" or \"taxonomy\"."@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+# Reserved. Declared now and used later, so that the vocabulary an instance resolves is
+# complete and these names cannot be taken for something else in the meantime. The
+# compiler emits neither, and their domains name classes the metamodel does not yet
+# define, so neither carries rdfs:domain or rdfs:range yet.
+
+sem:isAbout
+    a rdf:Property ;
+    rdfs:label "is about"@en ;
+    rdfs:comment """Reserved for a later version: will link a technical data object to the concept it is
+about. Not emitted by the current compiler."""@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .
+
+sem:represents
+    a rdf:Property ;
+    rdfs:label "represents"@en ;
+    rdfs:comment """Reserved for a later version: will link a column to the attribute it represents, as a
+precise subproperty of sem:isAbout. Not emitted by the current compiler, and the
+subproperty relation is not asserted until the pair is defined."""@en ;
+    rdfs:isDefinedBy <https://w3id.org/semprini/ontology> .

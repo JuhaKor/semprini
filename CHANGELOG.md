@@ -25,9 +25,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Apache-2.0 (`LICENSE`) for code and CC BY 4.0 (`LICENSE-DOCS`) for the ontology,
   shapes and specification, © Datakor Consulting Oy.
 
-### Ontology 0.0.0
+### Ontology 0.1.0
 
-- Placeholder metamodel document. It declares no vocabulary and must not be used to
-  mint IRIs; the classes of §3.2 and properties of §3.3 arrive in task A3, and the
-  `https://w3id.org/semprini/ontology#` namespace must resolve before any instance
-  mints against it (§11 #1).
+#### Added
+
+- The metamodel vocabulary: the four `sem:` classes of §3.2 and the ten properties of
+  §3.3, each with an `rdfs:label` and an `rdfs:comment`. `sem:isAbout` and
+  `sem:represents` are declared but reserved — the compiler emits neither.
+- Terms are typed in RDFS (`rdfs:Class`, `rdf:Property`, `rdfs:domain`, `rdfs:range`).
+  OWL appears only on the document node, which carries `owl:versionInfo`: the metamodel
+  is SKOS-based, constraints are stated once in SHACL (§6.1.5), and OWL typing would
+  license entailments nothing validates.
+
+#### Removed
+
+- The `0.0.0` placeholder document, which declared no vocabulary. The
+  `https://w3id.org/semprini/ontology#` namespace still has to resolve before any
+  instance mints IRIs against it (§11 #1, task A2).
