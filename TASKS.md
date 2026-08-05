@@ -99,10 +99,20 @@ done and green.
      deliberately absent (an unreleased version, and the `shapes/` path the catch-all
      reserves for later). The README gained a row for `/ontology/X.Y.Z/sem.ttl`, which the
      `.htaccess` implemented but the documentation did not mention.
-  4. **Remaining.** On merge, run the two `curl` checks above, then tick the box. If
-     reviewers ask for changes, the files to edit are the ones in the fork — and mirror any
-     change back into `background-material/w3id/semprini/`, which is gitignored and is
-     otherwise the only copy that survives the fork being reset.
+  4. ~~Review feedback: "the docs in this are verbose — have you considered using a link to
+     your site instead?"~~ **Answered 2026-08-05 by trimming both files**, since the site
+     now exists and duplicating it in a repository maintained by other people is a cost
+     they carry. The README dropped the project pitch, the versioning essay, the
+     negotiation explanation and the `curl` examples, keeping only what w3id's own README
+     asks of an entry — what the ID is, where it resolves, who maintains it — and pointing
+     at `https://juhakor.github.io/semprini/` for the rest; the `.htaccess` comment header
+     shrank to the ID line plus the required contact block. **No `RewriteRule` or
+     `RewriteCond` changed**, so the 45-combination simulation from step 3 still holds and
+     needs no re-run. Both trimmed files are in `background-material/w3id/semprini/`.
+  5. **Remaining.** On merge, run the two `curl` checks above, then tick the box. If
+     reviewers ask for further changes, the files to edit are the ones in the fork — and
+     mirror any change back into `background-material/w3id/semprini/`, which is gitignored
+     and is otherwise the only copy that survives the fork being reset.
   **Known gap — frozen versions do not survive a version bump.** The site build emits a
   frozen directory for the *current* ontology version only, so publishing 0.2.0 would
   delete `/ontology/0.1.0/`, while the `.htaccess` promises that path resolves for ever.
@@ -158,7 +168,7 @@ done and green.
 
 ## Phase B — Deterministic core
 
-- [ ] **B1 · Canonical Turtle serializer**
+- [x] **B1 · Canonical Turtle serializer**
   **Spec:** §5.5 (all eight rules)
   **Deliver:** `src/semprini/serialize.py`. This is the linchpin of the whole design — every
   later guarantee (reviewable diffs, safe upgrades, the CI determinism check) reduces to
@@ -168,6 +178,59 @@ done and green.
   round-trips are graph-equal; a graph containing a blank node raises rather than
   emitting one; output ends with exactly one LF.
   **Depends:** A1
+  **Done.** 75 tests green; ruff, ruff format and mypy (strict) clean. Two cases found in
+  review and fixed: a character Turtle forbids inside `<...>` (a space, an angle bracket
+  — `rdflib` does not validate a `URIRef` when it is built) was written raw and produced
+  a file that would not parse, and is now `\uXXXX`-escaped; and a graph holding both
+  `"x"` and `"x"^^xsd:string` — separate entries in `rdflib`, one term in RDF 1.1 —
+  emitted the statement twice, so the file re-parsed to fewer triples than it was built
+  from and recompiling after that round trip showed a diff nobody caused. Objects are now
+  normalized and deduplicated per subject, and the same unsafe characters are **refused**
+  in the base IRI rather than escaped — the prefix block is the one place an IRI is
+  written raw, and a namespace that had to be escaped would no longer be the namespace
+  the instance minted in. Six mutations were checked against the suite — reversed subject
+  order, four-space indentation, blank nodes tolerated, unsafe IRIs written raw,
+  `xsd:string` neither collapsed nor deduplicated, an unsafe base IRI accepted — and each
+  fails it, since a determinism test looks identical whether or not it is asserting
+  anything. That check earned its keep: after the review's fix the `xsd:string` rule had
+  two homes, `_plain()` and `_literal()`, and the suite passed with the second one broken.
+  The dead branch is gone, and normalization now happens in exactly one place. Decisions,
+  for later sessions:
+  - **API:** `serialize(graph, base_iri) -> str` and `write(path, graph, base_iri)`.
+    C1/C2 must write through `write()`, never `Path.write_text` directly: it passes
+    `newline="\n"`, and the platform default would translate every line ending on Windows
+    and make the same graph produce different bytes on different machines (rule 5).
+  - **`namespaces(base_iri)` lives here** and is the only place the per-kind suffixes
+    (`concepts/`, `relationships/`, `schemes/`, `values/`, `ext#`, `assets/`, `docs/`) are
+    written down. B4 mints into those namespaces and must import it rather than re-spell
+    them. §4.1 lists no separate namespaces module, so it stays in `serialize.py`.
+  - **Prefix block order is `sem, c, r, sch, v, x, skos, dcterms, xsd, a, d`** — the order
+    §3.1 introduces them. The reserved `a:`/`d:` are emitted too, per rule 1's "even if
+    unused"; declaring `a:` does not clash with the `a` keyword, and the round-trip test
+    parses the output back to prove it.
+  - **Four byte-affecting choices §5.5 did not settle are now in the spec**, since each
+    would otherwise be re-decided differently by whoever touched this next: objects sort
+    IRIs before literals then by lexical form/tag/datatype (rule 3); a predicate with
+    several objects repeats the predicate instead of using `,`, and blocks are separated
+    by a blank line (rule 4); terms are prefixed only where the local name needs no
+    escaping; and an `xsd:string` literal is written in the plain form, because the two
+    are the same RDF term and writing them differently would let two equal graphs produce
+    two different files. **§3.7's example was reindented from four spaces to two** to
+    match rule 4 — it disagreed with the rule it illustrates, which would have reached
+    C1 as a wrong golden file.
+  - The safe-local-name rule is **deliberately narrower than Turtle's `PN_LOCAL`**:
+    minted names are UUIDs and slugs, and anything unusual falls back to `<full IRI>`
+    rather than risking an escaping rule this module gets subtly wrong.
+  - Blank nodes and literal subjects are rejected **before any bytes are written**, so a
+    refused graph leaves no half-written file (asserted, since `write()` is what C1 calls).
+  - **Rule 6 is only half here.** The serializer preserves language tags; *requiring* them
+    on `skos:prefLabel`/`skos:definition`, and applying the instance's configured default,
+    belongs to C1 with the config from B3.
+  - Rule 8 is tested as "the output contains nothing the graph does not": statement lines
+    equal triple count, and the only date in the sample output is the `dcterms:modified`
+    the graph itself carries.
+  - `src/semprini/ontology/sem.ttl` is still **not** serializer output (see A3) and was
+    not touched. Nothing may point `write()` at it.
 
 - [ ] **B2 · Internal model and run context**
   **Spec:** §5.1 (pipeline stages), §5.2 (`InternalModel`, `source_refs`, `RunContext`)
@@ -409,9 +472,10 @@ be deferred without stalling the build.
 - **A2 is submitted and now purely a waiting game.** A3, the hosting and the PR are all
   done; the remaining dependency is a third party's review queue, which no amount of work
   here compresses. Nothing else is blocked by it until G5, so the build order below
-  proceeds unchanged — B1 next.
-- **B1 before everything downstream.** Determinism cannot be retrofitted: once an
-  instance holds generated files, every serializer change becomes a migration (§7).
+  proceeds unchanged — B2 next, then B3.
+- ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
+  once an instance holds generated files, every serializer change becomes a migration
+  (§7). It now is one — a change to `serialize.py`'s output is a major bump.
 - **F3, G3 and D3 are the three tasks most likely to overrun.** Each has a genuinely
   hard core — defining "additive only", proving migrations preserve identity, and
   an external API's real behaviour versus its documentation.

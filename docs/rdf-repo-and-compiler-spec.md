@@ -265,32 +265,32 @@ define. It must be able to add one without forking this project.
 
 ```turtle
 c:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21 a sem:Entity ;
-    skos:prefLabel "Customer"@en ;
-    skos:definition "A person or organization that buys our products."@en ;
-    skos:inScheme sch:sales ;
-    sem:sourceRef "ellie-main:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21" ;
-    sem:status "active" ;
-    dcterms:modified "2026-08-03"^^xsd:date .
+  skos:prefLabel "Customer"@en ;
+  skos:definition "A person or organization that buys our products."@en ;
+  skos:inScheme sch:sales ;
+  sem:sourceRef "ellie-main:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21" ;
+  sem:status "active" ;
+  dcterms:modified "2026-08-03"^^xsd:date .
 
 r:c2d1e0aa-... a sem:Relationship ;
-    skos:prefLabel "places"@en ;
-    sem:source c:7f3a9b12-... ;
-    sem:target c:0d9e4c77-... ;      # Order
-    sem:status "active" .
+  skos:prefLabel "places"@en ;
+  sem:source c:7f3a9b12-... ;
+  sem:target c:0d9e4c77-... ;      # Order
+  sem:status "active" .
 
 c:7f3a9b12-... sem:relatesTo c:0d9e4c77-... .   # compiler-emitted shortcut
 
 sch:product-category a skos:ConceptScheme ;
-    skos:prefLabel "Product category taxonomy"@en ;
-    sem:schemeType "taxonomy" ;
-    sem:enumerates c:55aa0c3e-... .   # "Product Category" reference entity
+  skos:prefLabel "Product category taxonomy"@en ;
+  sem:schemeType "taxonomy" ;
+  sem:enumerates c:55aa0c3e-... .   # "Product Category" reference entity
 
 v:9c1f... a skos:Concept ;
-    skos:prefLabel "Drills"@en ;
-    skos:notation "PT-DR" ;
-    skos:broader v:8b0e... ;          # Power tools
-    skos:inScheme sch:product-category ;
-    sem:status "active" .
+  skos:prefLabel "Drills"@en ;
+  skos:notation "PT-DR" ;
+  skos:broader v:8b0e... ;          # Power tools
+  skos:inScheme sch:product-category ;
+  sem:status "active" .
 ```
 
 ---
@@ -593,8 +593,12 @@ rules:
 2. Subjects sorted lexicographically by IRI; each subject serialized as one block.
 3. Within a subject: `a` (rdf:type) first, then `skos:prefLabel`, then remaining
    predicates sorted lexicographically by IRI; multiple objects per predicate sorted
-   lexicographically.
-4. One triple per line; two-space indentation; `;` continuation style as in 3.7.
+   lexicographically — IRIs before literals, literals by lexical form, then language
+   tag, then datatype, so that a mixed-object predicate has one defined order too.
+4. One triple per line; two-space indentation; `;` continuation style as in 3.7. A
+   predicate with several objects **repeats the predicate**, one object per line, rather
+   than joining them with `,` — one changed fact must be one changed line. Subject
+   blocks are separated by a single blank line.
 5. UTF-8, LF line endings, newline at EOF. No comments in generated files.
 6. Language tags always present on `skos:prefLabel`/`skos:definition` (default `@en`;
    set per instance in `config/semprini.yaml`).
@@ -604,6 +608,15 @@ rules:
    (3.4).
 8. No run timestamps anywhere in generated output — `dcterms:modified` reflects
    content change only (3.3).
+
+Terms are written the one way the rules allow: prefixed where the local name needs no
+escaping and the full `<IRI>` otherwise, `a` for `rdf:type`, and literals as single-line
+quoted strings with control characters escaped. An `xsd:string` literal is written in the
+plain form — and written only once, since the two are the same RDF term and writing them
+differently, or twice, would make two equal graphs produce two different files. A
+character an `<IRI>` cannot carry raw is written as its `\uXXXX` escape rather than
+emitted verbatim, so a malformed IRI from a source never produces a file that will not
+parse.
 
 CI's determinism check recompiles from a cached fetch snapshot and requires
 byte-identical output (6.1).
