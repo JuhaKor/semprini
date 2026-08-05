@@ -29,6 +29,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   emit blank nodes. `rdflib`'s own Turtle output is never used for anything an instance
   commits. Also `namespaces()`, which derives the per-kind instance namespaces of §3.1
   from a base IRI — the one place those suffixes are written down.
+- The internal model of §5.2 (`semprini.model`): frozen `Entity`, `Attribute`,
+  `Relationship`, `Scheme` and `TaxonomyValue` dataclasses identified by their
+  `source_refs`, `merge_models()` merging objects that share a source ref, `RunContext`,
+  and `Issue`/`Severity`. Objects that two sources disagree about raise rather than
+  resolving to one side.
 
 ### Ontology 0.1.0
 

@@ -412,7 +412,7 @@ Pipeline stages for `run`:
 
 ```
 fetch (per configured adapter)
-  → normalize into the internal model (Concept, Attribute, Relationship,
+  → normalize into the internal model (Entity, Attribute, Relationship,
     Scheme, TaxonomyValue)
   → resolve identity (ID map lookup / minting)
   → build rdflib Graphs (one per output file)
