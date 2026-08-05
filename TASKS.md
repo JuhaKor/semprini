@@ -232,7 +232,7 @@ done and green.
   - `src/semprini/ontology/sem.ttl` is still **not** serializer output (see A3) and was
     not touched. Nothing may point `write()` at it.
 
-- [ ] **B2 · Internal model and run context**
+- [x] **B2 · Internal model and run context**
   **Spec:** §5.1 (pipeline stages), §5.2 (`InternalModel`, `source_refs`, `RunContext`)
   **Deliver:** `src/semprini/model.py` — the dataclasses adapters return and the core
   consumes. Frozen/immutable where practical, since adapters must not mutate shared
@@ -240,6 +240,58 @@ done and green.
   **Verify:** type checks clean under mypy; construction and merge-by-`source_refs`
   unit tests; a model carrying two source refs for one object merges to one identity.
   **Depends:** A1
+  **Done.** 116 tests green; ruff, ruff format and mypy (strict) clean. Nine mutations
+  checked against the suite — conflicts resolved by taking one side, union fields not
+  unioned, merged objects left in arrival order, cross-kind refs tolerated, `source_refs`
+  left as the caller's dict, identity not followed transitively, an empty definition kept
+  as a rival answer, `source_refs` hashed (leaving objects unhashable), a model keeping
+  the caller's sequence — and each fails it. The order-independence test had to be
+  repaired first: its fixture was symmetric, so reversing it produced the same grouping
+  order and the sort was never exercised. Review then found two defects worth recording,
+  both fixed: a frozen object could not be **hashed** (the `MappingProxyType` in
+  `source_refs` made it unhashable, so identity resolution could not put one in a set —
+  `source_refs` is now `field(hash=False)`, compared but not hashed), and an **empty
+  definition** merged as a disagreement rather than as silence. Decisions, for later
+  sessions:
+  - **The classes are `Entity`, `Attribute`, `Relationship`, `Scheme`, `TaxonomyValue`.**
+    §5.1's pipeline said `Concept` where §3.2 says `sem:Entity`; `Concept` is actively
+    misleading, since the plain `skos:Concept` in this metamodel is the *taxonomy value*.
+    §5.1 now says `Entity`. `sem:BusinessTerm` has **no dataclass** — §3.2 marks it
+    adapter-supplied and later, and the class arrives with the adapter that produces it
+    (§10, Collibra).
+  - **Merging refuses to guess.** Set-valued fields union; two sources disagreeing about
+    a scalar raise `MergeConflictError` rather than one winning. Nothing in v1 produces
+    cross-source objects, so this costs nothing today, and loosening the rule later is
+    easier than tightening it once instances hold files built under it. D3/E1 own the
+    question of whether a steward-facing resolution mechanism is needed. **An empty
+    definition is normalized to `None` at construction**, so `""` and absent are one
+    state rather than two the merge rule has to know are equivalent — an empty
+    description emits no triple either way (§5.3), and a tool that returns `""` for a
+    blank field must not fail every run against one that fills it in. Fixing this in the
+    constructor rather than in the merge is deliberate: the algorithm then needs one rule
+    (`is None`), and objects are canonical from birth.
+  - **A source ref may not name objects of two kinds.** The ID map is keyed by
+    `(source_name, source_key)` alone — `kind` is a recorded column, not part of the key
+    (§5.4) — so an entity and a scheme sharing a key would collide on one row and one
+    IRI. Enforced in `merge_models`; **B4 depends on this** and need not re-check it.
+  - **`Kind.prefix` is where kinds map to namespaces** (`c:`/`r:`/`sch:`/`v:`), so B4
+    mints from the model's own vocabulary rather than a second copy of §3.1's table.
+    Entities, attributes and terms deliberately share `c:`.
+  - **`RunContext` deliberately does not carry the ID map**, and a test asserts it: an
+    adapter that could mint would break "the ID map is authoritative" (§5.2, §5.4). It
+    validates `base_iri` through `serialize.namespaces()` and the language tag's shape at
+    construction, so a bad instance config fails at the start of a run rather than when
+    the first file is written. *Which* tags an instance may configure is still §11 #5,
+    open, and B3 owns it.
+  - Labels and definitions are **untagged strings** in the model; the configured language
+    is applied when the graph is built (C1), since an adapter does not know it.
+  - `Issue`/`Severity` land here because §5.2 names `validate_config() -> list[Issue]`.
+    D1 and F2 are their first users; nothing consumes them yet.
+  - The merge rules are driven by `dataclasses.fields` plus a `UNION_FIELDS` class
+    variable rather than written out per class. Five kinds each gaining fields over time
+    would be five places to forget one, and forgetting one loses data silently. A new
+    set-valued field must be added to `UNION_FIELDS`, or it will be treated as a scalar
+    that has to agree.
 
 - [ ] **B3 · Configuration loading**
   **Spec:** §5.1 (`config/semprini.yaml`), exit code 2
