@@ -99,10 +99,20 @@ done and green.
      deliberately absent (an unreleased version, and the `shapes/` path the catch-all
      reserves for later). The README gained a row for `/ontology/X.Y.Z/sem.ttl`, which the
      `.htaccess` implemented but the documentation did not mention.
-  4. **Remaining.** On merge, run the two `curl` checks above, then tick the box. If
-     reviewers ask for changes, the files to edit are the ones in the fork — and mirror any
-     change back into `background-material/w3id/semprini/`, which is gitignored and is
-     otherwise the only copy that survives the fork being reset.
+  4. ~~Review feedback: "the docs in this are verbose — have you considered using a link to
+     your site instead?"~~ **Answered 2026-08-05 by trimming both files**, since the site
+     now exists and duplicating it in a repository maintained by other people is a cost
+     they carry. The README dropped the project pitch, the versioning essay, the
+     negotiation explanation and the `curl` examples, keeping only what w3id's own README
+     asks of an entry — what the ID is, where it resolves, who maintains it — and pointing
+     at `https://juhakor.github.io/semprini/` for the rest; the `.htaccess` comment header
+     shrank to the ID line plus the required contact block. **No `RewriteRule` or
+     `RewriteCond` changed**, so the 45-combination simulation from step 3 still holds and
+     needs no re-run. Both trimmed files are in `background-material/w3id/semprini/`.
+  5. **Remaining.** On merge, run the two `curl` checks above, then tick the box. If
+     reviewers ask for further changes, the files to edit are the ones in the fork — and
+     mirror any change back into `background-material/w3id/semprini/`, which is gitignored
+     and is otherwise the only copy that survives the fork being reset.
   **Known gap — frozen versions do not survive a version bump.** The site build emits a
   frozen directory for the *current* ontology version only, so publishing 0.2.0 would
   delete `/ontology/0.1.0/`, while the `.htaccess` promises that path resolves for ever.
