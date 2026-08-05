@@ -24,6 +24,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Every other subcommand parses its arguments and exits `1` pending its own task.
 - Apache-2.0 (`LICENSE`) for code and CC BY 4.0 (`LICENSE-DOCS`) for the ontology,
   shapes and specification, © Datakor Consulting Oy.
+- The canonical Turtle serializer of §5.5 (`semprini.serialize`): fixed prefix block,
+  sorted subjects and predicates, one triple per line, LF and UTF-8, and a refusal to
+  emit blank nodes. `rdflib`'s own Turtle output is never used for anything an instance
+  commits. Also `namespaces()`, which derives the per-kind instance namespaces of §3.1
+  from a base IRI — the one place those suffixes are written down.
 
 ### Ontology 0.1.0
 
