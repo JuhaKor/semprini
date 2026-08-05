@@ -178,10 +178,24 @@ done and green.
   round-trips are graph-equal; a graph containing a blank node raises rather than
   emitting one; output ends with exactly one LF.
   **Depends:** A1
-  **Done.** 72 tests green; ruff, ruff format and mypy (strict) clean. Four mutations were
-  checked against the suite — reversed subject order, four-space indentation, `xsd:string`
-  written the long way, blank nodes tolerated — and each fails it, since a determinism test
-  looks identical whether or not it is asserting anything. Decisions, for later sessions:
+  **Done.** 75 tests green; ruff, ruff format and mypy (strict) clean. Two cases found in
+  review and fixed: a character Turtle forbids inside `<...>` (a space, an angle bracket
+  — `rdflib` does not validate a `URIRef` when it is built) was written raw and produced
+  a file that would not parse, and is now `\uXXXX`-escaped; and a graph holding both
+  `"x"` and `"x"^^xsd:string` — separate entries in `rdflib`, one term in RDF 1.1 —
+  emitted the statement twice, so the file re-parsed to fewer triples than it was built
+  from and recompiling after that round trip showed a diff nobody caused. Objects are now
+  normalized and deduplicated per subject, and the same unsafe characters are **refused**
+  in the base IRI rather than escaped — the prefix block is the one place an IRI is
+  written raw, and a namespace that had to be escaped would no longer be the namespace
+  the instance minted in. Six mutations were checked against the suite — reversed subject
+  order, four-space indentation, blank nodes tolerated, unsafe IRIs written raw,
+  `xsd:string` neither collapsed nor deduplicated, an unsafe base IRI accepted — and each
+  fails it, since a determinism test looks identical whether or not it is asserting
+  anything. That check earned its keep: after the review's fix the `xsd:string` rule had
+  two homes, `_plain()` and `_literal()`, and the suite passed with the second one broken.
+  The dead branch is gone, and normalization now happens in exactly one place. Decisions,
+  for later sessions:
   - **API:** `serialize(graph, base_iri) -> str` and `write(path, graph, base_iri)`.
     C1/C2 must write through `write()`, never `Path.write_text` directly: it passes
     `newline="\n"`, and the platform default would translate every line ending on Windows

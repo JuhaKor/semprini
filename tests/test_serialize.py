@@ -18,7 +18,7 @@ from rdflib.compare import isomorphic
 from rdflib.namespace import DCTERMS, RDF, SKOS, XSD
 from rdflib.term import BNode
 
-from semprini.serialize import CANONICAL_PREFIXES, namespaces, serialize, write
+from semprini.serialize import CANONICAL_PREFIXES, _iri, namespaces, serialize, write
 
 BASE = "https://semantics.example.com/"
 
@@ -116,14 +116,34 @@ def test_an_unusable_base_iri_is_refused(base: str) -> None:
         serialize(Graph(), base)
 
 
+@pytest.mark.parametrize("base", ["https://ex ample.com/", "https://ex.org/a<b/"])
+def test_a_base_iri_turtle_cannot_write_is_refused_rather_than_escaped(base: str) -> None:
+    # The prefix block is the one place an IRI is written unescaped, and a namespace
+    # cannot be escaped and still be the namespace the instance's IRIs were minted in.
+    # rdflib's own parser is lenient enough to read it back, which is what makes emitting
+    # it dangerous: the file would travel until some stricter parser rejected it.
+    with pytest.raises(ValueError, match="Turtle forbids"):
+        serialize(Graph(), base)
+
+
 # --- rule 2: subjects sorted, one block each ------------------------------------------
 
 
 def test_rule_2_subjects_are_sorted_lexicographically_by_iri() -> None:
-    turtle = serialize(sample_graph(), BASE)
+    # By full IRI, not by the prefixed form that reaches the file: for the canonical
+    # prefixes the two orders happen to agree, so it takes a subject where they disagree
+    # to tell them apart. This one sorts last by IRI and first by rendered form, since
+    # '<' precedes every prefix letter.
+    external = URIRef("https://zz.example.org/thing")
+    graph = sample_graph()
+    graph.add((external, SKOS.prefLabel, Literal("Organization", lang="en")))
+    turtle = serialize(graph, BASE)
+
     subjects = [line.split(" ")[0] for line in statement_lines(turtle) if not line.startswith("  ")]
-    assert subjects == sorted(subjects)
+    assert subjects == [_iri(URIRef(iri), NS) for iri in sorted({str(s) for s in graph.subjects()})]
     assert subjects[0].startswith("c:0d9e4c77")
+    # Last by IRI, even though `<` would put it first among the written forms.
+    assert subjects[-1] == f"<{external}>"
 
 
 def test_rule_2_each_subject_is_one_block() -> None:
@@ -376,12 +396,45 @@ def test_a_local_name_that_would_need_escaping_falls_back_to_the_full_iri() -> N
     assert f"<{awkward}>" in serialize(graph_of((awkward, RDF.type, SEM.Entity)), BASE)
 
 
-def test_the_longest_matching_namespace_wins() -> None:
-    # c: is base+concepts/ while a hypothetical shorter namespace could also match; the
-    # choice must not depend on the order of the prefix block.
-    assert "c:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21" in serialize(
-        graph_of((CUSTOMER, RDF.type, SEM.Entity)), BASE
+@pytest.mark.parametrize("order", [("outer", "inner"), ("inner", "outer")])
+def test_the_longest_matching_namespace_wins(order: tuple[str, str]) -> None:
+    # No two canonical namespaces nest today, so this is tested directly: were one ever
+    # added, the choice must come from the namespaces and not from the block's order.
+    candidates = {"outer": "https://ex.org/", "inner": "https://ex.org/deep/"}
+    prefixes = {prefix: candidates[prefix] for prefix in order}
+    assert _iri(URIRef("https://ex.org/deep/thing"), prefixes) == "inner:thing"
+
+
+def test_an_iri_that_turtle_cannot_write_raw_is_escaped_not_emitted_verbatim() -> None:
+    # rdflib does not validate a URIRef on construction, so an adapter or an overlay can
+    # carry a space or an angle bracket this far; written raw it would close the IRI
+    # early and produce a file that no parser will read.
+    awkward = URIRef("https://ex.org/a b>c")
+    turtle = serialize(graph_of((CUSTOMER, SKOS.related, awkward)), BASE)
+    assert "<https://ex.org/a\\u0020b\\u003Ec>" in turtle
+
+    reparsed = Graph()
+    reparsed.parse(data=turtle, format="turtle")
+    assert next(reparsed.objects(CUSTOMER, SKOS.related)) == awkward
+
+
+def test_a_plain_and_an_xsd_string_literal_do_not_produce_the_statement_twice() -> None:
+    # rdflib keeps the two as separate entries even though RDF 1.1 makes them one term,
+    # so a graph merged from two sources can hold both. Emitting both would write a file
+    # that re-parses to fewer triples than it was built from — and recompiling after that
+    # round trip would show a diff no one changed anything to cause.
+    graph = graph_of(
+        (CUSTOMER, SEM.status, Literal("active")),
+        (CUSTOMER, SEM.status, Literal("active", datatype=XSD.string)),
     )
+    turtle = serialize(graph, BASE)
+    assert [line.strip() for line in statement_lines(turtle)] == [
+        'c:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21 sem:status "active" .'
+    ]
+
+    reparsed = Graph()
+    reparsed.parse(data=turtle, format="turtle")
+    assert serialize(reparsed, BASE) == turtle
 
 
 def test_rdf_type_is_written_as_the_turtle_keyword() -> None:

@@ -78,6 +78,11 @@ _INDENT = "  "
 # module gets subtly wrong.
 _SAFE_LOCAL_NAME = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_.\-]*[A-Za-z0-9_\-])?")
 
+# Characters Turtle's IRIREF production forbids between the angle brackets. rdflib does
+# not validate a URIRef when it is constructed, so an adapter or a hand-written overlay
+# can carry one through to here; writing it raw would emit a file that no longer parses.
+_UNSAFE_IRI_CHARACTER = re.compile(r"[\x00-\x20<>\"{}|^`\\]")
+
 _ESCAPES = {
     "\\": "\\\\",
     '"': '\\"',
@@ -140,6 +145,16 @@ def _check_base_iri(base_iri: str) -> None:
         # Every per-instance namespace is the base plus a suffix (spec 3.1); without the
         # separator the two would run together into a different namespace entirely.
         raise ValueError(f"base IRI must end with '/', got {base_iri!r}")
+    unsafe = _UNSAFE_IRI_CHARACTER.search(base_iri)
+    if unsafe is not None:
+        # The prefix block is the one place an IRI is written without escaping — a
+        # namespace cannot be escaped and still be the namespace an instance's IRIs were
+        # minted in. So this is refused rather than repaired: it is a configuration error
+        # (spec 3.4), and one the namespace lock would then freeze for ever.
+        raise ValueError(
+            f"base IRI may not contain {unsafe.group()!r}, which Turtle forbids in an IRI: "
+            f"{base_iri!r}"
+        )
 
 
 def _rejected(node: Node, position: str) -> ValueError:
@@ -171,10 +186,10 @@ def _checked_object(node: Node) -> URIRef | Literal:
 
 def _blocks(graph: Graph, prefixes: Mapping[str, str]) -> Iterator[str]:
     """Yield one Turtle block per subject, subjects sorted by IRI (rule 2)."""
-    by_subject: dict[URIRef, list[tuple[URIRef, URIRef | Literal]]] = {}
+    by_subject: dict[URIRef, set[tuple[URIRef, URIRef | Literal]]] = {}
     for subject, predicate, object_ in graph:
-        by_subject.setdefault(_checked_iri(subject, "subject"), []).append(
-            (_checked_iri(predicate, "predicate"), _checked_object(object_))
+        by_subject.setdefault(_checked_iri(subject, "subject"), set()).add(
+            (_checked_iri(predicate, "predicate"), _plain(_checked_object(object_)))
         )
 
     for subject in sorted(by_subject, key=str):
@@ -187,6 +202,20 @@ def _blocks(graph: Graph, prefixes: Mapping[str, str]) -> Iterator[str]:
         head = f"{_iri(subject, prefixes)} {statements[0]}"
         rest = [_INDENT + statement for statement in statements[1:]]
         yield " ;\n".join([head, *rest]) + " ."
+
+
+def _plain(object_: URIRef | Literal) -> URIRef | Literal:
+    """Collapse an ``xsd:string`` literal onto the plain literal it is equal to.
+
+    ``rdflib`` keeps the two as separate entries in a graph even though RDF 1.1 makes
+    them the same term, so a graph built from two sources can hold both. Both write as
+    ``"value"``, and without this the block would carry the same statement twice — a file
+    that re-parses to fewer triples than it was serialized from, so recompiling after a
+    round trip would produce a spurious diff and fail the determinism check (spec 6.1).
+    """
+    if isinstance(object_, Literal) and not object_.language and object_.datatype == _XSD_STRING:
+        return Literal(str(object_))
+    return object_
 
 
 def _statement_key(
@@ -238,17 +267,23 @@ def _iri(node: URIRef, prefixes: Mapping[str, str]) -> str:
         if best is None or len(namespace) > len(prefixes[best[0]]):
             best = (prefix, iri[len(namespace) :])
 
-    return f"{best[0]}:{best[1]}" if best is not None else f"<{iri}>"
+    if best is not None:
+        return f"{best[0]}:{best[1]}"
+    # Escaping rather than raising: it is lossless — the IRI parses back unchanged — and
+    # an unusable IRI is the source's problem to report, not a reason to write a file
+    # that no parser will read.
+    return f"<{_UNSAFE_IRI_CHARACTER.sub(_as_uchar, iri)}>"
 
 
 def _literal(node: Literal, prefixes: Mapping[str, str]) -> str:
     text = f'"{_escape(str(node))}"'
     if node.language:
         return f"{text}@{node.language}"
-    if node.datatype is not None and node.datatype != _XSD_STRING:
+    if node.datatype is not None:
         return f"{text}^^{_iri(node.datatype, prefixes)}"
-    # A plain literal and an xsd:string literal are the same RDF term; writing both the
-    # short way keeps two equal graphs from producing two different files.
+    # An xsd:string literal reaches here already collapsed onto its plain form by
+    # _plain(), which is where that rule lives — repeating the test here would leave two
+    # places to change it and only one of them exercised.
     return text
 
 
@@ -264,7 +299,13 @@ def _escape(text: str) -> str:
         if character in _ESCAPES:
             escaped.append(_ESCAPES[character])
         elif character < " " or character == "\x7f":
-            escaped.append(f"\\u{ord(character):04X}")
+            escaped.append(_as_uchar(character))
         else:
             escaped.append(character)
     return "".join(escaped)
+
+
+def _as_uchar(character: str | re.Match[str]) -> str:
+    """Write one character as Turtle's ``\\uXXXX`` escape, valid in an IRI or a string."""
+    text = character if isinstance(character, str) else character.group()
+    return f"\\u{ord(text):04X}"

@@ -612,8 +612,11 @@ rules:
 Terms are written the one way the rules allow: prefixed where the local name needs no
 escaping and the full `<IRI>` otherwise, `a` for `rdf:type`, and literals as single-line
 quoted strings with control characters escaped. An `xsd:string` literal is written in the
-plain form, since the two are the same RDF term and writing them differently would make
-two equal graphs produce two different files.
+plain form — and written only once, since the two are the same RDF term and writing them
+differently, or twice, would make two equal graphs produce two different files. A
+character an `<IRI>` cannot carry raw is written as its `\uXXXX` escape rather than
+emitted verbatim, so a malformed IRI from a source never produces a file that will not
+parse.
 
 CI's determinism check recompiles from a cached fetch snapshot and requires
 byte-identical output (6.1).
