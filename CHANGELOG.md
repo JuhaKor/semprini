@@ -65,6 +65,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Added
 
+- The metamodel namespace **resolves**: `https://w3id.org/semprini/ontology` content-negotiates
+  to the ontology document (`text/turtle`) or to its documentation, and
+  `https://w3id.org/semprini/ontology/0.1.0/` serves that version frozen. Registered on
+  w3id.org, so resolution depends on no organization's domain remaining registered. An
+  agent, query or SHACL shape written against `sem:` can now dereference it.
+
 - The metamodel vocabulary: the four `sem:` classes of §3.2 and the ten properties of
   §3.3, each with an `rdfs:label` and an `rdfs:comment`. `sem:isAbout` and
   `sem:represents` are declared but reserved — the compiler emits neither.
