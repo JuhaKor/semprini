@@ -900,7 +900,7 @@ Each deployment adopts these rules; they are what the CI checks enforce.
 
 | # | Decision | Default if not decided |
 |---|---|---|
-| 1 | Register the `w3id.org/semprini` namespace (PR to the w3id.org repository); ~~confirm the redirect target that will host the ontology~~ | **Blocks the first release** — the metamodel namespace must resolve before any instance mints IRIs against it. Redirect target **resolved:** the project's own published site, so resolution depends on no domain beyond w3id.org itself (3.1); registration still outstanding |
+| ~~1~~ | ~~Register the `w3id.org/semprini` namespace (PR to the w3id.org repository); confirm the redirect target that will host the ontology~~ | **Resolved:** registered and live. `https://w3id.org/semprini/ontology` content-negotiates to the ontology document or to its documentation, and versioned paths resolve for each released version. Redirects point at the project's own published site, so resolution depends on no domain beyond w3id.org itself (3.1). Instances may now mint IRIs |
 | 2 | ~~Confirm Apache-2.0 / CC BY 4.0 (8), or choose AGPL for the code if hosted-service competition is a concern~~ | **Resolved:** Apache-2.0 + CC BY 4.0, copyright Datakor Consulting Oy (8) |
 | 3 | Distribution channel: PyPI, or Git tags only at first | PyPI once the interface is stable; Git tags until then |
 | 4 | Which adapters are bundled versus separately distributed (5.3) | Ellie and Excel bundled; all later adapters evaluated case by case |

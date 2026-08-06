@@ -46,16 +46,21 @@ The technical account follows underneath — verification, decisions taken, note
 needs. That part is for whoever writes the next task; the summary is for everyone else, and it is
 the part that survives into the repository's history through the PR.
 
-## Blocking open decision
+## The `sem:` namespace is registered and live
 
-Spec §11 #1: the `sem:` metamodel namespace `https://w3id.org/semprini/ontology#` is not
-registered yet. It must resolve before any instance mints IRIs against it. Don't substitute a
-different namespace to unblock local work — the whole multi-deployment design rests on every instance
-sharing this one.
+Spec §11 #1 is **resolved**. `https://w3id.org/semprini/ontology#` resolves: an RDF `Accept` gets the
+ontology document, anything else gets its documentation, and `/ontology/X.Y.Z/` resolves per released
+version. Redirects land on the project's own GitHub Pages site, so nothing depends on a domain
+staying registered beyond w3id.org itself. Instances may mint IRIs against it.
 
-Registration is under way — see TASKS.md A2, which is the only record of the routing and hosting
-decisions, since the drafted w3id files live in the gitignored `background-material/w3id/semprini/`
-and are therefore absent from this repo's history.
+Two things this does **not** license. Never substitute a different namespace — the whole
+multi-deployment design rests on every instance sharing this one, and it is now permanent in
+published form. And every ontology version that has ever resolved must go on resolving: the site
+build currently publishes only the *current* version, so a version bump would 404 a path w3id
+promises is permanent. **G5 owns that fix** before any second ontology version ships.
+
+TASKS.md A2 is the only record of the routing and hosting decisions — the w3id files live in the
+gitignored `background-material/w3id/semprini/` and are absent from this repo's history.
 
 Base IRIs are no longer a project-level decision: each instance chooses its own at bootstrap and the
 namespace lock freezes it (§3.4). Keep `semantics.acme.com` / `https://semantics.example.com/` as

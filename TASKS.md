@@ -53,10 +53,9 @@ done and green.
   - CI runs the matrix on 3.12 and 3.14 only; 3.12 is the supported floor and cannot be
     checked locally, since this machine has 3.14 alone.
 
-- [ ] **A2 · Register the `sem:` namespace on w3id.org** *(submitted 2026-08-04 as
-  [perma-id/w3id.org#6488](https://github.com/perma-id/w3id.org/pull/6488) — everything on
-  our side is done and live; what remains is a third party's review queue, so this task is
-  now waiting, not working)*
+- [x] **A2 · Register the `sem:` namespace on w3id.org** *(merged — 
+  [perma-id/w3id.org#6488](https://github.com/perma-id/w3id.org/pull/6488). The namespace
+  is live and §11 #1 is resolved.)*
   **Spec:** §3.1, §11 #1
   **Deliver:** a PR to the w3id.org repository (`perma-id/w3id.org`) creating `/semprini/`
   — an `.htaccess` and a `README.md` — with content-negotiated redirects, **plus the
@@ -109,18 +108,24 @@ done and green.
      shrank to the ID line plus the required contact block. **No `RewriteRule` or
      `RewriteCond` changed**, so the 45-combination simulation from step 3 still holds and
      needs no re-run. Both trimmed files are in `background-material/w3id/semprini/`.
-  5. **Remaining.** On merge, run the two `curl` checks above, then tick the box. If
-     reviewers ask for further changes, the files to edit are the ones in the fork — and
-     mirror any change back into `background-material/w3id/semprini/`, which is gitignored
-     and is otherwise the only copy that survives the fork being reset.
-  **Known gap — frozen versions do not survive a version bump.** The site build emits a
-  frozen directory for the *current* ontology version only, so publishing 0.2.0 would
-  delete `/ontology/0.1.0/`, while the `.htaccess` promises that path resolves for ever.
-  Nothing is broken today (0.1.0 is the only version and nothing is released), but the
-  first bump breaks a permanent identifier silently. **G5 owns the fix**, since it is
-  release mechanics: released ontology versions have to be published from something that
-  outlives the working tree — a tag, or per-release copies the build collects — rather
-  than from `sem.ttl` alone.
+  5. ~~On merge, run the two `curl` checks above, then tick the box.~~ **Done — merged and
+     verified live.** All eight paths were checked, not just the two: an RDF `Accept` on
+     `/semprini/ontology` gets a `302` to `ontology/sem.ttl` and `200 text/turtle`; an HTML
+     `Accept` and a bare `*/*` both get `ontology/` and `200 text/html`;
+     `/ontology/sem.ttl`, `/ontology/0.1.0`, `/ontology/0.1.0/` and `/ontology/0.1.0/sem.ttl`
+     all resolve `200`; an unreleased version `404`s, as intended. The served Turtle is
+     **byte-identical** to `src/semprini/ontology/sem.ttl` at both the negotiated and the
+     versioned path. Note for anyone re-checking: `curl -I` follows to a `text/html`
+     `Content-Type` on the *redirect* hop, so read the final hop's header, not the first.
+  **Known gap — frozen versions do not survive a version bump, and the promise is now
+  public.** The site build emits a frozen directory for the *current* ontology version
+  only, so publishing 0.2.0 would delete `/ontology/0.1.0/` — a path w3id now promises
+  resolves for ever, and which this task just verified does. Nothing is broken today
+  (0.1.0 is the only version and nothing is released), but the first bump breaks a
+  permanent identifier silently, and it now breaks it in public. **G5 owns the fix**, and
+  it is a precondition of shipping a second ontology version, not a nice-to-have: released
+  versions have to be published from something that outlives the working tree — a tag, or
+  per-release copies the build collects — rather than from `sem.ttl` alone.
 
 - [x] **A3 · Metamodel ontology (`sem.ttl`)**
   **Spec:** §3.1, §3.2, §3.3, §7 (ontology versioning)
@@ -680,7 +685,7 @@ be deferred without stalling the build.
 
 | §11 | Decision | Blocks |
 |---|---|---|
-| 1 | w3id namespace registration — hosting live, PR #6488 submitted 2026-08-04, awaiting review | A2 → G5 (first release); no instance may mint IRIs before it |
+| ~~1~~ | ~~w3id namespace registration~~ — **resolved:** PR #6488 merged, `https://w3id.org/semprini/ontology` live and verified | ~~A2~~; nothing now. G5 must still keep every released `/ontology/X.Y.Z/` resolving |
 | 2 | Confirm Apache-2.0 / CC BY 4.0 | A1 (the licence files are written there) |
 | 3 | Distribution channel | G5 |
 | 4 | Which adapters ship bundled | D3, G4 |
@@ -691,11 +696,11 @@ be deferred without stalling the build.
 
 ## Sequencing notes
 
-- **A2 is submitted and now purely a waiting game.** A3, the hosting and the PR are all
-  done; the remaining dependency is a third party's review queue, which no amount of work
-  here compresses. Nothing else is blocked by it until G5, so the build order below
-  proceeds unchanged — C1 next, which is the first task to emit RDF and therefore the
-  first whose output an instance would commit.
+- ~~**A2 is submitted and now purely a waiting game.**~~ Done: the namespace is registered
+  and live, and §11 #1 — the project's one blocking decision — is resolved. Phase A is
+  complete. The build order proceeds unchanged: **C1 next**, the first task to emit RDF and
+  therefore the first whose output an instance would commit. G5 inherits the one obligation
+  A2 leaves behind: every released `/ontology/X.Y.Z/` must keep resolving.
 - ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
   once an instance holds generated files, every serializer change becomes a migration
   (§7). It now is one — a change to `serialize.py`'s output is a major bump.
