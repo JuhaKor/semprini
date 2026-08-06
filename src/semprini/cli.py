@@ -14,7 +14,7 @@ import sys
 from collections.abc import Sequence
 from enum import IntEnum
 
-from semprini import compiler_version, config, ontology_version
+from semprini import compiler_version, config, identity, ontology_version
 
 __all__ = ["ExitCode", "build_parser", "main"]
 
@@ -75,6 +75,14 @@ def build_parser() -> argparse.ArgumentParser:
     run = subcommands.add_parser("run", help="fetch, compile, write")
     run.add_argument("--source", metavar="<name>")
     run.add_argument("--dry-run", action="store_true")
+    run.add_argument(
+        "--force-namespace-change",
+        action="store_true",
+        help=(
+            "move the instance to a new base IRI, rewriting the ID map, the namespace "
+            "lock and every generated file (spec 3.4); expected to be a once-ever event"
+        ),
+    )
 
     subcommands.add_parser("check", help="validate only, no writes")
 
@@ -102,10 +110,12 @@ def _version() -> int:
 
 
 def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig | ExitCode:
-    """Load the instance's configuration, or report why it cannot be (exit code 2).
+    """Load the instance's configuration and check its namespace lock (exit code 2).
 
     Returns the configuration or an :class:`ExitCode`, rather than raising, so that every
     command handles the failure the same way — the exit code is the CI contract (5.1).
+    ``NamespaceLockError`` is a ``ConfigError``, so both land here: spec 5.1 makes them
+    one exit code, and the lock is the one configured value an instance may not edit.
 
     ``known_adapters`` is not passed yet: adapter discovery arrives with task D1, and
     checking source adapters against an empty set would reject every valid config.
@@ -116,6 +126,11 @@ def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig | ExitC
             # Validates --source against the configured sources: a typo would otherwise
             # compile nothing and exit 0, which reads as success.
             loaded.run_context(only_source=arguments.source, dry_run=arguments.dry_run)
+        if not getattr(arguments, "force_namespace_change", False):
+            # The one invocation allowed to disagree with the lock — moving the base IRI
+            # is what it is for (3.4). Every other run aborts on a mismatch rather than
+            # minting a second set of IRIs beside the ID map's.
+            identity.verify_namespace_lock(loaded)
     except config.ConfigError as error:
         print(f"{_PROGRAM}: {error}", file=sys.stderr)
         return ExitCode.CONFIG

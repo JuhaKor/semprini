@@ -41,6 +41,7 @@ __all__ = [
     "Entity",
     "InternalModel",
     "Issue",
+    "IssueError",
     "Kind",
     "MergeConflictError",
     "Relationship",
@@ -118,6 +119,31 @@ class Issue:
     def __str__(self) -> str:
         where = f" ({self.location})" if self.location else ""
         return f"{self.severity}: {self.message}{where}"
+
+
+class IssueError(ValueError):
+    """An error that carries every :class:`Issue` behind it, not just the first.
+
+    Configuration and identity both fail the same way — a file an operator can fix, read
+    in CI, where one problem per run costs a round trip each. Subclasses differ only in
+    what they are called and which exit code the CLI maps them to (spec 5.1).
+    """
+
+    noun: ClassVar[str] = "error"
+    """What the plural line calls them: "3 configuration errors"."""
+
+    def __init__(self, issues: Sequence[Issue], *, origin: str | None = None) -> None:
+        self.issues = tuple(issues)
+        self.origin = origin
+        """The file the issues are about, where one file is responsible for all of them."""
+        super().__init__(self._message())
+
+    def _message(self) -> str:
+        where = f"{self.origin}: " if self.origin else ""
+        if len(self.issues) == 1:
+            return f"{where}{self.issues[0]}"
+        listed = "\n".join(f"  - {issue}" for issue in self.issues)
+        return f"{where}{len(self.issues)} {self.noun}s\n{listed}"
 
 
 @dataclass(frozen=True, slots=True, order=True)

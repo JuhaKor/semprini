@@ -23,7 +23,7 @@ from __future__ import annotations
 import itertools
 import os
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -32,7 +32,7 @@ from typing import Any
 import yaml
 
 from semprini import serialize
-from semprini.model import Issue, RunContext, Severity, is_language_tag
+from semprini.model import Issue, IssueError, RunContext, Severity, is_language_tag
 
 __all__ = [
     "CONFIG_PATH",
@@ -40,6 +40,7 @@ __all__ = [
     "ConfigError",
     "InstanceConfig",
     "SourceConfig",
+    "is_slug",
     "load",
     "loads",
 ]
@@ -85,24 +86,25 @@ _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _MERGE_TAG = "tag:yaml.org,2002:merge"
 
 
-class ConfigError(ValueError):
+def is_slug(value: str) -> bool:
+    """Whether ``value`` is a slug: lower-case letters, digits, ``-`` and ``_``.
+
+    Public because a *scheme* slug is validated elsewhere — it lives in an adapter's own
+    ``config:`` subtree, which this module passes through uninterpreted (spec 5.2), and is
+    checked where it becomes an IRI local name (spec 3.4.2). One definition, so that an
+    instance id, a source name and a scheme slug cannot mean three different things.
+    """
+    return _SLUG.fullmatch(value) is not None
+
+
+class ConfigError(IssueError):
     """Configuration the compiler refuses to run on — CLI exit code 2 (spec 5.1).
 
     Carries every issue found, not just the first: a half-fixed config file that fails
     again on the next key wastes a CI round trip per mistake.
     """
 
-    def __init__(self, issues: Sequence[Issue], *, origin: str | None = None) -> None:
-        self.issues = tuple(issues)
-        self.origin = origin
-        super().__init__(self._message())
-
-    def _message(self) -> str:
-        where = f"{self.origin}: " if self.origin else ""
-        if len(self.issues) == 1:
-            return f"{where}{self.issues[0]}"
-        listed = "\n".join(f"  - {issue}" for issue in self.issues)
-        return f"{where}{len(self.issues)} configuration errors\n{listed}"
+    noun = "configuration error"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

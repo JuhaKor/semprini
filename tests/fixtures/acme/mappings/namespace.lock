@@ -1,0 +1,6 @@
+{
+  "base_iri": "https://semantics.example.com/",
+  "instance_id": "acme",
+  "ontology_version": "0.1.0",
+  "date": "2026-08-06"
+}
