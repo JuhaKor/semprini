@@ -394,8 +394,8 @@ done and green.
   rewrites map and lock together. Property test: minting is stable across processes
   (no reliance on hash seed or dict order).
   **Depends:** B2, B3
-  **Status — reviewed and fixed, not pushed.** The work is on branch `b4-identity`, local
-  only; opening the PR is the one step left.
+  **Status — reviewed, fixed, and open as
+  [PR #4](https://github.com/JuhaKor/semprini/pull/4).** Merge is the one step left.
   **Done.** 261 tests green; ruff, ruff format and mypy (strict) clean. Twenty-nine
   mutations were checked against the suite — a source UUID left unnormalized, taxonomy
   schemes taken in arrival order, a value minted from its code, an unsafe local name
