@@ -60,6 +60,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   are compile failures (exit `1`) once a command reaches them — `semprini check` reports
   the append-only and source-name checks in §6.1 check 6, which arrives with its own task;
   today no command compiles, so none of them is reachable from the CLI yet.
+- The graph builder (`semprini.build`): the internal model becomes one rdflib graph per
+  file of `generated/`, partitioned by scheme (§4.2). An object is written exactly once,
+  in the file of its lexicographically first scheme, and `dcterms:modified` is carried
+  forward from the previous output unless a node's other statements actually changed — so
+  recompiling unchanged sources produces byte-identical files and no diff. `ontology.ttl`
+  is copied verbatim, never re-serialized. The stage refuses, naming the source ref, an
+  object in no scheme or in the wrong kind of scheme, a renamed or malformed scheme slug,
+  a cross-reference to something the run did not resolve, and a `sem:enumerates` IRI the
+  instance never minted.
+- `generated/.manifest.json` (§4.3, §7): a `sha256` hash of every file the compiler
+  writes, plus the compiler and ontology versions that wrote them. No timestamps and
+  sorted keys, so two runs of one input produce the same bytes. It detects a hand-edited
+  generated file, a deleted one, and a file the compiler did not write — the last being
+  how stale output from a scheme that no longer exists gets caught. **A manifest is
+  refused when the compiler is running from a source tree**, since `0.0.0+source`
+  identifies no release and would make the version-drift check pass between two unrelated
+  working trees.
+- `generated/.report.md` (§5.6): the reviewer's summary an instance's compile workflow
+  pastes into its PR — versions, counts per class and per file, what is new, changed and
+  deprecated, objects with no definition, and objects of one class sharing a name.
+  Everything in it is derived from the graphs the run produced and the state they
+  replaced, so it cannot disagree with the files beside it. **The report is rewritten only
+  when the run changed something**: a scheduled compile that finds nothing new now leaves
+  the instance byte-identical instead of opening a pull request whose only content is a
+  report saying nothing changed.
 
 ### Ontology 0.1.0
 
