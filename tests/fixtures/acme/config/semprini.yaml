@@ -1,0 +1,18 @@
+# The synthetic instance the plane's own test suite compiles (spec 6.1). Every value
+# here is invented: no adopting organization's content ever enters this repository
+# (spec 9.2 rule 5). Filled out further by task D2, which adds the workbook, the ID map
+# and the golden TTL this configuration describes.
+semprini:
+  base_iri: https://semantics.example.com/
+  instance_id: acme
+  default_language: en
+
+sources:
+  - adapter: excel-taxonomy
+    name: taxonomies
+    config:
+      files:
+        - path: sources/taxonomies/product-category.xlsx
+          scheme_slug: product-category
+          scheme_label: "Product category taxonomy"
+          codes_are_stable: true

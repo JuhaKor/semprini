@@ -14,7 +14,7 @@ import sys
 from collections.abc import Sequence
 from enum import IntEnum
 
-from semprini import compiler_version, ontology_version
+from semprini import compiler_version, config, ontology_version
 
 __all__ = ["ExitCode", "build_parser", "main"]
 
@@ -44,6 +44,12 @@ _UNIMPLEMENTED = {
     "migrate": "task G3",
     "adapters": "task D1",
 }
+
+# Subcommands that operate on a configured instance, and therefore fail on a broken
+# configuration before doing anything else. `init` is excluded — it writes the
+# configuration — and `adapters` and `version` describe the installation, not an
+# instance.
+_NEEDS_CONFIG = frozenset({"run", "check", "migrate"})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -95,6 +101,27 @@ def _version() -> int:
     return ExitCode.OK
 
 
+def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig | ExitCode:
+    """Load the instance's configuration, or report why it cannot be (exit code 2).
+
+    Returns the configuration or an :class:`ExitCode`, rather than raising, so that every
+    command handles the failure the same way — the exit code is the CI contract (5.1).
+
+    ``known_adapters`` is not passed yet: adapter discovery arrives with task D1, and
+    checking source adapters against an empty set would reject every valid config.
+    """
+    try:
+        loaded = config.load()
+        if arguments.command == "run":
+            # Validates --source against the configured sources: a typo would otherwise
+            # compile nothing and exit 0, which reads as success.
+            loaded.run_context(only_source=arguments.source, dry_run=arguments.dry_run)
+    except config.ConfigError as error:
+        print(f"{_PROGRAM}: {error}", file=sys.stderr)
+        return ExitCode.CONFIG
+    return loaded
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``semprini`` console script."""
     parser = build_parser()
@@ -108,6 +135,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "version":
         return _version()
+
+    if arguments.command in _NEEDS_CONFIG:
+        # Deliberately ahead of the "not implemented" message below: a command that will
+        # read the instance owes the operator the configuration error now, with the key
+        # that caused it, rather than after the feature lands.
+        outcome = _load_config(arguments)
+        if isinstance(outcome, ExitCode):
+            return outcome
 
     task = _UNIMPLEMENTED[arguments.command]
     print(

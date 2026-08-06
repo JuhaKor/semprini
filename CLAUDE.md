@@ -10,8 +10,8 @@ templates and an instance scaffold. Organizations run `semprini init` to create 
 repository holding their config, sources, identity registry and generated RDF. One plane, many
 instances — nothing here is ever specific to one customer.
 
-Implementation has not started. The directory currently holds one authoritative document and one
-prior-project prototype:
+Implementation is under way — `TASKS.md` records what is done and what is next. Two documents
+govern the work, alongside one prior-project prototype:
 
 - `docs/rdf-repo-and-compiler-spec.md` — **authoritative** (v0.2). Specifies the metamodel, the
   compiler, the two repository layouts, versioning, licensing and governance. Self-contained: "no
@@ -26,11 +26,25 @@ prior-project prototype:
   for learnings, never cite it as a requirement.
 
 Target layout is spec §4.1 (`src/semprini/`, `templates/instance/`, `workflows/`, `tests/fixtures/acme/`),
-Python 3.12+, `rdflib` / `openpyxl` / `requests` / `pyshacl`, CLI per §5.1. Dependencies here
+Python 3.12+, `rdflib` / `openpyxl` / `requests` / `pyshacl` / `PyYAML`, CLI per §5.1. Dependencies here
 are managed with **Poetry** (`poetry.lock` committed); the shipped wheel is plain, so instances
 install it with `pip` and never need Poetry — don't add Poetry to instance templates or workflows. Do **not** create
 `generated/`, `overlays/`, `sources/`, `mappings/` or `config/` here — those belong to an instance
 (§4.2), and this repo contains no instance content by policy (§9.2 rule 5).
+
+## Reporting back on a task
+
+**Every task report opens with a plain-language summary, and the same summary opens the PR
+description.** Not a second version of the commit message: what an adopter or a steward can now
+*do* that they could not before, and why that matters to them. Capabilities and consequences, not
+modules and function names — someone who does not read Python has to be able to tell what changed
+and decide whether it is what they wanted. Where a choice has a downstream effect an organization
+would feel (a secret that can no longer be committed, a run that now fails early, a decision that
+freezes something permanently), say so in that summary rather than burying it in the detail.
+
+The technical account follows underneath — verification, decisions taken, notes the next session
+needs. That part is for whoever writes the next task; the summary is for everyone else, and it is
+the part that survives into the repository's history through the PR.
 
 ## Blocking open decision
 
