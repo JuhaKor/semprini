@@ -53,10 +53,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `2` on a mismatch, or when the lock is missing. Moving an instance to a new base IRI is
   `semprini run --force-namespace-change` — a migration that rewrites the ID map and the
   lock together, keeping every local name — and not a configuration edit.
-- Identity failures are compile failures (exit `1`), each naming the source ref that
-  caused it: an IRI collision, an object the ID map already holds two IRIs for, a source
-  key that changes kind, a row removed or rewritten against the base revision, and a
-  `source_name` in the map that configuration no longer declares.
+- Identity failures raise `IdentityError`, each naming the source ref that caused it: an
+  IRI collision, two objects resolving onto one IRI, an object the ID map already holds
+  two IRIs for, a source key that changes kind, a row removed or edited against the base
+  revision, and a `source_name` in the map that configuration no longer declares. These
+  are compile failures (exit `1`) once a command reaches them — `semprini check` reports
+  the append-only and source-name checks in §6.1 check 6, which arrives with its own task;
+  today no command compiles, so none of them is reachable from the CLI yet.
 
 ### Ontology 0.1.0
 

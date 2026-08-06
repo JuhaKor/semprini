@@ -394,13 +394,9 @@ done and green.
   rewrites map and lock together. Property test: minting is stable across processes
   (no reliance on hash seed or dict order).
   **Depends:** B2, B3
-  **Status — committed, not reviewed, not pushed.** The work is on branch `b4-identity`
-  (commit `6fe3ca6`), local only. The box is ticked because the verification above is
-  automated and green, but the review this repo runs before a PR has **not** happened.
-  Next session: `/code-review` on a sub-agent at medium against the branch, fix what it
-  finds, then push and open the PR. Nothing downstream should treat B4 as settled until
-  that is through — C1 builds directly on `identity.Registry`.
-  **Done.** 239 tests green; ruff, ruff format and mypy (strict) clean. Twenty-nine
+  **Status — reviewed and fixed, not pushed.** The work is on branch `b4-identity`, local
+  only; opening the PR is the one step left.
+  **Done.** 261 tests green; ruff, ruff format and mypy (strict) clean. Twenty-nine
   mutations were checked against the suite — a source UUID left unnormalized, taxonomy
   schemes taken in arrival order, a value minted from its code, an unsafe local name
   accepted, a duplicate row absorbed, one IRI holding two kinds, a minting collision
@@ -416,6 +412,40 @@ done and green.
   only the path it passed to `save()`, so a mutant that wrote to the *working directory*
   passed it — and wrote a `mappings/` tree into this repository, which §9.2 rule 5
   forbids. The test now chdirs to the temp path and asserts the directory stays empty.
+
+  **Review found nine issues; all are fixed**, with a test and a mutation each (13 more
+  mutations, all caught). Two were real defects and both are worth remembering, because
+  the second is the shape of mistake this module exists to prevent:
+  - **Two distinct objects could resolve to one IRI, silently.** The collision guard sat
+    on the *minting* path only, and a lookup that hits never consults another object. The
+    reachable history is ordinary: several ID-map rows share an IRI exactly when several
+    sources described one object — which is what a merge records — so if the
+    cross-reference that merged them later disappears from the sources, both objects
+    arrive separately, both hit those rows, and C1 would have emitted one node wearing two
+    `skos:prefLabel`s. The question can only be asked over the whole model, so
+    `Registry.resolve()` now checks that the mapping it returns is **injective**;
+    `iri_for()` structurally cannot.
+  - **`Registry.save()` defaulted to the working directory** while `Registry.load()` read
+    from `config.repo_root`, so a run whose cwd was not the instance would write a stray
+    partial map elsewhere and lose every row it appended. The registry now carries the
+    root it loaded from. Nothing was broken yet — today's CLI always has cwd == repo_root
+    — but this note previously told C1/E2 to "call `save()` exactly once", and the
+    signature invited them to call it with no argument.
+
+  The rest were narrower: `check_append_only` compared only the IRI, so a rewritten `kind`
+  or `first_seen` passed (it now compares every column but `note`, the one stewards own);
+  `UUID(key)` was treating URNs, braces and bare 32-hex as "the source provided a UUID",
+  so a 32-digit business code would have frozen a local name no source issued (only the
+  canonical form counts now); a byte-order mark — which Excel writes, and stewards open
+  this CSV in Excel — made the header error print two identical-looking column lists (both
+  files now read `utf-8-sig`); `--force-namespace-change` suspends every lock check, and
+  so silently adopted a drifted `instance_id` and refreshed the lock's date on a no-op
+  move (both refused now); scheme slugs were case-sensitive, so `Sales` and `sales` were
+  two permanent IRIs and one file on a case-insensitive filesystem (slugs are held to
+  `config.is_slug()`, the one definition the whole project uses); and the error handlers
+  in `IdMap.load` / `NamespaceLock.load` plus `Registry.iri()` had no tests. Each of those
+  changed §3.4 or §5.4, and the spec was edited in the same change.
+
   Decisions, for later sessions:
   - **`NAMESPACE_SEMPRINI` = `8865c94a-2211-5f26-8887-6d6d5cbaa1e0`**, which is
     `uuid5(NAMESPACE_URL, "https://w3id.org/semprini/ontology#")`. Written as a literal
@@ -441,7 +471,10 @@ done and green.
   - **F2 should call the checks, not re-derive them.** `IdMap.check_append_only(base)` and
     `IdMap.check_sources_are_configured(names)` return `Issue`s; §6.1 check 6 is those two
     plus what `Registry` raises during a run. Getting the base revision out of git is
-    F2's, and is the one part of check 6 not implemented here.
+    F2's, and is the one part of check 6 not implemented here. **No command reaches an
+    `IdentityError` yet**, so the CLI has no handler for one and none was added — dead
+    code with no test is worse than the gap. Whoever wires the first identity-touching
+    command (E2 or F2) owns mapping it to exit 1, which is what §6.1 check 6 reports.
   - **`Registry` accumulates in memory and writes only on `save()`**, which is what makes
     `--dry-run` and a mid-pipeline failure safe (§5.1). C1/E2 must call `save()` exactly
     once, after the generated files are written.

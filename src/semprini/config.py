@@ -40,6 +40,7 @@ __all__ = [
     "ConfigError",
     "InstanceConfig",
     "SourceConfig",
+    "is_slug",
     "load",
     "loads",
 ]
@@ -83,6 +84,17 @@ _KEY_SEPARATOR = re.compile(r"[-_]")
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 _MERGE_TAG = "tag:yaml.org,2002:merge"
+
+
+def is_slug(value: str) -> bool:
+    """Whether ``value`` is a slug: lower-case letters, digits, ``-`` and ``_``.
+
+    Public because a *scheme* slug is validated elsewhere — it lives in an adapter's own
+    ``config:`` subtree, which this module passes through uninterpreted (spec 5.2), and is
+    checked where it becomes an IRI local name (spec 3.4.2). One definition, so that an
+    instance id, a source name and a scheme slug cannot mean three different things.
+    """
+    return _SLUG.fullmatch(value) is not None
 
 
 class ConfigError(IssueError):

@@ -214,12 +214,17 @@ tell the same story.
 2. **Minting.** The namespace is always the one belonging to the object's *kind* (3.1);
    only the local name varies:
    - Objects whose source provides a stable UUID → `c:{uuid}` / `r:{uuid}` (the source
-     UUID is used directly as the IRI local name; it is already opaque and stable). It is
-     normalized to its canonical lower-case form first, so that a source which starts
-     reporting the same UUID in upper case does not mint a second IRI for one object.
+     UUID is used directly as the IRI local name; it is already opaque and stable). A key
+     counts as a UUID only when it is written in the canonical `8-4-4-4-12` form; case is
+     normalized to lower case, so that a source which starts reporting the same UUID in
+     upper case does not mint a second IRI for one object. A 32-digit code is *not* a
+     UUID, and takes the derived path below rather than being read as one.
    - Schemes → `sch:{slug}` where the slug is assigned **once** at scheme creation and
      recorded in the ID map; treat it as opaque thereafter (renaming the glossary does
-     not change the slug).
+     not change the slug). A slug is lower-case letters, digits, `-` and `_` — the same
+     shape as an instance id or a source name. `Sales` and `sales` would otherwise be two
+     permanent IRIs for one taxonomy, and one file in `generated/` on a case-insensitive
+     filesystem.
    - Objects with no source UUID → `{prefix}:{uuid5}`, derived from the fixed namespace
      `NAMESPACE_SEMPRINI` = `8865c94a-2211-5f26-8887-6d6d5cbaa1e0` — itself
      `UUIDv5(NAMESPACE_URL, "https://w3id.org/semprini/ontology#")`, and **permanent**:
@@ -249,7 +254,11 @@ tell the same story.
    configuration edit: it requires `--force-namespace-change`, which rewrites the ID map
    and every generated file in one reviewable commit and is expected to be a once-ever
    event. Local names survive the move unchanged, so an object keeps its identity and
-   changes only the namespace it lives in.
+   changes only the namespace it lives in. The flag moves the **base IRI and nothing
+   else**: it is the one invocation that suspends the lock's checks, so an instance id
+   that has also drifted is refused rather than re-frozen, and a "move" to the base IRI
+   already locked is refused too — it would only discard the record of when the namespace
+   was frozen.
 
 ### 3.5 Lifecycle rules
 
@@ -587,8 +596,18 @@ so a third-party adapter is never a second-class citizen.
 - `kind` is recorded, not part of the key. A source key that arrives describing a
   different kind than the one recorded is an error, since its IRI is already minted in
   another kind's namespace.
+- **Distinct objects must resolve to distinct IRIs**, and this is checked over the whole
+  model rather than one object at a time. Several rows legitimately share an IRI — that is
+  what a multi-source object looks like — so a lookup alone cannot tell the difference.
+  If the cross-reference that merged two objects later disappears from the sources, both
+  arrive separately, both hit those rows, and without the check the compiler would emit a
+  single node wearing two `skos:prefLabel`s. Reconciling them is the sources' business or
+  the merge register's, never the compiler's.
 - The file is written UTF-8 with LF line endings and its rows keep the order they were
   appended in. It is committed, and a compile PR's diff over it should be additions only.
+  "Append-only" means every column of an existing row is immutable **except `note`**,
+  which is the one field stewards own. A byte-order mark is tolerated on read: the file is
+  a CSV, and stewards open it in tools that add one.
 - The ID map, not the minting formula, is authoritative. This makes identity survive
   code renames, file moves, changes to the minting rules, and compiler upgrades.
 - `source_name` is the name given to a source in `config/semprini.yaml`. Renaming a

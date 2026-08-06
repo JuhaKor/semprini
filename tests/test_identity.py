@@ -16,6 +16,7 @@ including one that silently re-mints every object in every instance in existence
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import json
 import os
@@ -24,6 +25,7 @@ import sys
 import textwrap
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -116,7 +118,29 @@ def test_a_source_uuid_is_used_as_the_local_name() -> None:
 def test_a_source_uuid_is_normalized_to_its_canonical_form() -> None:
     """The same UUID in upper case is the same UUID, and must not mint a second IRI."""
     assert identity.mint_local_name(entity(key=CUSTOMER_UUID.upper())) == CUSTOMER_UUID
-    assert identity.mint_local_name(entity(key=CUSTOMER_UUID.replace("-", ""))) == CUSTOMER_UUID
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param(CUSTOMER_UUID.replace("-", ""), id="bare-32-hex"),
+        pytest.param(f"urn:uuid:{CUSTOMER_UUID}", id="urn"),
+        pytest.param("{" + CUSTOMER_UUID + "}", id="braces"),
+        pytest.param("12345678123456781234567812345678", id="32-digit-code"),
+    ],
+)
+def test_only_a_canonically_written_uuid_counts_as_one(key: str) -> None:
+    """Spec 3.4.2's rule is about what the *source provides*, not what ``UUID()`` parses.
+
+    ``UUID()`` also accepts URNs, braces and bare hex, so a 32-digit numeric business code
+    would parse as a UUID and freeze a local name the source never issued. Anything not
+    written as a UUID takes the derived UUIDv5 path instead, which is equally stable — so
+    this is a question of honesty about provenance, not of whether an IRI can be minted.
+    """
+    minted = identity.mint_local_name(entity(key=key))
+
+    assert minted == str(uuid.uuid5(NAMESPACE_SEMPRINI, f"{SOURCE}:{key}"))
+    assert minted != CUSTOMER_UUID
 
 
 def test_a_source_key_that_is_not_a_uuid_derives_one() -> None:
@@ -175,14 +199,32 @@ def test_a_taxonomy_value_with_no_scheme_cannot_be_minted() -> None:
         identity.mint_local_name(orphan)
 
 
-def test_a_slug_that_cannot_be_written_as_a_local_name_is_refused() -> None:
+@pytest.mark.parametrize(
+    "slug",
+    [
+        pytest.param("product category", id="space"),
+        pytest.param("product/category", id="slash"),
+        pytest.param("Sales", id="upper-case"),
+        pytest.param("sales.2024", id="dot"),
+    ],
+)
+def test_a_slug_that_must_not_be_frozen_into_an_iri_is_refused(slug: str) -> None:
     """A scheme slug comes from the adapter's own config subtree, unvalidated until here.
 
-    The ID map would freeze whatever it produced, so a slug that the serializer would
-    have to write as a full ``<IRI>`` is refused before it can be recorded.
+    The ID map would freeze whatever it produced. A space or a slash would not survive
+    being written after a prefix; upper case would let ``Sales`` and ``sales`` become two
+    permanent IRIs for one taxonomy that no collision check can tell apart — and one file
+    in ``generated/`` on a case-insensitive filesystem.
     """
-    with pytest.raises(IdentityError, match="cannot be an IRI local name"):
-        identity.mint_local_name(scheme(slug="product category"))
+    with pytest.raises(IdentityError, match="cannot become an IRI local name"):
+        identity.mint_local_name(scheme(slug=slug))
+
+
+def test_a_scheme_slug_is_held_to_the_same_shape_as_every_other_slug() -> None:
+    """One definition of "slug", so an instance id, a source name and a scheme slug
+    cannot come to mean three different things."""
+    assert config.is_slug("product-category")
+    assert not config.is_slug("Product-Category")
 
 
 @pytest.mark.parametrize(
@@ -337,6 +379,53 @@ def test_a_source_key_that_changes_kind_is_refused() -> None:
         known.iri_for(entity(key="1234"))
 
 
+def test_two_objects_that_resolve_to_one_recorded_iri_are_refused() -> None:
+    """The lookup path's own collision, and the one ``iri_for`` cannot see alone.
+
+    History: one object described by two sources, so two rows carrying one IRI — which is
+    exactly what a merge records. Today: the cross-reference that merged them is gone from
+    the sources, so two objects arrive. Both hit the map, neither mints, and without this
+    check the graph builder would emit one node wearing two ``skos:prefLabel``s.
+    """
+    known = registry(
+        (
+            row(f"{BASE}concepts/{CUSTOMER_UUID}"),
+            row(f"{BASE}concepts/{CUSTOMER_UUID}", source="collibra", key="CUST"),
+        )
+    )
+    split = InternalModel(
+        entities=(
+            Entity(source_refs={SOURCE: CUSTOMER_UUID}, pref_label="Customer", schemes=("sales",)),
+            Entity(source_refs={"collibra": "CUST"}, pref_label="Client", schemes=("sales",)),
+        )
+    )
+
+    with pytest.raises(IdentityError, match="separate entitys resolve to"):
+        known.resolve(split)
+
+
+def test_one_object_reported_by_two_sources_still_resolves() -> None:
+    """The guard above must not fire on the case it is built from: two rows, one IRI,
+    one object — the legitimate state a merge leaves behind."""
+    known = registry(
+        (
+            row(f"{BASE}concepts/{CUSTOMER_UUID}"),
+            row(f"{BASE}concepts/{CUSTOMER_UUID}", source="collibra", key="CUST"),
+        )
+    )
+    merged = InternalModel(
+        entities=(
+            Entity(
+                source_refs={SOURCE: CUSTOMER_UUID, "collibra": "CUST"},
+                pref_label="Customer",
+                schemes=("sales",),
+            ),
+        )
+    )
+
+    assert set(known.resolve(merged).values()) == {f"{BASE}concepts/{CUSTOMER_UUID}"}
+
+
 def test_resolve_covers_every_object_in_the_model() -> None:
     model = InternalModel(entities=(entity(),), schemes=(scheme(),), taxonomy_values=(value(),))
     fresh = registry()
@@ -346,6 +435,19 @@ def test_resolve_covers_every_object_in_the_model() -> None:
     assert set(resolved) == set(model.objects)
     assert len(set(resolved.values())) == 3
     assert len(fresh.id_map) == 3
+
+
+def test_a_referenced_source_ref_can_be_looked_up_by_iri() -> None:
+    """What C1 needs to emit ``sem:attributeOf``, ``sem:source`` and ``skos:broader``:
+    an object's fields point at other objects by source ref, not by IRI (spec 5.2)."""
+    fresh = registry()
+    ref = SourceRef(SOURCE, CUSTOMER_UUID)
+
+    assert fresh.iri(ref) is None
+
+    minted = fresh.iri_for(entity())
+
+    assert fresh.iri(ref) == minted
 
 
 def test_a_second_run_over_an_unchanged_model_appends_nothing() -> None:
@@ -379,6 +481,26 @@ def test_nothing_reaches_the_file_until_save(
     fresh.save(tmp_path)
 
     assert (tmp_path / ID_MAP_PATH).exists()
+
+
+def test_the_registry_saves_back_to_the_instance_it_loaded_from(
+    instance: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``save()`` follows the instance, not the working directory.
+
+    Reading one instance's map and writing it into another loses every row the run
+    appended and re-mints them all on the next one — and leaves a stray half-map behind.
+    """
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    loaded = Registry.load(config.load(instance), today=TODAY)
+    loaded.iri_for(entity())
+
+    loaded.save()
+
+    assert IdMap.load(instance).rows == loaded.id_map.rows
+    assert not (elsewhere / ID_MAP_PATH).exists()
 
 
 def test_registry_load_verifies_the_namespace_lock(instance: Path) -> None:
@@ -430,6 +552,38 @@ def test_the_header_is_exactly_the_spec_columns() -> None:
 def test_a_missing_map_is_an_empty_map(tmp_path: Path) -> None:
     """A freshly initialized instance mints everything it sees."""
     assert len(IdMap.load(tmp_path)) == 0
+
+
+def test_a_map_saved_by_excel_with_a_byte_order_mark_still_loads(tmp_path: Path) -> None:
+    """Stewards open this CSV in Excel, which writes a BOM by default.
+
+    Left in place the BOM joins the first column name, and the header check then reports
+    two lists of columns that look identical — the least actionable error available.
+    """
+    saved = IdMap((row(f"{BASE}concepts/{CUSTOMER_UUID}"),))
+    path = tmp_path / ID_MAP_PATH
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xef\xbb\xbf" + saved.dumps().encode("utf-8"))
+
+    assert IdMap.load(tmp_path).rows == saved.rows
+
+
+def test_a_map_that_is_not_utf8_is_refused(tmp_path: Path) -> None:
+    """An editor that saved in the system codepage — the mistake config already names."""
+    path = tmp_path / ID_MAP_PATH
+    path.parent.mkdir(parents=True)
+    path.write_bytes(",".join(ID_MAP_COLUMNS).encode("utf-8") + b"\n\xff\xfe not utf-8\n")
+
+    with pytest.raises(IdentityError, match="not valid UTF-8"):
+        IdMap.load(tmp_path)
+
+
+def test_a_map_that_cannot_be_read_is_refused(tmp_path: Path) -> None:
+    """A directory where the file should be: reported, not raised as an OSError."""
+    (tmp_path / ID_MAP_PATH).mkdir(parents=True)
+
+    with pytest.raises(IdentityError, match="cannot read the ID map"):
+        IdMap.load(tmp_path)
 
 
 def test_an_empty_file_is_refused() -> None:
@@ -547,14 +701,37 @@ def test_a_removed_row_is_detected_against_the_base_revision() -> None:
     assert "append-only" in issues[0].message
 
 
-def test_a_rewritten_row_is_detected() -> None:
-    base = IdMap((row(f"{BASE}concepts/{CUSTOMER_UUID}"),))
-    current = IdMap((row(f"{BASE}concepts/something-else"),))
+@pytest.mark.parametrize(
+    ("edit", "expected"),
+    [
+        pytest.param({"iri": f"{BASE}concepts/something-else"}, "iri was", id="iri"),
+        pytest.param({"kind": Kind.SCHEME}, "kind was", id="kind"),
+        pytest.param({"first_seen": datetime.date(2020, 1, 1)}, "first_seen was", id="first_seen"),
+    ],
+)
+def test_an_edited_row_is_detected(edit: dict[str, Any], expected: str) -> None:
+    """Every column except ``note`` is compared.
 
-    issues = current.check_append_only(base)
+    ``kind`` matters as much as ``iri``: it is what the registry checks an arriving source
+    key against, so rewriting it disables that guard — and for an object no source reports
+    any more, this check is the only place it would ever be noticed.
+    """
+    original = row(f"{BASE}concepts/{CUSTOMER_UUID}")
+    current = IdMap((dataclasses.replace(original, **edit),))
+
+    issues = current.check_append_only(IdMap((original,)))
 
     assert len(issues) == 1
-    assert "never rewritten" in issues[0].message
+    assert "was rewritten" in issues[0].message
+    assert expected in issues[0].message
+
+
+def test_an_edited_note_is_not_a_violation() -> None:
+    """The one column stewards own, and are expected to write in."""
+    original = row(f"{BASE}concepts/{CUSTOMER_UUID}")
+    current = IdMap((dataclasses.replace(original, note="merged, see PR #12"),))
+
+    assert current.check_append_only(IdMap((original,))) == ()
 
 
 def test_appending_rows_is_not_a_violation() -> None:
@@ -605,6 +782,23 @@ def test_the_fixture_instance_is_locked_to_its_configured_base_iri(instance: Pat
 def test_a_missing_lock_is_refused(tmp_path: Path) -> None:
     """Deleting the file must not be a way around a permanent decision."""
     with pytest.raises(NamespaceLockError, match="no namespace lock"):
+        NamespaceLock.load(tmp_path)
+
+
+def test_a_lock_with_a_byte_order_mark_still_loads(tmp_path: Path) -> None:
+    """A BOM would otherwise reach json.loads and be reported as bad JSON at character 0,
+    which says nothing about how to fix it."""
+    path = tmp_path / NAMESPACE_LOCK_PATH
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xef\xbb\xbf" + lock().dumps().encode("utf-8"))
+
+    assert NamespaceLock.load(tmp_path) == lock()
+
+
+def test_a_lock_that_cannot_be_read_is_refused(tmp_path: Path) -> None:
+    (tmp_path / NAMESPACE_LOCK_PATH).mkdir(parents=True)
+
+    with pytest.raises(NamespaceLockError, match="cannot read the namespace lock"):
         NamespaceLock.load(tmp_path)
 
 
@@ -736,6 +930,29 @@ def test_force_namespace_change_rewrites_map_and_lock_together(instance: Path) -
     assert IdMap.load(instance).rows == moved.rows
     assert moved.rows[1].note == "keep me"
     assert moved.rows[1].first_seen == TODAY
+
+
+def test_the_flag_moves_the_base_iri_and_nothing_else(instance: Path) -> None:
+    """It is the one invocation that suspends the lock's checks, so it must not become
+    the way another locked value gets quietly adopted (spec 3.4.4)."""
+    _rewrite_base_iri(instance, "https://vocab.example.org/")
+    path = instance / config.CONFIG_PATH
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("instance_id: acme", "instance_id: acme-new"),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    with pytest.raises(NamespaceLockError, match="base IRI and nothing else"):
+        identity.force_namespace_change(config.load(instance), ontology_version="0.1.0")
+
+
+def test_a_move_that_changes_nothing_is_refused(instance: Path) -> None:
+    """Rewriting the lock then only discards the record of when the namespace was frozen."""
+    with pytest.raises(NamespaceLockError, match="nothing to move"):
+        identity.force_namespace_change(config.load(instance), ontology_version="0.1.0")
+
+    assert NamespaceLock.load(instance).date == datetime.date(2026, 8, 6)
 
 
 def test_the_moved_instance_then_verifies_against_its_new_lock(instance: Path) -> None:
