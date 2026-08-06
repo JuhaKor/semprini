@@ -394,6 +394,12 @@ done and green.
   rewrites map and lock together. Property test: minting is stable across processes
   (no reliance on hash seed or dict order).
   **Depends:** B2, B3
+  **Status — committed, not reviewed, not pushed.** The work is on branch `b4-identity`
+  (commit `6fe3ca6`), local only. The box is ticked because the verification above is
+  automated and green, but the review this repo runs before a PR has **not** happened.
+  Next session: `/code-review` on a sub-agent at medium against the branch, fix what it
+  finds, then push and open the PR. Nothing downstream should treat B4 as settled until
+  that is through — C1 builds directly on `identity.Registry`.
   **Done.** 239 tests green; ruff, ruff format and mypy (strict) clean. Twenty-nine
   mutations were checked against the suite — a source UUID left unnormalized, taxonomy
   schemes taken in arrival order, a value minted from its code, an unsafe local name
