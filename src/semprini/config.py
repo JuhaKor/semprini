@@ -23,7 +23,7 @@ from __future__ import annotations
 import itertools
 import os
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -32,7 +32,7 @@ from typing import Any
 import yaml
 
 from semprini import serialize
-from semprini.model import Issue, RunContext, Severity, is_language_tag
+from semprini.model import Issue, IssueError, RunContext, Severity, is_language_tag
 
 __all__ = [
     "CONFIG_PATH",
@@ -85,24 +85,14 @@ _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _MERGE_TAG = "tag:yaml.org,2002:merge"
 
 
-class ConfigError(ValueError):
+class ConfigError(IssueError):
     """Configuration the compiler refuses to run on — CLI exit code 2 (spec 5.1).
 
     Carries every issue found, not just the first: a half-fixed config file that fails
     again on the next key wastes a CI round trip per mistake.
     """
 
-    def __init__(self, issues: Sequence[Issue], *, origin: str | None = None) -> None:
-        self.issues = tuple(issues)
-        self.origin = origin
-        super().__init__(self._message())
-
-    def _message(self) -> str:
-        where = f"{self.origin}: " if self.origin else ""
-        if len(self.issues) == 1:
-            return f"{where}{self.issues[0]}"
-        listed = "\n".join(f"  - {issue}" for issue in self.issues)
-        return f"{where}{len(self.issues)} configuration errors\n{listed}"
+    noun = "configuration error"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

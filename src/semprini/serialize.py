@@ -32,6 +32,7 @@ from rdflib.term import Node
 __all__ = [
     "CANONICAL_PREFIXES",
     "SEM_NAMESPACE",
+    "is_safe_local_name",
     "namespaces",
     "serialize",
     "write",
@@ -109,6 +110,16 @@ def namespaces(base_iri: str) -> Mapping[str, str]:
     _check_base_iri(base_iri)
     resolved = {**_FIXED_NAMESPACES, **{p: base_iri + s for p, s in _INSTANCE_SUFFIXES.items()}}
     return {prefix: resolved[prefix] for prefix in CANONICAL_PREFIXES}
+
+
+def is_safe_local_name(name: str) -> bool:
+    """Whether ``name`` can follow a prefix here without escaping.
+
+    Public because identity (spec 3.4) refuses to mint a local name this module would
+    have to write as a full ``<IRI>`` instead: a slug arrives from an adapter's own
+    configuration, and the ID map would freeze whatever it produced.
+    """
+    return _SAFE_LOCAL_NAME.fullmatch(name) is not None
 
 
 def serialize(graph: Graph, base_iri: str) -> str:
@@ -260,7 +271,7 @@ def _iri(node: URIRef, prefixes: Mapping[str, str]) -> str:
     for prefix, namespace in prefixes.items():
         if not iri.startswith(namespace):
             continue
-        if not _SAFE_LOCAL_NAME.fullmatch(iri[len(namespace) :]):
+        if not is_safe_local_name(iri[len(namespace) :]):
             continue
         # Longest namespace wins, so a nested namespace never loses to its parent and
         # the choice does not depend on the block's order.

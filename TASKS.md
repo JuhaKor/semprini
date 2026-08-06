@@ -384,7 +384,7 @@ done and green.
     `product-category` scheme. Its base IRI is `https://semantics.example.com/`
     (reserved by RFC 2606) rather than the spec example's `semantics.acme.com`.
 
-- [ ] **B4 · Identity: ID map, minting, namespace lock**
+- [x] **B4 · Identity: ID map, minting, namespace lock**
   **Spec:** §3.4, §5.4
   **Deliver:** `src/semprini/identity.py` — ID-map read/append, minting per §3.4.2, UUIDv5
   namespace constant, collision detection, namespace lock write/verify.
@@ -394,6 +394,55 @@ done and green.
   rewrites map and lock together. Property test: minting is stable across processes
   (no reliance on hash seed or dict order).
   **Depends:** B2, B3
+  **Done.** 239 tests green; ruff, ruff format and mypy (strict) clean. Twenty-nine
+  mutations were checked against the suite — a source UUID left unnormalized, taxonomy
+  schemes taken in arrival order, a value minted from its code, an unsafe local name
+  accepted, a duplicate row absorbed, one IRI holding two kinds, a minting collision
+  tolerated, an object with two IRIs silently resolved, a source key changing kind, a
+  removed row undetected, a rewritten row undetected, an unconfigured source name
+  tolerated, three line-ending regressions, rows re-sorted, a missing lock treated as no
+  lock, the base IRI or the instance id not compared, the ontology version compared, a
+  foreign IRI carried through the move, the move rewriting the lock alone, the registry
+  writing as it mints, `Registry.load` skipping verification, the CLI skipping the lock
+  check, `--force-namespace-change` not skipping it, the header unchecked, an unknown
+  kind coerced, and only the first bad row reported — and each fails it. That battery
+  paid for itself twice: `test_nothing_reaches_the_file_until_save` originally watched
+  only the path it passed to `save()`, so a mutant that wrote to the *working directory*
+  passed it — and wrote a `mappings/` tree into this repository, which §9.2 rule 5
+  forbids. The test now chdirs to the temp path and asserts the directory stays empty.
+  Decisions, for later sessions:
+  - **`NAMESPACE_SEMPRINI` = `8865c94a-2211-5f26-8887-6d6d5cbaa1e0`**, which is
+    `uuid5(NAMESPACE_URL, "https://w3id.org/semprini/ontology#")`. Written as a literal
+    rather than as that expression: it is permanent for every instance in existence, and
+    a derivation left as live code is a value someone can adjust in passing. It is in the
+    spec (§3.4.2) as well as in the module, and a test pins both.
+  - **Three spec gaps closed in the same change**, all in §3.4/§5.1: §3.4.2's "no source
+    UUID" rule only fitted taxonomy values (it hashed a scheme slug), so it now states
+    the general rule — `source-name:source-key` for everything else — and records the
+    namespace constant; §5.1's CLI listing never carried `--force-namespace-change`,
+    which §3.4.4 requires, so `run` now declares it; and §3.4.4 now says a *missing* lock
+    aborts, that only base IRI and instance id are compared, and that local names survive
+    a namespace move.
+  - **`--force-namespace-change` is declared but not wired.** `identity.force_namespace_change()`
+    exists and is tested; the flag currently only suspends the lock check, because the
+    move must also rewrite every generated file and those do not exist until C1. **E2
+    owns calling it**, and its "one reviewable commit" promise is E2's to keep.
+  - **Two error types, two exit codes.** `NamespaceLockError` subclasses `ConfigError`
+    (exit 2 — §5.1 makes "configuration or namespace-lock" one category, and the lock is
+    frozen configuration); `IdentityError` is exit 1, which is what §6.1 check 6 reports.
+    Both now share `model.IssueError`, which is where `ConfigError`'s issue-collecting
+    and message rendering moved so that a second copy did not appear here.
+  - **F2 should call the checks, not re-derive them.** `IdMap.check_append_only(base)` and
+    `IdMap.check_sources_are_configured(names)` return `Issue`s; §6.1 check 6 is those two
+    plus what `Registry` raises during a run. Getting the base revision out of git is
+    F2's, and is the one part of check 6 not implemented here.
+  - **`Registry` accumulates in memory and writes only on `save()`**, which is what makes
+    `--dry-run` and a mid-pipeline failure safe (§5.1). C1/E2 must call `save()` exactly
+    once, after the generated files are written.
+  - **The fixture instance gained `mappings/`** — a lock matching its configured base IRI,
+    and a header-only ID map. D2 fills the map in with the workbook's rows.
+  - `serialize.is_safe_local_name()` is now public: minting refuses a local name the
+    serializer would have to write as a full `<IRI>`, and both must agree on what is safe.
 
 ---
 
@@ -606,7 +655,8 @@ be deferred without stalling the build.
 - **A2 is submitted and now purely a waiting game.** A3, the hosting and the PR are all
   done; the remaining dependency is a third party's review queue, which no amount of work
   here compresses. Nothing else is blocked by it until G5, so the build order below
-  proceeds unchanged — B4 next, then C1.
+  proceeds unchanged — C1 next, which is the first task to emit RDF and therefore the
+  first whose output an instance would commit.
 - ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
   once an instance holds generated files, every serializer change becomes a migration
   (§7). It now is one — a change to `serialize.py`'s output is a major bump.

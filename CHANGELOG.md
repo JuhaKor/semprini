@@ -42,6 +42,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `run`, `check` and `migrate` now validate configuration before anything else, so a
   broken instance fails with a key rather than with a traceback.
 - `PyYAML` as a runtime dependency (§5.1). Instances continue to install with plain pip.
+- Identity management (`semprini.identity`): the persistent ID map, IRI minting and the
+  namespace lock (§3.4, §5.4). `mappings/id-map.csv` is append-only and authoritative
+  over the minting formula, so a taxonomy code, a minting rule or a compiler version can
+  change without moving an IRI an instance has already published. Minting derives from
+  the permanent UUIDv5 namespace `8865c94a-2211-5f26-8887-6d6d5cbaa1e0`, and is stable
+  across machines and processes.
+- The namespace lock (`mappings/namespace.lock`) is now enforced: `run`, `check` and
+  `migrate` compare `config/semprini.yaml`'s base IRI and instance id against it and exit
+  `2` on a mismatch, or when the lock is missing. Moving an instance to a new base IRI is
+  `semprini run --force-namespace-change` — a migration that rewrites the ID map and the
+  lock together, keeping every local name — and not a configuration edit.
+- Identity failures are compile failures (exit `1`), each naming the source ref that
+  caused it: an IRI collision, an object the ID map already holds two IRIs for, a source
+  key that changes kind, a row removed or rewritten against the base revision, and a
+  `source_name` in the map that configuration no longer declares.
 
 ### Ontology 0.1.0
 
