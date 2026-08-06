@@ -201,6 +201,21 @@ def test_a_file_the_compiler_did_not_write_is_detected(tmp_path: Path) -> None:
     assert "not recorded in the manifest" in issues[0].message
 
 
+def test_a_stale_file_in_a_subdirectory_is_detected(tmp_path: Path) -> None:
+    """``generated/`` is flat (spec 4.2), but anyone parsing the directory reads a nested
+    file too — so a check that only looked at the top level would pass exactly the stale
+    output the unrecorded-file rule exists to catch."""
+    recorded = written(tmp_path)
+    buried = tmp_path / "generated" / "old" / "concepts-retired.ttl"
+    buried.parent.mkdir()
+    buried.write_text("# left behind\n", "utf-8")
+
+    issues = recorded.verify(tmp_path)
+
+    assert len(issues) == 1
+    assert "not recorded in the manifest" in issues[0].message
+
+
 def test_the_report_and_the_manifest_are_not_reported_as_unrecorded(tmp_path: Path) -> None:
     """Both live in generated/ and neither is hashed; flagging them would make every
     instance fail its own integrity check."""
@@ -365,6 +380,47 @@ def test_a_value_that_is_not_a_digest_is_an_error(value: object) -> None:
 
     with pytest.raises(ManifestError, match="not a sha256 digest"):
         Manifest.loads(json.dumps(document))
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["../../secrets.txt", "old/concepts-retired.ttl", "C:\\Windows\\win.ini", "/etc/passwd", ".."],
+)
+def test_a_recorded_name_that_is_not_a_file_in_generated_is_an_error(name: str) -> None:
+    """A recorded name becomes a path segment under ``generated/``, so one that escapes it
+    would have verification read and hash a file outside the machine-owned directory the
+    manifest is meant to bound (spec 4.3) — the same escape the build stage refuses for a
+    scheme slug."""
+    document = json.loads(manifest().dumps())
+    document["files"][name] = document["files"].pop("concepts-sales.ttl")
+
+    with pytest.raises(ManifestError, match="not a file name in generated/"):
+        Manifest.loads(json.dumps(document))
+
+
+@pytest.mark.parametrize("name", [".manifest.json", ".report.md"])
+def test_a_recorded_name_the_compiler_never_records_is_an_error(name: str) -> None:
+    """Neither is hashed (spec 4.3), so a manifest holding one was written by hand."""
+    document = json.loads(manifest().dumps())
+    document["files"][name] = document["files"]["concepts-sales.ttl"]
+
+    with pytest.raises(ManifestError, match="never recorded by the compiler"):
+        Manifest.loads(json.dumps(document))
+
+
+def test_a_manifest_cannot_be_constructed_with_an_escaping_name() -> None:
+    """The guard is on the class, not only on the parser.
+
+    Enforced where a manifest is *built* rather than where ``verify`` composes a path from
+    it: written the other way round, this test passed a hand-built ``Manifest`` straight
+    past the parser and had verification open a file outside the instance.
+    """
+    with pytest.raises(ManifestError, match="not a file name in generated/"):
+        Manifest(
+            compiler_version="0.1.0",
+            ontology_version="0.1.0",
+            files={"../secrets.txt": digest(b"token\n")},
+        )
 
 
 def test_every_parse_problem_is_reported_at_once() -> None:

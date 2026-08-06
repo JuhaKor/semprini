@@ -30,7 +30,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
 
@@ -94,6 +94,17 @@ class Manifest:
     class advertised as frozen that cannot go in a set is a trap for the next caller."""
 
     def __post_init__(self) -> None:
+        # The invariant, enforced where a manifest is built rather than where a path is
+        # composed from it: a recorded name is used as a path segment under generated/,
+        # so one that escapes would have verification read and hash a file outside the
+        # machine-owned directory this class exists to bound (spec 4.3). ``loads`` filters
+        # these out first, with the offending key named; this catches every other way one
+        # could arrive.
+        for name in self.files:
+            if not _is_generated_file_name(name):
+                raise ManifestError(
+                    [Issue(Severity.ERROR, f"not a file name in generated/: {name!r}", str(name))]
+                )
         object.__setattr__(self, "files", MappingProxyType(dict(self.files)))
 
     # ------------------------------------------------------------------ writing
@@ -291,14 +302,14 @@ class Manifest:
                     )
                 )
 
-        for path in sorted(_present(directory)):
-            if path.name not in self.files and path.name not in _NOT_RECORDED:
+        for relative in sorted(_present(directory)):
+            if relative not in self.files and relative not in _NOT_RECORDED:
                 issues.append(
                     Issue(
                         Severity.ERROR,
                         "is not recorded in the manifest; nothing but the compiler writes "
                         "to generated/ (spec 4.3)",
-                        str(path),
+                        str(directory / relative),
                     )
                 )
         return tuple(issues)
@@ -330,11 +341,19 @@ class Manifest:
         )
 
 
-def _present(directory: Path) -> list[Path]:
-    """The files currently in ``generated/``, or none if it does not exist."""
+def _present(directory: Path) -> list[str]:
+    """Every file under ``generated/``, relative to it, or none if it does not exist.
+
+    Walked recursively although ``generated/`` is flat (spec 4.2), because the point of
+    the unrecorded-file check is stale output a consumer would still load from Git:
+    ``generated/old/concepts-retired.ttl`` is read by anyone who parses the directory,
+    and a check that only looked at the top level would pass it.
+    """
     if not directory.is_dir():
         return []
-    return [path for path in directory.iterdir() if path.is_file()]
+    return [
+        path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()
+    ]
 
 
 def _string(document: Mapping[str, Any], key: str, issues: list[Issue]) -> str | None:
@@ -359,6 +378,20 @@ def _files(document: Mapping[str, Any], issues: list[Issue]) -> Mapping[str, str
     hashes: dict[str, str] = {}
     for name, recorded in value.items():
         location = f"files.{name}"
+        if not _is_generated_file_name(name):
+            # A recorded name is used as a path segment under generated/, so a
+            # hand-edited manifest holding "../../secrets" would have verification read
+            # and hash a file outside the machine-owned directory it is meant to bound
+            # (spec 4.3). The same escape the build stage refuses for a scheme slug.
+            issues.append(
+                Issue(Severity.ERROR, f"not a file name in generated/: {name!r}", location)
+            )
+            continue
+        if name in _NOT_RECORDED:
+            issues.append(
+                Issue(Severity.ERROR, f"{name} is never recorded by the compiler", location)
+            )
+            continue
         if not isinstance(recorded, str) or not _DIGEST.fullmatch(recorded):
             issues.append(
                 Issue(Severity.ERROR, f"not a {_ALGORITHM} digest: {recorded!r}", location)
@@ -366,3 +399,12 @@ def _files(document: Mapping[str, Any], issues: list[Issue]) -> Mapping[str, str
             continue
         hashes[name] = recorded
     return hashes
+
+
+def _is_generated_file_name(name: Any) -> bool:
+    """Whether ``name`` names a file directly inside ``generated/`` and nothing else."""
+    if not isinstance(name, str) or not name or name in {".", ".."}:
+        return False
+    # Both separators, whatever the platform: a manifest written on one machine is
+    # verified on another, and a backslash is a path segment on exactly one of them.
+    return "/" not in name and "\\" not in name and not PurePosixPath(name).is_absolute()

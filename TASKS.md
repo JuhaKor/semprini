@@ -645,23 +645,31 @@ done and green.
   hashes match; a hand-edited generated file is detected; the report renders the counts
   and warning categories §5.6 lists.
   **Depends:** C1
-  **Done.** 394 tests green (86 of them C2's); ruff, ruff format and mypy (strict) clean.
-  Thirty mutations were checked against the suite — hashes not compared, a missing
-  recorded file tolerated, an unrecorded file tolerated, manifest keys unsorted, no
-  trailing newline, an uninstalled compiler recorded, the manifest or the report hashed,
-  a file produced twice absorbed, only the compiler version checked for drift, unknown
-  keys tolerated, a missing key tolerated, a non-digest value tolerated, a null version
-  tolerated, a different hash algorithm, `dcterms:modified` left in the change
-  comparison, `unchanged` tolerating a missing file, `unchanged` comparing nothing,
-  definitions demanded of every class, name clashes compared case-sensitively, name
-  clashes compared across classes, listings uncapped, IRIs never shortened, an empty
+  **Done.** 405 tests green (97 of them C2's); ruff, ruff format and mypy (strict) clean.
+  Thirty-seven mutations were checked against the suite — hashes not compared, a missing
+  recorded file tolerated, an unrecorded file tolerated, only the top level of
+  `generated/` scanned, manifest keys unsorted, no trailing newline, an uninstalled
+  compiler recorded, the manifest or the report hashed, a file produced twice absorbed,
+  only the compiler version checked for drift, unknown keys tolerated, a missing key
+  tolerated, a non-digest value tolerated, a null version tolerated, a different hash
+  algorithm, an escaping recorded name accepted, a backslash not treated as a path
+  separator, the report recordable by a hand-edited manifest, `dcterms:modified` left in
+  the change comparison, `unchanged` tolerating a missing file, `unchanged` comparing
+  nothing, definitions demanded of every class, name clashes compared case-sensitively,
+  name clashes compared across classes, listings uncapped, IRIs never shortened, an empty
   class omitted, a file counting every subject it mentions, nothing ever changed,
-  everything new every run, a node's label chosen by iteration order, deprecations
+  everything new every run, a node's label or its type chosen by iteration order, free
+  text not collapsed to one line, a pipe left unescaped in a table cell, deprecations
   dropped, the ontology copy counted as content, and a run date rendered — and each fails
-  it. The last one needed a subprocess: rdflib holds a subject's objects in a set, so the
-  label mutation is invisible until `PYTHONHASHSEED` varies, and it survived two
-  in-process attempts that looked like they were testing it. B4's cross-process test was
-  the precedent.
+  it.
+
+  **Two of those needed a subprocess, and the reason generalizes.** rdflib holds a
+  subject's objects in a *set*, so "which of a node's two labels names it" and "which of
+  its two types is it counted as" follow string hashing: identical all day on one machine
+  and different on the next. Both mutations survived in-process tests that *looked* like
+  they were testing them — one of them twice. Only varying `PYTHONHASHSEED` across
+  processes catches either, which is what B4 established for minting and what any future
+  "pick one of several rdflib objects" needs.
 
   **Two decisions shape everything else here, and both are now in the spec.**
 
@@ -721,6 +729,37 @@ done and green.
     Turtle, manifest and report must describe one run. `tests/test_build.py` imports it
     and is otherwise untouched. Golden files now include `.manifest.json` and
     `.report.md`; regenerate them deliberately, never reflexively.
+
+  **Review found seven issues; all are fixed**, with a test and a mutation each (7 more
+  mutations, 37/37 now caught), and **no golden file moved** — none of them changed what a
+  correct run emits. Three are worth remembering:
+  - **A recorded file name is a path segment, and nothing checked it.** `Manifest.loads`
+    accepted any JSON key, so a hand-edited manifest naming `../../secrets.txt` had
+    `verify()` read and hash a file outside `generated/` — the same escape C1 already
+    refuses for a scheme slug, missed one module over. The guard now lives in
+    `__post_init__` rather than only in the parser: the first attempt validated in
+    `loads()` alone, and the test that was meant to prove it walked a hand-built
+    `Manifest` straight past it and opened the file. **An invariant belongs where the
+    object is built, not where the path is composed.**
+  - **The unrecorded-file check only looked at the top level.** `generated/` is flat by
+    spec, but anyone parsing the directory reads `generated/old/concepts-retired.ttl` too,
+    so a nested file passed the check that exists precisely to catch stale output. Now
+    walked recursively, comparing paths relative to `generated/`.
+  - **Free text reached Markdown unescaped.** Labels are whatever a source holds — an
+    Excel cell with a line break, a note containing `|` — and this file is pasted verbatim
+    into a PR description (§6.2). A newline silently ended the bullet list it was in.
+    `_inline()` and `_cell()` now bound that at the render points.
+
+  The rest were narrower: a node carrying two `rdf:type`s had its class decided by
+  iteration order (`min`, like the label); the per-file node count asked every node in the
+  instance whether it was in each file, which is one store lookup per node per file on a
+  module written for instances large enough to need `LISTING_LIMIT`; and
+  `test_a_long_listing_is_capped_but_the_count_is_not` asserted a boundary against the
+  whole document while the label it named appeared only in a *different* listing — it now
+  extracts the section it claims to be pinning. The seventh was the handover note above:
+  it did not say the manifest's own file belongs in the `unchanged()` comparison, and E2
+  omitting it would commit a manifest saying 0.2.0 produced these files beside a report
+  whose header says 0.1.0 did.
 
 ---
 
@@ -806,9 +845,13 @@ done and green.
   **One obligation C2 hands over:** the write order is `build()` → `manifest.create()` →
   `build.unchanged()` → *only if something moved* `report.create()` → `write_all()` →
   `registry.save()`. Writing the report unconditionally makes every no-op compile open a
-  PR whose only content is a report saying nothing changed (§5.6). `--dry-run` writes
-  none of it; `OutputFile` carries the exact bytes, so the report and the manifest can be
-  printed without a filesystem in the way.
+  PR whose only content is a report saying nothing changed (§5.6). **The manifest's own
+  file goes into the `unchanged()` comparison**, not just the Turtle: it carries the two
+  versions, so a recompile after a plane upgrade produces identical Turtle and a changed
+  manifest, and that run's report has to be rewritten or the instance commits a manifest
+  saying 0.2.0 produced these files beside a report whose header says 0.1.0 did.
+  `--dry-run` writes none of it; `OutputFile` carries the exact bytes, so the report and
+  the manifest can be printed without a filesystem in the way.
 
 ---
 

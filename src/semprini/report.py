@@ -92,7 +92,7 @@ class NodeRef:
     the one that also appears in the Turtle beside it."""
 
     def __str__(self) -> str:
-        return f"{self.label} — `{self.iri}`"
+        return f"{_inline(self.label)} — `{self.iri}`"
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -262,7 +262,7 @@ class RunReport:
                 "",
             ]
             lines += [
-                f"- **{clash.label}** ({clash.term}) — "
+                f"- **{_inline(clash.label)}** ({clash.term}) — "
                 + ", ".join(f"`{node.iri}`" for node in clash.nodes)
                 for clash in self.name_clashes[:LISTING_LIMIT]
             ]
@@ -303,8 +303,24 @@ def _table(header: Sequence[str], rows: Sequence[Sequence[str]], *, empty: str =
     return [
         "| " + " | ".join(header) + " |",
         "| " + " | ".join("---" for _ in header) + " |",
-        *("| " + " | ".join(row) + " |" for row in rows),
+        *("| " + " | ".join(_cell(value) for value in row) + " |" for row in rows),
     ]
+
+
+def _inline(text: str) -> str:
+    """Free text as one line of Markdown.
+
+    Labels and adapter notes are whatever a source system holds — an Excel cell with a
+    line break in it, a description someone pasted — and this file is rendered verbatim
+    into a pull request description (spec 6.2). A newline in a label would silently end
+    the bullet list it was in, so runs of whitespace collapse to one space.
+    """
+    return " ".join(text.split())
+
+
+def _cell(text: str) -> str:
+    """Free text inside a table cell, where a bare ``|`` would end the column."""
+    return _inline(text).replace("|", "\\|")
 
 
 # --------------------------------------------------------------------------- derivation
@@ -338,7 +354,7 @@ def create(
     prefixes = context.namespaces
 
     labels = _labels(union)
-    types = dict(_types(union, labels))
+    types = _types(union, labels)
 
     return RunReport(
         compiler_version=compiler_version() if compiler is None else compiler,
@@ -348,7 +364,11 @@ def create(
             sorted(
                 FileCount(
                     name=name,
-                    subjects=sum(1 for subject in labels if (subject, SKOS.prefLabel, None) in g),
+                    # Counted from the file's own labels rather than by asking every
+                    # node in the instance whether it is in this file: the second costs
+                    # one store lookup per node per file, and this module is written for
+                    # instances large enough to need LISTING_LIMIT.
+                    subjects=len(set(g.subjects(SKOS.prefLabel))),
                     triples=len(g),
                 )
                 for name, g in graphs.items()
@@ -380,11 +400,21 @@ def _labels(graph: Graph) -> Mapping[URIRef, str]:
     return labels
 
 
-def _types(graph: Graph, labels: Mapping[URIRef, str]) -> Iterator[tuple[URIRef, URIRef]]:
+def _types(graph: Graph, labels: Mapping[URIRef, str]) -> Mapping[URIRef, URIRef]:
+    """The one class each node is counted as.
+
+    Chosen with ``min`` for the same reason a label is: rdflib holds a subject's objects
+    in a set, so a node carrying two types would otherwise have its class count, its
+    clash grouping and its missing-definition warning decided by string hashing —
+    identical all day on one machine and different on the next. The builder emits exactly
+    one type per node, but :func:`create` is public and takes whatever graphs it is given.
+    """
+    types: dict[URIRef, URIRef] = {}
     for subject in labels:
         for object_ in graph.objects(subject, RDF.type):
             if isinstance(object_, URIRef):
-                yield subject, object_
+                types[subject] = min(object_, types.get(subject, object_))
+    return types
 
 
 def _classes(types: Mapping[URIRef, URIRef]) -> tuple[ClassCount, ...]:

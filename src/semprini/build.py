@@ -247,6 +247,13 @@ def unchanged(files: Sequence[OutputFile], repo_root: Path | None = None) -> boo
     whether a scheduled compile that found nothing new opens a pull request containing
     only a report saying it found nothing new.
 
+    **Pass the manifest's own file, not only the Turtle.** It carries the compiler and
+    ontology versions (spec 4.3), so a recompile after a plane upgrade produces identical
+    Turtle and a *different* manifest — a real change, and one whose report must be
+    rewritten. Comparing the Turtle alone would commit a manifest saying 0.2.0 produced
+    these files beside a report whose header says 0.1.0 did, which is exactly the
+    disagreement the report is supposed to be incapable of.
+
     A file the run did *not* produce is not consulted: removing stale output is a
     different question, and one that needs the run's scope to answer (spec 4.3) — a
     ``--source X`` run legitimately regenerates part of the directory. **E2 owns it.**

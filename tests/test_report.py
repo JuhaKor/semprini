@@ -415,7 +415,8 @@ BASE = "https://semantics.example.com/"
 graph = Graph()
 for index in range(20):
     subject = URIRef(f"{BASE}concepts/term-{index:04d}")
-    graph.add((subject, RDF.type, URIRef("https://w3id.org/semprini/ontology#Entity")))
+    for term in ("Attribute", "Entity"):
+        graph.add((subject, RDF.type, URIRef(f"https://w3id.org/semprini/ontology#{term}")))
     for language, text in (("en", f"Term {index}"), ("fi", f"Termi {index}")):
         graph.add((subject, SKOS.prefLabel, Literal(text, lang=language)))
 
@@ -440,14 +441,16 @@ def _render_in_a_subprocess(hash_seed: str) -> str:
     return completed.stdout
 
 
-def test_a_node_with_several_labels_is_named_the_same_way_on_every_machine() -> None:
-    """No v1 adapter produces a multilingual label, but the previous state may hold one,
-    and which of them names the node is not rdflib's to decide.
+def test_a_node_with_several_labels_or_types_reports_the_same_on_every_machine() -> None:
+    """Which label names a node, and which class it is counted as, are not rdflib's to
+    decide. No v1 adapter produces either, but the previous state may hold one and
+    ``create`` is public.
 
     Run out of process because that is the only way to vary ``PYTHONHASHSEED``: rdflib
-    holds a subject's objects in a set, so without an explicit choice the report's wording
-    follows string hashing — identical all day on one machine and different on the next,
-    which is the diff nobody caused (spec 5.5 rule 8).
+    holds a subject's objects in a set, so without an explicit choice both follow string
+    hashing — identical all day on one machine and different on the next, which is the
+    diff nobody caused (spec 5.5 rule 8). Two in-process attempts at this looked like they
+    were testing it while asserting nothing.
     """
     first = _render_in_a_subprocess("0")
     second = _render_in_a_subprocess("12345")
@@ -458,6 +461,9 @@ def test_a_node_with_several_labels_is_named_the_same_way_on_every_machine() -> 
     listed = {line for line in first.splitlines() if line.startswith("- Term ")}
     assert len(listed) == LISTING_LIMIT
     assert "Termi" not in first
+    # Both nodes' classes resolve the same way, to the lexicographically first.
+    assert "| sem:Attribute | 20 |" in first
+    assert "| sem:Entity | 0 |" in first
 
 
 def test_a_long_listing_is_capped_but_the_count_is_not() -> None:
@@ -471,9 +477,35 @@ def test_a_long_listing_is_capped_but_the_count_is_not() -> None:
     rendered = report(files).render()
 
     assert f"### New ({many + 1})" in rendered  # the entities plus their scheme
+    # The listing itself, not the whole document: every one of these labels also appears
+    # under "Missing definitions", so a boundary asserted against `rendered` would be
+    # pinning that listing's cap while claiming to pin this one's.
+    listed = rendered.split(f"### New ({many + 1})\n\n", 1)[1].split("\n\n", 1)[0].splitlines()
+
+    assert len(listed) == LISTING_LIMIT
+    assert listed[0] == "- Sales domain model — `sch:sales`"
+    assert listed[-1].startswith("- Term 0018 —")
     assert "…and 6 more." in rendered
-    assert "Term 0019" in rendered
-    assert "Term 0020" not in rendered
+
+
+def test_a_label_carrying_a_line_break_does_not_break_the_listing() -> None:
+    """Labels are whatever a source holds — an Excel cell with a line break in it — and
+    this file is rendered verbatim into a pull request description (spec 6.2)."""
+    files = compile_(glossary(entity(CUSTOMER, "Customer\naccount")))
+
+    listed = [line for line in report(files).render().splitlines() if line.startswith("- ")]
+
+    assert f"- Customer account — `c:{CUSTOMER}`" in listed
+    assert all(line.endswith("`") for line in listed)
+
+
+def test_a_source_note_carrying_a_pipe_does_not_break_the_table() -> None:
+    """A third-party adapter supplies these, and a bare ``|`` ends a table column."""
+    noisy = SourceSummary(name="ellie-main", adapter="ellie", objects=1, note="a | b")
+
+    rendered = report(sources=(noisy,)).render()
+
+    assert "| ellie-main | `ellie` | 1 | a \\| b |" in rendered
 
 
 def test_a_run_with_no_source_summary_says_so() -> None:
