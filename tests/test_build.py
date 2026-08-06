@@ -24,11 +24,12 @@ from rdflib.namespace import DCTERMS, RDF, SKOS
 
 from semprini import ONTOLOGY_PATH, build, serialize
 from semprini.build import BuildError, OutputFile
-from semprini.identity import IdMap, Registry
+from semprini.identity import IdentityError, IdMap, IdMapRow, Registry
 from semprini.model import (
     Attribute,
     Entity,
     InternalModel,
+    Kind,
     Relationship,
     RunContext,
     Scheme,
@@ -293,6 +294,71 @@ def test_every_triple_is_written_exactly_once() -> None:
     graphs = [file.graph for file in compile_() if file.graph is not None]
 
     assert len(union(compile_())) == sum(len(graph) for graph in graphs)
+
+
+def two_relationships_between_one_pair() -> InternalModel:
+    """Customer and Order related twice, by relationships living in different schemes."""
+    return merge_models(
+        InternalModel(
+            schemes=sample_model().schemes[:2],
+            entities=(
+                Entity(
+                    source_refs={ELLIE: CUSTOMER},
+                    pref_label="Customer",
+                    schemes=("sales", "finance"),
+                ),
+                Entity(
+                    source_refs={ELLIE: ORDER}, pref_label="Order", schemes=("sales", "finance")
+                ),
+            ),
+            relationships=(
+                Relationship(
+                    source_refs={ELLIE: PLACES},
+                    pref_label="places",
+                    source=SourceRef(ELLIE, CUSTOMER),
+                    target=SourceRef(ELLIE, ORDER),
+                    schemes=("sales",),
+                ),
+                Relationship(
+                    source_refs={ELLIE: "aaaaaaaa-0000-4000-8000-000000000002"},
+                    pref_label="bills",
+                    source=SourceRef(ELLIE, CUSTOMER),
+                    target=SourceRef(ELLIE, ORDER),
+                    schemes=("finance",),
+                ),
+            ),
+        )
+    )
+
+
+def test_one_shortcut_serves_every_relationship_between_the_same_pair() -> None:
+    """``sem:relatesTo`` says only *that* two entities are related, so two relationships
+    between one pair derive the same triple.
+
+    Written once — in the lexicographically first of their files, so the choice cannot
+    depend on model order — for two reasons. It is the module's own "one triple in exactly
+    one place" invariant; and were it written twice, deleting one of the two relationships
+    would show a removed ``sem:relatesTo`` line for a fact that still holds.
+    """
+    files = compile_(two_relationships_between_one_pair())
+    shortcut = (
+        URIRef(f"{BASE}concepts/{CUSTOMER}"),
+        URIRef(f"{SEM}relatesTo"),
+        URIRef(f"{BASE}concepts/{ORDER}"),
+    )
+
+    carrying = [f.name for f in files if f.graph is not None and shortcut in f.graph]
+
+    assert carrying == ["relationships-finance.ttl"]
+
+
+def test_two_relationships_between_one_pair_still_write_each_triple_once() -> None:
+    graphs = [file.graph for file in compile_(two_relationships_between_one_pair())]
+    present = [graph for graph in graphs if graph is not None]
+
+    assert len(union(compile_(two_relationships_between_one_pair()))) == sum(
+        len(graph) for graph in present
+    )
 
 
 # ------------------------------------------------------------------------- the statements
@@ -641,6 +707,195 @@ def test_enumerating_an_unknown_iri_is_refused() -> None:
 
     with pytest.raises(BuildError, match="not an IRI this instance has minted"):
         compile_(merge_models(wrong))
+
+
+def test_enumerating_something_that_is_not_an_entity_is_refused() -> None:
+    """``sem:enumerates`` runs scheme → entity (spec 3.3). An IRI pasted from the wrong
+    file is minted and real, so only the ID map's ``kind`` column can catch it."""
+    model = sample_model()
+    wrong = InternalModel(
+        schemes=(
+            model.schemes[0],
+            Scheme(
+                source_refs={EXCEL: "product-category.xlsx"},
+                pref_label="Product category taxonomy",
+                slug="product-category",
+                scheme_type=SchemeType.TAXONOMY,
+                enumerates=f"{BASE}schemes/sales",
+            ),
+        ),
+    )
+
+    with pytest.raises(BuildError, match="which is a scheme; a taxonomy provides"):
+        compile_(merge_models(wrong))
+
+
+def test_a_partial_run_is_refused_rather_than_built_from_part_of_a_model() -> None:
+    """``write_all`` rewrites each file whole, so building a ``--source X`` model this way
+    would delete every other source's statements from the files it touched.
+
+    E2 owns making partial runs work (spec 5.4); until then the trap fails loudly rather
+    than silently deleting governed content.
+    """
+    with pytest.raises(BuildError, match="cannot build a partial run"):
+        compile_(ctx=context(only_source=ELLIE))
+
+
+# ------------------------------------------------------------------ the scheme slug
+
+# A slug names two things — the local name of the scheme's IRI, and the file its members
+# are written to (spec 3.4.2, 4.2). Only the first is frozen by the ID map, so identity
+# validates a slug on the run that mints it and never looks again.
+
+
+def escaping_scheme() -> InternalModel:
+    return merge_models(
+        InternalModel(
+            schemes=(
+                Scheme(
+                    source_refs={ELLIE: "1234"},
+                    pref_label="Sales domain model",
+                    slug="../../pwned",
+                    scheme_type=SchemeType.GLOSSARY,
+                ),
+            ),
+        )
+    )
+
+
+def test_minting_refuses_a_slug_that_is_not_a_slug() -> None:
+    """The first line: identity will not freeze such a slug into an IRI (spec 3.4.2)."""
+    with pytest.raises(IdentityError, match="cannot become an IRI local name"):
+        compile_(escaping_scheme())
+
+
+def test_a_slug_that_is_not_a_slug_is_refused_even_when_the_id_map_supplies_it() -> None:
+    """The second line, and the one that matters here: minting runs once per object, so an
+    ID map that already holds such a row never consults the slug rules again.
+
+    ``../../pwned`` composes ``generated/concepts-../../pwned.ttl``, which resolves
+    outside the machine-owned directory entirely (spec 4.3) — so the file path is checked
+    where the file name is built, not only where the IRI is minted.
+    """
+    planted = IdMap(
+        [
+            IdMapRow(
+                iri=f"{BASE}schemes/../../pwned",
+                kind=Kind.SCHEME,
+                source_name=ELLIE,
+                source_key="1234",
+                first_seen=TODAY,
+            )
+        ]
+    )
+
+    with pytest.raises(BuildError, match="is not a slug"):
+        compile_(escaping_scheme(), registry=Registry(planted, BASE, today=TODAY))
+
+
+def test_renaming_a_slug_after_it_is_minted_is_refused() -> None:
+    """The rename would move the scheme's *file* while its IRI stayed where it was, so
+    the ID map and the output would disagree about what the scheme is called.
+
+    Reached by editing ``scheme_slug`` in ``config/semprini.yaml`` — an ordinary edit, and
+    the run that mints is the only one identity checks a slug on.
+    """
+    registry = Registry(IdMap(), BASE, today=TODAY)
+    before = InternalModel(
+        schemes=(
+            Scheme(
+                source_refs={ELLIE: "1234"},
+                pref_label="Sales domain model",
+                slug="sales",
+                scheme_type=SchemeType.GLOSSARY,
+            ),
+        ),
+    )
+    compile_(merge_models(before), registry=registry)
+
+    renamed = InternalModel(
+        schemes=(
+            Scheme(
+                source_refs={ELLIE: "1234"},
+                pref_label="Sales domain model",
+                slug="revenue",
+                scheme_type=SchemeType.GLOSSARY,
+            ),
+        ),
+    )
+
+    with pytest.raises(BuildError, match="assigned once and opaque thereafter"):
+        compile_(merge_models(renamed), registry=registry)
+
+
+# --------------------------------------------------------------- reporting every problem
+
+
+def test_every_dangling_reference_is_reported_at_once() -> None:
+    """One problem per run costs a CI round trip each (spec 5.2), so they are collected."""
+    dangling = InternalModel(
+        schemes=(sample_model().schemes[0],),
+        entities=(
+            Entity(source_refs={ELLIE: CUSTOMER}, pref_label="Customer", schemes=("sales",)),
+        ),
+        attributes=(
+            Attribute(
+                source_refs={ELLIE: "a1b2c3d4-0000-4000-8000-000000000001"},
+                pref_label="Customer number",
+                entity=SourceRef(ELLIE, "never-fetched"),
+                schemes=("sales",),
+            ),
+            Attribute(
+                source_refs={ELLIE: "a1b2c3d4-0000-4000-8000-000000000002"},
+                pref_label="Customer name",
+                entity=SourceRef(ELLIE, "also-never-fetched"),
+                schemes=("sales",),
+            ),
+        ),
+    )
+
+    with pytest.raises(BuildError) as raised:
+        compile_(merge_models(dangling))
+
+    assert len(raised.value.issues) == 2
+    assert {"never-fetched", "also-never-fetched"} == {
+        issue.message.split("names ellie-main:")[1].split(" ")[0] for issue in raised.value.issues
+    }
+
+
+def test_scheme_and_enumerates_problems_are_reported_together() -> None:
+    """Both decide whether the model is expressible at all, so both are in one batch."""
+    broken = InternalModel(
+        schemes=(
+            Scheme(
+                source_refs={EXCEL: "product-category.xlsx"},
+                pref_label="Product category taxonomy",
+                slug="product-category",
+                scheme_type=SchemeType.TAXONOMY,
+                enumerates=f"{BASE}concepts/does-not-exist",
+            ),
+        ),
+        entities=(Entity(source_refs={ELLIE: CUSTOMER}, pref_label="Customer"),),
+    )
+
+    with pytest.raises(BuildError) as raised:
+        compile_(merge_models(broken))
+
+    assert len(raised.value.issues) == 2
+    assert any("is in no scheme" in issue.message for issue in raised.value.issues)
+    assert any(
+        "not an IRI this instance has minted" in issue.message for issue in raised.value.issues
+    )
+
+
+def test_unreadable_generated_output_names_the_file(tmp_path: Path) -> None:
+    """A hand-edited or truncated file in ``generated/`` is exactly what spec 4.3 guards
+    against; it must not surface as an rdflib traceback naming nothing actionable."""
+    build.write_all(compile_(), tmp_path)
+    (tmp_path / "generated" / "concepts-sales.ttl").write_text("this is not turtle {", "utf-8")
+
+    with pytest.raises(BuildError, match="cannot read generated output"):
+        build.read_previous(tmp_path)
 
 
 def test_the_output_parses_back_to_the_same_graph() -> None:

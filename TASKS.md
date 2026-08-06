@@ -502,9 +502,14 @@ done and green.
   that proves scheduled no-op runs generate no diff.
   **Depends:** B1, B2, B4
 
-  **Done.** 298 tests green (37 of them C1's); ruff, ruff format and mypy (strict) clean.
-  Twenty-two mutations were checked against the suite — a subject duplicated into every
+  **Done.** 308 tests green (47 of them C1's); ruff, ruff format and mypy (strict) clean.
+  Thirty mutations were checked against the suite — a subject duplicated into every
   file, the home scheme taken in arrival order, the shortcut moved to the entity's file,
+  the shortcut emitted per relationship rather than per entity pair, its file chosen by
+  model order, a malformed slug accepted where the file name is built, a renamed slug
+  tolerated, a partial run built from part of a model, `enumerates` not checked to point
+  at an entity, an unparseable generated file escaping as a traceback, only the first
+  problem reported,
   `dcterms:modified` computed from one file's share of a subject, the date refreshed on
   every run, every block dating its subject rather than only the defining one, the previous
   state compared including the date itself, the ontology re-serialized instead of copied,
@@ -575,6 +580,40 @@ done and green.
     `registry.resolve`) but leaves both the files and `mappings/id-map.csv` to the caller,
     which is what keeps a mid-pipeline failure from half-writing an instance. **E2 calls
     `write_all()` then `registry.save()` exactly once, in that order.**
+
+  **Review found seven issues; all are fixed**, with a test and a mutation each (8 more
+  mutations, 30/30 now caught). Two were real defects reproduced against the committed
+  code, and both are worth remembering:
+  - **A scheme slug could move an output file outside `generated/`, and rename one
+    silently.** Identity validates a slug on the run that *mints* it; every later run gets
+    its IRI from the ID map and never looks at the slug again — but `_file_name()` kept
+    using the *current* slug. Editing `scheme_slug` in `config/semprini.yaml` therefore
+    moved `concepts-<slug>.ttl` to a new file while the scheme's IRI stayed what it always
+    was, so the map and the output disagreed about what the scheme was called; and
+    `../../pwned` composed `generated/concepts-../../pwned.ttl`, which resolves outside the
+    machine-owned directory §4.3 is supposed to bound. Both are now refused at build time,
+    against the shape *and* against the local name frozen in the map. The general lesson:
+    **a value validated at mint time is not validated on any later run**, and this one
+    named two things while only one of them was frozen.
+  - **The `sem:relatesTo` shortcut was written once per relationship, breaking the
+    module's own "one triple in exactly one place" invariant.** Two relationships between
+    the same entity pair living in different schemes emitted the identical triple into two
+    files — union 43 triples, sum of parts 44. The sample model has one relationship, so
+    `test_every_triple_is_written_exactly_once` never saw it. The shortcut says only
+    *that* two entities are related, so it is now keyed by the pair and written in the
+    lexicographically first of their files; deleting one of two relationships no longer
+    shows a removed `relatesTo` line for a fact that still holds.
+
+  The rest were narrower: `read_previous()` let rdflib's `BadSyntax` escape as a traceback
+  naming nothing actionable, where an unparseable `generated/` file is exactly what §4.3
+  guards against (now a `BuildError` naming the file); `sem:enumerates` accepted any minted
+  IRI, so one pasted from the wrong file passed while §3.3 types it scheme → **entity**
+  (the ID map's `kind` column now decides); build errors were raised in three batches
+  rather than collected, against `IssueError`'s whole purpose (now two, and the split is
+  forced — `_file_name` cannot run until scheme membership is clean); a `_SchemeEntry`
+  built with `iri=... or ""` would have serialized every `skos:inScheme` for that scheme as
+  a relative `<>`; and `build()` silently ignored `RunContext.only_source`. Each of those
+  changed §3.4.2, §4.2 or §5.1, and the spec was edited in the same change.
 
   **Known limitation, deliberately left — E2 owns it.** `_reference()` resolves through
   the registry, which also knows IRIs minted on *previous* runs, so what is actually
@@ -669,6 +708,22 @@ done and green.
   `--dry-run` writes nothing (assert via filesystem snapshot); a mid-pipeline failure
   leaves `generated/` untouched rather than half-written.
   **Depends:** E1
+  **Two obligations C1 hands over, both found in its review:**
+  1. **Stale files are never removed.** `build.write_all()` writes the files a run
+     produces and touches nothing else, so a scheme that disappears from its source leaves
+     `concepts-<slug>.ttl` in the instance for ever — its objects stay in the committed
+     output, `read_previous()` unions them back in, and C2's manifest check will find a
+     file it did not write. §4.3 says `generated/` is "overwritten wholesale", so the spec
+     is right and the implementation is short. Deleting correctly needs the run's scope,
+     which is why it is here and not in C1: a `--source X` run must **not** delete the
+     files it did not regenerate, and E1 decides whether a vanished scheme's objects are
+     deprecated (and so still emitted) rather than dropped.
+  2. **`build()` refuses a partial run outright** — `BuildError` when
+     `context.only_source` is set. `write_all` rewrites each file whole, so building from
+     one source's objects would delete every other source's statements from the files it
+     touched and refresh `dcterms:modified` on every node they co-describe. Removing that
+     guard is E2's first step, and it must be replaced by a real answer: either merge the
+     fetched subset with the previous state before building, or make writing per-file.
 
 ---
 

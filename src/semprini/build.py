@@ -34,12 +34,14 @@ from rdflib.namespace import DCTERMS, RDF, SKOS, XSD
 from rdflib.term import Node
 
 from semprini import ONTOLOGY_PATH, serialize
+from semprini.config import is_slug
 from semprini.identity import IdentityError, Registry
 from semprini.model import (
     Attribute,
     Entity,
     InternalModel,
     Issue,
+    Kind,
     Relationship,
     RunContext,
     Scheme,
@@ -145,7 +147,28 @@ def build(
     carry ``dcterms:modified`` forward (spec 3.3); pass ``None`` on a first compile.
     ``today`` is injected so that a test pins it and so that nothing but this stage reads
     a clock.
+
+    A partial run is **refused**, loudly, rather than quietly building from part of a
+    model. ``write_all`` rewrites each file whole, so building a ``--source X`` run this
+    way would drop every other source's statements from the files it touched and refresh
+    ``dcterms:modified`` on every node they co-describe — silent deletion of governed
+    content. Making a partial run work is **E2's** (spec 5.4): it has to decide whether
+    the fetched subset is merged with the previous state before building, or whether
+    writing becomes per-file.
     """
+    if context.only_source is not None:
+        raise BuildError(
+            [
+                Issue(
+                    Severity.ERROR,
+                    f"this compiler cannot build a partial run (--source "
+                    f"{context.only_source!r}): generated files are written whole, so a "
+                    f"model holding one source's objects would delete the others' "
+                    f"statements from every file it rewrote",
+                    "--source",
+                )
+            ]
+        )
     builder = _Builder(
         model=model,
         registry=registry,
@@ -173,10 +196,22 @@ def read_previous(repo_root: Path | None = None) -> Graph:
     if not directory.is_dir():
         # A first compile, or an instance whose generated/ has not been created yet.
         return graph
+    issues: list[Issue] = []
     for path in sorted(directory.glob("*.ttl")):
         if path.name == ONTOLOGY_FILE:
             continue
-        graph.parse(path, format="turtle")
+        try:
+            graph.parse(path, format="turtle")
+        except (OSError, UnicodeDecodeError, SyntaxError) as error:
+            # Reported as an issue rather than left to surface as an rdflib traceback:
+            # unparseable output in generated/ is exactly the hand-edit spec 4.3 exists to
+            # catch, and the operator needs the file named. rdflib raises its own
+            # ``BadSyntax``, which subclasses SyntaxError.
+            issues.append(
+                Issue(Severity.ERROR, f"cannot read generated output: {error}", str(path))
+            )
+    if issues:
+        raise BuildError(issues)
     return graph
 
 
@@ -234,13 +269,27 @@ class _Builder:
     context: RunContext
     previous: _Previous
     today: datetime.date
+    issues: list[Issue] = field(default_factory=list)
+    """Problems found so far. Collected rather than raised one at a time: these are read
+    in CI, where one problem per run costs a round trip each (spec 5.2)."""
 
     def build(self) -> tuple[OutputFile, ...]:
         resolved = self.registry.resolve(self.model)
+
+        # Two batches, and the split is forced rather than chosen: everything below
+        # decides which *file* an object is written to, so the second batch cannot run
+        # until the first is clean — _file_name would raise KeyError on a scheme no
+        # source defined. Within each batch every problem is reported.
         schemes = self._scheme_index()
-        self._check_enumerated_entities_exist()
+        self._check_memberships(schemes)
+        self._check_enumerated_entities()
+        self._raise_collected()
 
         blocks = self._blocks(resolved, schemes)
+        # Cross-references are collected while blocks are built, not raised at the first
+        # dangling one. Nothing is assembled or written until after this, so the
+        # placeholder _reference() returns for a broken ref cannot escape into a file.
+        self._raise_collected()
 
         # What this run says about each subject, gathered across every file it is written
         # in. A subject is deliberately not confined to one file — a sem:relatesTo
@@ -285,6 +334,7 @@ class _Builder:
     ) -> tuple[_Block, ...]:
         """Every statement this run emits, tagged with the file it belongs in."""
         blocks: list[_Block] = []
+        shortcuts: dict[tuple[URIRef, URIRef], str] = {}
         for object_ in self.model.objects:
             name = self._file_name(object_, schemes)
             blocks.append(
@@ -299,16 +349,26 @@ class _Builder:
                 # The shortcut lives with the relationship that produced it, not with the
                 # entity it is about: the two change together, and a reviewer reading a
                 # relationship diff sees both halves in one hunk (spec 3.2).
-                blocks.append(
-                    _Block(
-                        name=name,
-                        subject=self._reference(object_, object_.source, "source"),
-                        statements={
-                            (SEM_RELATES_TO, self._reference(object_, object_.target, "target"))
-                        },
-                        defines=False,
-                    )
+                #
+                # Keyed by the pair, because sem:relatesTo says only *that* two entities
+                # are related — several relationships between one pair derive the same
+                # triple. Written once, in the lexicographically first of their files, so
+                # that deleting one of them does not show a removed relatesTo line for a
+                # fact that still holds, and so the choice cannot depend on model order.
+                pair = (
+                    self._reference(object_, object_.source, "source"),
+                    self._reference(object_, object_.target, "target"),
                 )
+                shortcuts[pair] = min(name, shortcuts.get(pair, name))
+        blocks.extend(
+            _Block(
+                name=name,
+                subject=source,
+                statements={(SEM_RELATES_TO, target)},
+                defines=False,
+            )
+            for (source, target), name in sorted(shortcuts.items())
+        )
         return tuple(blocks)
 
     # ------------------------------------------------------------------ file partitioning
@@ -434,63 +494,94 @@ class _Builder:
         not the stricter "an object this run compiled" the message describes. The gap is
         deliberate and not this task's to close: a ``--source X`` partial run (spec 5.4)
         legitimately references objects outside the fetched scope, so tightening this
-        needs the partial-run case in view. **E2 owns it.**
+        needs the partial-run case in view. **E2 owns it**, together with the guard in
+        :func:`build` that refuses such a run outright today.
+
+        A dangling ref is recorded and a placeholder returned rather than raised on the
+        spot, so that a model with several of them reports them all in one run. The
+        placeholder never reaches a file: :meth:`build` raises as soon as the blocks are
+        assembled, before a single graph is built.
         """
         iri = self.registry.iri(ref)
         if iri is None:
-            raise BuildError(
-                [
-                    Issue(
-                        Severity.ERROR,
-                        f"{object_.kind} {object_.refs[0]} names {ref} as its {role}, but "
-                        f"no such object was compiled; a reference must be to something "
-                        f"the run resolved",
-                        str(object_.refs[0]),
-                    )
-                ]
+            self._issue(
+                f"{object_.kind} {object_.refs[0]} names {ref} as its {role}, but no such "
+                f"object was compiled; a reference must be to something the run resolved",
+                object_,
             )
+            return URIRef(f"urn:semprini:unresolved:{ref}")
         return URIRef(iri)
 
     def _scheme_index(self) -> Mapping[str, _SchemeEntry]:
-        """Slug → the scheme's IRI and type, with every membership checked.
+        """Slug → the scheme's IRI and type, with the slug itself checked.
 
-        Two rules are enforced here rather than left to SHACL, because both decide which
-        *file* an object is written to and so cannot wait for validation: a scheme an
-        object claims to be in must exist, and a taxonomy value belongs in a taxonomy
-        while an entity, attribute or relationship belongs in a glossary.
+        A scheme slug is assigned once and opaque thereafter (spec 3.4.2), and it names
+        two things: the local name of the scheme's IRI, and the file every member of that
+        scheme is written to (spec 4.2). Only the first is frozen by the ID map, so
+        nothing but this check stops the second from moving underneath it — identity
+        validates a slug on the run that *mints* it, and every later run gets its answer
+        from the map without looking at the slug again.
+
+        Both failures are reachable from an ordinary edit of ``config/semprini.yaml``.
+        Renaming ``scheme_slug`` silently moves ``concepts-<slug>.ttl`` to a new file
+        while the scheme's IRI stays what it always was — the ID map and the output then
+        disagree about what the scheme is called. And a slug that is not a slug at all is
+        a path: ``../../x`` composes a filename that resolves outside ``generated/``
+        entirely, which is a machine-owned directory the manifest is supposed to bound
+        (spec 4.3).
         """
-        index = {
-            scheme.slug: _SchemeEntry(
-                iri=self.registry.iri(scheme.refs[0]) or "", scheme_type=scheme.scheme_type
-            )
-            for scheme in self.model.schemes
-        }
-        issues: list[Issue] = []
+        index: dict[str, _SchemeEntry] = {}
+        for scheme in self.model.schemes:
+            iri = self.registry.iri(scheme.refs[0])
+            if iri is None:  # pragma: no cover - resolve() covers every scheme first
+                self._issue(f"scheme {scheme.slug!r} has no IRI", scheme)
+                continue
+            if not is_slug(scheme.slug):
+                self._issue(
+                    f"scheme slug {scheme.slug!r} is not a slug; use lower-case letters, "
+                    f"digits, '-' and '_' — it names a file in generated/ as well as an "
+                    f"IRI (spec 3.4.2, 4.2)",
+                    scheme,
+                )
+                continue
+            frozen = self.context.iri(Kind.SCHEME, scheme.slug)
+            if iri != frozen:
+                self._issue(
+                    f"scheme {scheme.refs[0]} is minted as {iri} but now reports the slug "
+                    f"{scheme.slug!r}; a slug is assigned once and opaque thereafter "
+                    f"(spec 3.4.2) — renaming it would move the scheme's file while its "
+                    f"IRI stayed where it is",
+                    scheme,
+                )
+                continue
+            index[scheme.slug] = _SchemeEntry(iri=iri, scheme_type=scheme.scheme_type)
+        return index
+
+    def _check_memberships(self, index: Mapping[str, _SchemeEntry]) -> None:
+        """Every object is in a scheme, and in the right kind of one.
+
+        Enforced here rather than left to SHACL because both decide which *file* an
+        object is written to, and so cannot wait for validation.
+        """
         for object_ in self.model.objects:
             if isinstance(object_, Scheme):
                 continue
             assert isinstance(object_, SchemeMember)
             if not object_.schemes:
-                issues.append(
-                    Issue(
-                        Severity.ERROR,
-                        f"{object_.kind} {object_.refs[0]} is in no scheme; every object "
-                        f"belongs to a glossary or a taxonomy, which is also what decides "
-                        f"the file it is written to (spec 4.2)",
-                        str(object_.refs[0]),
-                    )
+                self._issue(
+                    f"{object_.kind} {object_.refs[0]} is in no scheme; every object "
+                    f"belongs to a glossary or a taxonomy, which is also what decides "
+                    f"the file it is written to (spec 4.2)",
+                    object_,
                 )
                 continue
             for slug in sorted(object_.schemes):
                 entry = index.get(slug)
                 if entry is None:
-                    issues.append(
-                        Issue(
-                            Severity.ERROR,
-                            f"{object_.kind} {object_.refs[0]} is in scheme {slug!r}, which "
-                            f"no source defined",
-                            str(object_.refs[0]),
-                        )
+                    self._issue(
+                        f"{object_.kind} {object_.refs[0]} is in scheme {slug!r}, which "
+                        f"no source defined",
+                        object_,
                     )
                     continue
                 wanted = (
@@ -499,38 +590,49 @@ class _Builder:
                     else SchemeType.GLOSSARY
                 )
                 if entry.scheme_type is not wanted:
-                    issues.append(
-                        Issue(
-                            Severity.ERROR,
-                            f"{object_.kind} {object_.refs[0]} is in {slug!r}, which is a "
-                            f"{entry.scheme_type}; a {object_.kind} belongs in a {wanted}",
-                            str(object_.refs[0]),
-                        )
+                    self._issue(
+                        f"{object_.kind} {object_.refs[0]} is in {slug!r}, which is a "
+                        f"{entry.scheme_type}; a {object_.kind} belongs in a {wanted}",
+                        object_,
                     )
-        if issues:
-            raise BuildError(issues)
-        return index
 
-    def _check_enumerated_entities_exist(self) -> None:
+    def _check_enumerated_entities(self) -> None:
         """``sem:enumerates`` is configured by hand, so its target is checked (spec 5.3).
 
-        A taxonomy pointing at an entity IRI that no run ever minted is a typo in
+        A taxonomy pointing at an IRI no run ever minted is a typo in
         ``config/semprini.yaml``, and it would otherwise reach the output as a triple
-        pointing into empty space.
+        pointing into empty space. The *kind* is checked too, from the ID map's own
+        column: ``sem:enumerates`` runs scheme → **entity** (spec 3.3), and an IRI pasted
+        from the wrong file is a plausible mistake that would otherwise produce a
+        well-formed, wrong statement.
         """
-        known = {row.iri for row in self.registry.id_map}
-        issues = [
-            Issue(
-                Severity.ERROR,
-                f"scheme {scheme.slug!r} enumerates {scheme.enumerates}, which is not an "
-                f"IRI this instance has minted; check the 'enumerates' setting",
-                str(scheme.refs[0]),
-            )
-            for scheme in self.model.schemes
-            if scheme.enumerates is not None and scheme.enumerates not in known
-        ]
-        if issues:
-            raise BuildError(issues)
+        known = {row.iri: row.kind for row in self.registry.id_map}
+        for scheme in self.model.schemes:
+            if scheme.enumerates is None:
+                continue
+            kind = known.get(scheme.enumerates)
+            if kind is None:
+                self._issue(
+                    f"scheme {scheme.slug!r} enumerates {scheme.enumerates}, which is not "
+                    f"an IRI this instance has minted; check the 'enumerates' setting",
+                    scheme,
+                )
+            elif kind is not Kind.ENTITY:
+                self._issue(
+                    f"scheme {scheme.slug!r} enumerates {scheme.enumerates}, which is a "
+                    f"{kind}; a taxonomy provides the values of an entity (spec 3.3)",
+                    scheme,
+                )
+
+    # ------------------------------------------------------------------ issue collection
+
+    def _issue(self, message: str, about: SemanticObject) -> None:
+        """Record a problem against the object that carries it, and keep going."""
+        self.issues.append(Issue(Severity.ERROR, message, str(about.refs[0])))
+
+    def _raise_collected(self) -> None:
+        if self.issues:
+            raise BuildError(self.issues)
 
 
 @dataclass(frozen=True, slots=True)
