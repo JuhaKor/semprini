@@ -1,0 +1,33 @@
+@prefix sem: <https://w3id.org/semprini/ontology#> .
+@prefix c: <https://semantics.example.com/concepts/> .
+@prefix r: <https://semantics.example.com/relationships/> .
+@prefix sch: <https://semantics.example.com/schemes/> .
+@prefix v: <https://semantics.example.com/values/> .
+@prefix x: <https://semantics.example.com/ext#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix a: <https://semantics.example.com/assets/> .
+@prefix d: <https://semantics.example.com/docs/> .
+
+c:0d9e4c77-1c1e-4a41-9f0c-6a3a0b2f5c10 a sem:Entity ;
+  skos:prefLabel "Order"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:inScheme sch:sales ;
+  sem:sourceRef "ellie-main:0d9e4c77-1c1e-4a41-9f0c-6a3a0b2f5c10" ;
+  sem:status "active" .
+
+c:a1b2c3d4-0000-4000-8000-000000000001 a sem:Attribute ;
+  skos:prefLabel "Customer number"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:inScheme sch:sales ;
+  sem:attributeOf c:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21 ;
+  sem:sourceRef "ellie-main:a1b2c3d4-0000-4000-8000-000000000001" ;
+  sem:status "active" .
+
+sch:sales a skos:ConceptScheme ;
+  skos:prefLabel "Sales domain model"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  sem:schemeType "glossary" ;
+  sem:sourceRef "ellie-main:1234" ;
+  sem:status "active" .

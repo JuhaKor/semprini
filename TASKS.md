@@ -492,7 +492,7 @@ done and green.
 
 ## Phase C — Emit
 
-- [ ] **C1 · Graph builder and file partitioning**
+- [x] **C1 · Graph builder and file partitioning**
   **Spec:** §3.2, §3.3, §4.2 (`generated/` file naming), §3.3 (`dcterms:modified`
   carry-forward)
   **Deliver:** internal model → one rdflib graph per output file, including the
@@ -501,6 +501,141 @@ done and green.
   produces a byte-identical file **and** leaves `dcterms:modified` untouched — the test
   that proves scheduled no-op runs generate no diff.
   **Depends:** B1, B2, B4
+  **Status — reviewed, fixed, and open as
+  [PR #6](https://github.com/JuhaKor/semprini/pull/6).** Merge is the one step left.
+
+  **Done.** 308 tests green (47 of them C1's); ruff, ruff format and mypy (strict) clean.
+  Thirty mutations were checked against the suite — a subject duplicated into every
+  file, the home scheme taken in arrival order, the shortcut moved to the entity's file,
+  the shortcut emitted per relationship rather than per entity pair, its file chosen by
+  model order, a malformed slug accepted where the file name is built, a renamed slug
+  tolerated, a partial run built from part of a model, `enumerates` not checked to point
+  at an entity, an unparseable generated file escaping as a traceback, only the first
+  problem reported,
+  `dcterms:modified` computed from one file's share of a subject, the date refreshed on
+  every run, every block dating its subject rather than only the defining one, the previous
+  state compared including the date itself, the ontology re-serialized instead of copied,
+  schemes emitted without status/sourceRef/modified, `skos:hasTopConcept` emitted
+  alongside its inverse, an object in no scheme tolerated, an undefined scheme tolerated, a
+  value in the wrong kind of scheme tolerated, a dangling cross-reference emitted, an
+  unminted `enumerates` tolerated, labels emitted untagged, CRLF line endings, the ontology
+  copy read back as previous state, empty files written, `sem:sourceRef` composed with a
+  different separator, a status other than `active`, and a node dated when nothing changed
+  — and each fails it.
+
+  **The session resumed from a mid-refactor stop; what was left is recorded here because
+  the bug is worth not re-introducing.** A `sem:relatesTo` shortcut is a statement about
+  the *source entity* but is written in the relationship's file, so one subject
+  legitimately spans two files. The first version computed `dcterms:modified` from only
+  the statements in the node's own file, while `read_previous()` compares against the
+  union of all files. The two never matched, so every entity that was one end of a
+  relationship had its date refreshed on **every run** — precisely the "no-op run produces
+  no diff" guarantee C1 exists to establish. The fix is to gather statements per subject
+  across all blocks first and date the node from that union;
+  `test_recompiling_unchanged_input_is_byte_identical` and
+  `test_an_unchanged_node_keeps_its_modified_date` are the two that caught it, and the
+  mutation battery confirms both still would. Do not weaken them.
+
+  Two tests also had to be repaired, and the reason generalizes: both reused the sample
+  model's `product-category` scheme in cut-down models, and that scheme `enumerates` an
+  entity the cut-down models omit — so the build refused them, correctly. A shared fixture
+  carrying a cross-reference cannot be sliced. The order-independence test was rewritten
+  besides: it claimed to reverse the scheme order but passed the same tuple as the sample
+  model, so it asserted nothing the golden files did not already. It is now parametrized
+  over both orders and checks which file *defines* the node, not merely which files exist.
+
+  **Decisions taken** (all implemented and now in the spec):
+  - **Partitioning is by scheme, and an object is written exactly once**, in the file of
+    its lexicographically first scheme, carrying all its `skos:inScheme` triples. Writing
+    it into every scheme's file would load to the same graph but make one changed label
+    several changed hunks.
+  - **The `sem:relatesTo` shortcut goes in the relationship's file**, not the entity's:
+    the two change together, so a reviewer sees both halves in one hunk.
+  - **`ontology.ttl` is copied verbatim**, never re-serialized — `sem.ttl`'s term comments
+    are the vocabulary's published documentation and §5.5's comment-free rule governs an
+    instance's own output, not that document (A3).
+  - **`sem:status`, `sem:sourceRef` and `dcterms:modified` are emitted on every node**,
+    schemes included: lifecycle (§3.5) applies to every object, and a scheme is deleted
+    from a source as readily as anything else. §3.7's example omits them, and now says so.
+  - **Only `skos:topConceptOf` is emitted, not `skos:hasTopConcept`** — the inverse would
+    state one fact twice, in two files (§5.5 rule 4).
+  - **Empty files are not written**: a scheme with no relationships produces no
+    `relationships-*.ttl` at all.
+  - **Rejected at build time, with the source ref named:** an object in no scheme, in an
+    undefined scheme, or in the wrong *kind* of scheme (a taxonomy value in a glossary);
+    a cross-reference to something the run did not compile; an `enumerates` IRI this
+    instance never minted. The first three decide which file an object lands in, so they
+    cannot wait for SHACL.
+  - **Language:** `default_language` is applied to every label and definition. §5.5 rule
+    6's "a label that arrives *with* a tag keeps it" is currently **unreachable** — the
+    internal model carries plain strings and no v1 adapter produces a tagged label. The
+    seam is one function, `_Builder._text()`. Widening `model` to carry per-label
+    languages belongs with **D3**, the first adapter that could produce one.
+  - **API, for C2 and E2:** `build(model, *, registry, context, previous=None, today=None)
+    -> tuple[OutputFile, ...]`, plus `read_previous(repo_root)` and `write_all(files,
+    repo_root)`. An `OutputFile` carries the rendered `text` *and* the `graph` it came
+    from, so `--dry-run` and the determinism check see the exact bytes a real run would
+    commit without a filesystem in the way; `graph` is `None` for the ontology copy, which
+    must never be round-tripped through the serializer. `today` is injected, so nothing
+    but the caller reads a clock — C2's manifest must stay timestamp-free (§4.3).
+  - **`build()` does not write and does not save the registry.** It mints (through
+    `registry.resolve`) but leaves both the files and `mappings/id-map.csv` to the caller,
+    which is what keeps a mid-pipeline failure from half-writing an instance. **E2 calls
+    `write_all()` then `registry.save()` exactly once, in that order.**
+
+  **Review found seven issues; all are fixed**, with a test and a mutation each (8 more
+  mutations, 30/30 now caught). Two were real defects reproduced against the committed
+  code, and both are worth remembering:
+  - **A scheme slug could move an output file outside `generated/`, and rename one
+    silently.** Identity validates a slug on the run that *mints* it; every later run gets
+    its IRI from the ID map and never looks at the slug again — but `_file_name()` kept
+    using the *current* slug. Editing `scheme_slug` in `config/semprini.yaml` therefore
+    moved `concepts-<slug>.ttl` to a new file while the scheme's IRI stayed what it always
+    was, so the map and the output disagreed about what the scheme was called; and
+    `../../pwned` composed `generated/concepts-../../pwned.ttl`, which resolves outside the
+    machine-owned directory §4.3 is supposed to bound. Both are now refused at build time,
+    against the shape *and* against the local name frozen in the map. The general lesson:
+    **a value validated at mint time is not validated on any later run**, and this one
+    named two things while only one of them was frozen.
+  - **The `sem:relatesTo` shortcut was written once per relationship, breaking the
+    module's own "one triple in exactly one place" invariant.** Two relationships between
+    the same entity pair living in different schemes emitted the identical triple into two
+    files — union 43 triples, sum of parts 44. The sample model has one relationship, so
+    `test_every_triple_is_written_exactly_once` never saw it. The shortcut says only
+    *that* two entities are related, so it is now keyed by the pair and written in the
+    lexicographically first of their files; deleting one of two relationships no longer
+    shows a removed `relatesTo` line for a fact that still holds.
+
+  The rest were narrower: `read_previous()` let rdflib's `BadSyntax` escape as a traceback
+  naming nothing actionable, where an unparseable `generated/` file is exactly what §4.3
+  guards against (now a `BuildError` naming the file); `sem:enumerates` accepted any minted
+  IRI, so one pasted from the wrong file passed while §3.3 types it scheme → **entity**
+  (the ID map's `kind` column now decides); build errors were raised in three batches
+  rather than collected, against `IssueError`'s whole purpose (now two, and the split is
+  forced — `_file_name` cannot run until scheme membership is clean); a `_SchemeEntry`
+  built with `iri=... or ""` would have serialized every `skos:inScheme` for that scheme as
+  a relative `<>`; and `build()` silently ignored `RunContext.only_source`. Each of those
+  changed §3.4.2, §4.2 or §5.1, and the spec was edited in the same change.
+
+  **Known limitation, deliberately left — E2 owns it.** `_reference()` resolves through
+  the registry, which also knows IRIs minted on *previous* runs, so what is actually
+  refused is "an IRI this instance has never minted" rather than the stricter "an object
+  this run compiled" its message describes. Tightening it was the intent, but it interacts
+  with `--source X` partial runs (§5.4), where a cross-source reference legitimately falls
+  outside the fetched scope. Decide it with that case in view rather than in isolation;
+  the caveat is written into the docstring so the next reader does not assume it is
+  tighter than it is.
+
+  **Five spec edits landed in the same change**, since each is byte- or governance-
+  affecting and would otherwise be re-decided differently by whoever touched this next:
+  §4.1 gained `build.py`; §4.2 gained the partitioning rules (written once, in the
+  lexicographically first scheme; the shortcut in the relationship's file; a node dated
+  from all files, not one; no empty files; the ontology copied, never re-serialized);
+  §3.3 now says only one direction of each inverse pair is emitted; §3.7 now says it is
+  abbreviated and that `sem:sourceRef`/`sem:status`/`dcterms:modified` are on every node,
+  schemes included — the same trap B1 found there, where an illustrative example
+  disagreeing with a rule reaches the next task as a wrong golden file; and §5.1 now lists
+  what the build stage refuses and why three of the five cannot wait for SHACL.
 
 - [ ] **C2 · Manifest and run report**
   **Spec:** §4.3, §5.6, §7 (version stamping)
@@ -575,6 +710,22 @@ done and green.
   `--dry-run` writes nothing (assert via filesystem snapshot); a mid-pipeline failure
   leaves `generated/` untouched rather than half-written.
   **Depends:** E1
+  **Two obligations C1 hands over, both found in its review:**
+  1. **Stale files are never removed.** `build.write_all()` writes the files a run
+     produces and touches nothing else, so a scheme that disappears from its source leaves
+     `concepts-<slug>.ttl` in the instance for ever — its objects stay in the committed
+     output, `read_previous()` unions them back in, and C2's manifest check will find a
+     file it did not write. §4.3 says `generated/` is "overwritten wholesale", so the spec
+     is right and the implementation is short. Deleting correctly needs the run's scope,
+     which is why it is here and not in C1: a `--source X` run must **not** delete the
+     files it did not regenerate, and E1 decides whether a vanished scheme's objects are
+     deprecated (and so still emitted) rather than dropped.
+  2. **`build()` refuses a partial run outright** — `BuildError` when
+     `context.only_source` is set. `write_all` rewrites each file whole, so building from
+     one source's objects would delete every other source's statements from the files it
+     touched and refresh `dcterms:modified` on every node they co-describe. Removing that
+     guard is E2's first step, and it must be replaced by a real answer: either merge the
+     fetched subset with the previous state before building, or make writing per-file.
 
 ---
 
@@ -698,9 +849,13 @@ be deferred without stalling the build.
 
 - ~~**A2 is submitted and now purely a waiting game.**~~ Done: the namespace is registered
   and live, and §11 #1 — the project's one blocking decision — is resolved. Phase A is
-  complete. The build order proceeds unchanged: **C1 next**, the first task to emit RDF and
-  therefore the first whose output an instance would commit. G5 inherits the one obligation
-  A2 leaves behind: every released `/ontology/X.Y.Z/` must keep resolving.
+  complete. G5 inherits the one obligation A2 leaves behind: every released
+  `/ontology/X.Y.Z/` must keep resolving.
+- **The compiler now emits RDF.** C1 done means the first output an instance would commit
+  exists and is pinned by golden files, so from here every task changes bytes somebody
+  could already be governing. **C2 next**: the manifest is what makes `generated/`
+  machine-owned in practice rather than by convention (§4.3), and D2 and E2 both wait on
+  it.
 - ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
   once an instance holds generated files, every serializer change becomes a migration
   (§7). It now is one — a change to `serialize.py`'s output is a major bump.

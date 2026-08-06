@@ -199,6 +199,13 @@ tell the same story.
 - `skos:definition` — definition text
 - `skos:inScheme`, `skos:topConceptOf`, `skos:hasTopConcept` — scheme membership
 - `skos:broader` / `skos:narrower` — taxonomy hierarchy (only inside taxonomy schemes)
+
+  Of each inverse pair the compiler emits **one direction only** — `skos:topConceptOf`
+  and `skos:broader`, both stated on the narrower node. The inverse says the same fact a
+  second time, in another file (4.2), and one changed fact must be one changed line
+  (5.5 rule 4). A consumer that wants the inverses can entail them; a reviewer cannot
+  un-see a duplicated diff.
+
 - `skos:notation` — business code of a taxonomy value (e.g. `"PT"`)
 - `skos:exactMatch`, `skos:broadMatch` — cross-scheme alignment (e.g. to industry
   taxonomies, or to another instance's concepts)
@@ -224,7 +231,13 @@ tell the same story.
      not change the slug). A slug is lower-case letters, digits, `-` and `_` — the same
      shape as an instance id or a source name. `Sales` and `sales` would otherwise be two
      permanent IRIs for one taxonomy, and one file in `generated/` on a case-insensitive
-     filesystem.
+     filesystem. Because minting runs **once** per object, the slug is also re-checked on
+     every later run, against both the shape above and the local name already frozen in
+     the ID map: a slug names the scheme's *file* (4.2) as well as its IRI, and only the
+     IRI is protected by the map. Editing `scheme_slug` in configuration would otherwise
+     move the file while the IRI stayed where it was, leaving the ID map and the output
+     disagreeing about what the scheme is called — and a slug that is not a slug at all,
+     such as `../../x`, composes a path outside `generated/` entirely.
    - Objects with no source UUID → `{prefix}:{uuid5}`, derived from the fixed namespace
      `NAMESPACE_SEMPRINI` = `8865c94a-2211-5f26-8887-6d6d5cbaa1e0` — itself
      `UUIDv5(NAMESPACE_URL, "https://w3id.org/semprini/ontology#")`, and **permanent**:
@@ -319,6 +332,11 @@ v:9c1f... a skos:Concept ;
   sem:status "active" .
 ```
 
+Abbreviated, as the heading says. Every node the compiler writes carries `sem:sourceRef`,
+`sem:status` and `dcterms:modified` — **schemes included**: lifecycle (3.5) applies to
+every object, and a scheme is deleted from a source as readily as anything else. Blocks
+above that omit them are shortened for reading, not showing an exemption.
+
 ---
 
 ## 4. Repository layouts
@@ -341,6 +359,7 @@ semprini/
 │   ├── config.py                  # config/semprini.yaml loading and validation (5.1)
 │   ├── model.py                   # internal model dataclasses
 │   ├── identity.py                # ID map, minting, namespace lock
+│   ├── build.py                   # internal model → the graphs of generated/ (3.2, 3.3, 4.2)
 │   ├── serialize.py               # canonical Turtle serializer (5.5)
 │   ├── validate.py                # SHACL + structural checks (6.1)
 │   ├── migrate/                   # version-to-version migrations (7)
@@ -388,8 +407,36 @@ semprini/
 ```
 
 An instance contains **no Python**. `generated/ontology.ttl` is a verbatim copy of the
-pinned metamodel, written by the compiler so that downstream consumers can load an
-instance from Git alone, without installing the package.
+pinned metamodel — copied, never re-serialized, because its term comments are the
+vocabulary's published documentation (3.1) and 5.5's comment-free rule governs an
+instance's own output. It is written so that downstream consumers can load an instance
+from Git alone, without installing the package.
+
+**Partitioning.** Output is partitioned by scheme, and **an object is written exactly
+once**: in the file of its lexicographically first scheme, carrying all of its
+`skos:inScheme` triples there. Repeating a multi-scheme object into each of its schemes'
+files would load to the same graph, but it would make one changed label several changed
+hunks, and the diff is the governance interface (1.2). *Lexicographically* first rather
+than first reported, so that an adapter's iteration order cannot decide where an object
+lives.
+
+The `sem:relatesTo` shortcut (3.2) is the one statement deliberately written away from
+the node it is about: it is derived from a relationship and belongs in that
+relationship's file, so a reviewer sees the reified node and its shortcut in one hunk. A
+subject therefore legitimately spans two files, and `dcterms:modified` (3.3) is decided
+from everything the run says about a node across **all** files — never from one file's
+share of it, which would refresh the date of every entity that happens to be one end of a
+relationship, on every run.
+
+The shortcut is emitted **once per entity pair, not once per relationship**. `sem:relatesTo`
+says only *that* two entities are related, so several relationships between one pair
+derive the identical triple; it is written in the lexicographically first of their files.
+Written per relationship instead, it would appear in two files whenever two relationships
+between one pair sat in different schemes — and deleting either one would show a removed
+`sem:relatesTo` line for a fact that still holds.
+
+A file with no content is **not written**: a glossary with no relationships produces no
+`relationships-<scheme>.ttl` at all, rather than one holding only a prefix block.
 
 ### 4.3 Rules
 
@@ -452,6 +499,20 @@ fetch (per configured adapter)
 The compiler is **stateless between runs** except for what is in the instance
 repository (previous TTL, ID map, namespace lock). It must produce identical results
 locally and in CI.
+
+The **build** stage refuses (exit `1`), naming the source ref of the offending object,
+anything no output could honestly represent: an object in no scheme, in a scheme no
+source defined, or in the wrong *kind* of scheme — a taxonomy value in a glossary; a
+scheme slug that is malformed or that has been renamed since it was minted (3.4.2); a
+cross-reference (`sem:attributeOf`, `sem:source`, `sem:target`, `skos:broader`) to
+something the run did not resolve; and a `sem:enumerates` IRI this instance has never
+minted, or that the ID map records as something other than an entity (3.3) — both typos
+in `config/semprini.yaml` rather than data. The first four decide which *file* an object is
+written to, so they cannot be deferred to SHACL validation (6.1); the rest would otherwise
+reach a governed file as a triple pointing at nothing, or at the wrong thing.
+
+Every problem the stage can see is reported together, not one per run: these are read in
+CI, where one problem per round trip is the difference between one fix and five.
 
 Instance configuration (`config/semprini.yaml`):
 

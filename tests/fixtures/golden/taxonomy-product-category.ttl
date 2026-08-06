@@ -1,0 +1,38 @@
+@prefix sem: <https://w3id.org/semprini/ontology#> .
+@prefix c: <https://semantics.example.com/concepts/> .
+@prefix r: <https://semantics.example.com/relationships/> .
+@prefix sch: <https://semantics.example.com/schemes/> .
+@prefix v: <https://semantics.example.com/values/> .
+@prefix x: <https://semantics.example.com/ext#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix a: <https://semantics.example.com/assets/> .
+@prefix d: <https://semantics.example.com/docs/> .
+
+sch:product-category a skos:ConceptScheme ;
+  skos:prefLabel "Product category taxonomy"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  sem:enumerates c:55aa0c3e-9f2b-4c7d-8e1a-3f5b7c9d1e20 ;
+  sem:schemeType "taxonomy" ;
+  sem:sourceRef "taxonomies:product-category.xlsx" ;
+  sem:status "active" .
+
+v:86a1bc4a-76ec-5969-8e89-09845d2ac76c a skos:Concept ;
+  skos:prefLabel "Power tools"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:inScheme sch:product-category ;
+  skos:notation "PT" ;
+  skos:topConceptOf sch:product-category ;
+  sem:sourceRef "taxonomies:PT" ;
+  sem:status "active" .
+
+v:9ba03ae3-5f30-5a06-b5d0-d210799f9c1f a skos:Concept ;
+  skos:prefLabel "Drills"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:broader v:86a1bc4a-76ec-5969-8e89-09845d2ac76c ;
+  skos:definition "Tools that make holes."@en ;
+  skos:inScheme sch:product-category ;
+  skos:notation "PT-DR" ;
+  sem:sourceRef "taxonomies:PT-DR" ;
+  sem:status "active" .

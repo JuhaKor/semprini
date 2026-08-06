@@ -1,0 +1,22 @@
+@prefix sem: <https://w3id.org/semprini/ontology#> .
+@prefix c: <https://semantics.example.com/concepts/> .
+@prefix r: <https://semantics.example.com/relationships/> .
+@prefix sch: <https://semantics.example.com/schemes/> .
+@prefix v: <https://semantics.example.com/values/> .
+@prefix x: <https://semantics.example.com/ext#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix a: <https://semantics.example.com/assets/> .
+@prefix d: <https://semantics.example.com/docs/> .
+
+c:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21 sem:relatesTo c:0d9e4c77-1c1e-4a41-9f0c-6a3a0b2f5c10 .
+
+r:c2d1e0aa-7b3c-4d5e-9f01-2a3b4c5d6e7f a sem:Relationship ;
+  skos:prefLabel "places"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:inScheme sch:sales ;
+  sem:source c:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21 ;
+  sem:sourceRef "ellie-main:c2d1e0aa-7b3c-4d5e-9f01-2a3b4c5d6e7f" ;
+  sem:status "active" ;
+  sem:target c:0d9e4c77-1c1e-4a41-9f0c-6a3a0b2f5c10 .
