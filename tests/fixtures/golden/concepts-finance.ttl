@@ -1,0 +1,36 @@
+@prefix sem: <https://w3id.org/semprini/ontology#> .
+@prefix c: <https://semantics.example.com/concepts/> .
+@prefix r: <https://semantics.example.com/relationships/> .
+@prefix sch: <https://semantics.example.com/schemes/> .
+@prefix v: <https://semantics.example.com/values/> .
+@prefix x: <https://semantics.example.com/ext#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix a: <https://semantics.example.com/assets/> .
+@prefix d: <https://semantics.example.com/docs/> .
+
+c:55aa0c3e-9f2b-4c7d-8e1a-3f5b7c9d1e20 a sem:Entity ;
+  skos:prefLabel "Product category"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:inScheme sch:finance ;
+  sem:sourceRef "ellie-main:55aa0c3e-9f2b-4c7d-8e1a-3f5b7c9d1e20" ;
+  sem:status "active" .
+
+c:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21 a sem:Entity ;
+  skos:prefLabel "Customer"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Account holder"@en ;
+  skos:altLabel "Client"@en ;
+  skos:definition "A person or organization that buys our products."@en ;
+  skos:inScheme sch:finance ;
+  skos:inScheme sch:sales ;
+  sem:sourceRef "ellie-main:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21" ;
+  sem:status "active" .
+
+sch:finance a skos:ConceptScheme ;
+  skos:prefLabel "Finance domain model"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  sem:schemeType "glossary" ;
+  sem:sourceRef "ellie-main:1287" ;
+  sem:status "active" .
