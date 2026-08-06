@@ -501,6 +501,8 @@ done and green.
   produces a byte-identical file **and** leaves `dcterms:modified` untouched — the test
   that proves scheduled no-op runs generate no diff.
   **Depends:** B1, B2, B4
+  **Status — reviewed, fixed, and open as
+  [PR #6](https://github.com/JuhaKor/semprini/pull/6).** Merge is the one step left.
 
   **Done.** 308 tests green (47 of them C1's); ruff, ruff format and mypy (strict) clean.
   Thirty mutations were checked against the suite — a subject duplicated into every
