@@ -293,7 +293,7 @@ done and green.
     set-valued field must be added to `UNION_FIELDS`, or it will be treated as a scalar
     that has to agree.
 
-- [ ] **B3 · Configuration loading**
+- [x] **B3 · Configuration loading**
   **Spec:** §5.1 (`config/semprini.yaml`), exit code 2
   **Deliver:** parsing and validation of instance configuration, including resolving
   `token_env` without ever reading a credential into the config object.
@@ -301,6 +301,88 @@ done and green.
   duplicate source `name`, unknown adapter, credential written inline) exits 2 with a
   message naming the offending key.
   **Depends:** A1
+  **Done.** 171 tests green; ruff, ruff format and mypy (strict) clean; the wheel still
+  installs into a bare venv with pip and `semprini version` works there. Eighteen
+  mutations were checked against the suite — the `token_env` exemption removed, a pasted
+  token in `token_env` tolerated, no recursion into nested mappings or into lists,
+  duplicate YAML keys tolerated, unknown keys tolerated, duplicate source names
+  tolerated, `--source` unvalidated, settings not frozen, only the first issue reported,
+  an unset credential tolerated, any language tag accepted, the CLI not validating
+  configuration at all, plus the six below — and each fails it. **Review found six
+  defects, all fixed**, and each one now has both a test and a mutation:
+  - Three ways to get a **traceback instead of exit 2**, which is the whole contract this
+    task exists to keep. A YAML key that cannot be hashed (`? [a, b]`) hit the
+    duplicate-key scan's `in` test and raised `TypeError`, which is not a `YAMLError` and
+    so escaped every handler; the scan now defers to `SafeConstructor`'s own message. A
+    file saved in the system codepage raised `UnicodeDecodeError`, which subclasses
+    `ValueError` and slipped past the `OSError` handler — an ordinary Windows editor
+    mistake, now a named error. And YAML **merge keys** (`<<: *anchor`) were rejected
+    outright, because the merge node reached `construct_object` before
+    `flatten_mapping` ran; merge nodes are skipped by the scan instead of flattened
+    first, since flattening would make overriding a merged value — the point of a merge —
+    look like a duplicate.
+  - **The credential guard missed camelCase.** `accessToken`, `clientSecret` and
+    `bearerToken` split into one segment each and were accepted, while `access_token` was
+    refused: the guard depended on an adapter author's naming style rather than on what
+    the key means. Keys are now split on case boundaries as well as `-`/`_`. It also did
+    not descend through a list *of lists*, so a secret two containers down slipped
+    through the same rule the rest of the tree enforces.
+  - **`SourceConfig` was frozen but unhashable** — the identical defect B2 fixed on
+    `SemanticObject.source_refs`, and fixed the same way (`field(hash=False)`: compared,
+    not hashed). Worth noting as a pattern rather than an incident: any frozen dataclass
+    here that holds a mapping needs it, and the next one will too.
+
+  Decisions, for later sessions:
+  - **§11 #5 is resolved, and slightly wider than the spec's own default.** One
+    `default_language` per instance, applied to every label and definition that arrives
+    **without** a language; a label that arrives **with** one keeps it and is never
+    overwritten. §5.5 rule 6 and the §11 table now say so. The consequence lands on
+    **C1**: labels in the internal model can no longer be assumed untagged, so the graph
+    builder applies the default per label rather than to all of them. `model.py`'s
+    `pref_label` docstring still describes the untagged case, which is what every v1
+    adapter produces — C1 owns widening it, and `is_language_tag()` is now public in
+    `model.py` so both places agree on what a tag is.
+  - **PyYAML is a new runtime dependency**, added to §5.1's dependency sentence in the
+    same change. Instances still install with plain pip; nothing about §6.2 changes.
+    `_StrictLoader` extends `SafeLoader` and additionally **rejects duplicate mapping
+    keys** — YAML's own rule is last-one-wins, which would silently discard a configured
+    value in the file whose whole job is to say which sources exist.
+  - **Validation collects every issue and raises once.** `ConfigError` carries
+    `issues: tuple[Issue, ...]`, each with the dotted key that caused it
+    (`sources[1].name`, `sources[0].config.api_key`). F2 should render these rather than
+    re-deriving locations, and `semprini check` reports them as a list.
+  - **Unknown keys are errors.** A misspelled key that is merely ignored is the worst
+    configuration bug available: the run succeeds and does the wrong thing. Adding a key
+    to §5.1's config format therefore means adding it to `_TOP_LEVEL_KEYS`,
+    `_INSTANCE_KEYS` or `_SOURCE_KEYS`. A source's own `config:` subtree is exempt — it
+    belongs to the adapter, which validates it in `validate_config()` (§5.2).
+  - **Credentials are refused by key name, at any depth**, including inside lists of
+    mappings, and a token pasted into `token_env` is caught by requiring that value to
+    look like a variable *name*. The word list is deliberately per key segment, so
+    `base_url` and `source_key` pass while `api_key` and `auth_token` do not; a key
+    ending in `_env` is the one escape hatch. `SourceConfig.secret()` reads the
+    environment and **returns** the value — nothing stores it, so a config object is safe
+    to print into a run report. A named-but-unset variable is exit **2**, not 3: the
+    operator forgot a secret, the source is not unreachable.
+  - **`known_adapters` is injected, not discovered.** Entry-point discovery is D1's, and
+    a second copy here would drift. Passing `None` skips the adapter-name check, which is
+    what the CLI does today — checking against an empty set would reject every valid
+    config. **D1 wires discovery into `cli._load_config`'s one call site.**
+  - **`run`, `check` and `migrate` now load configuration before reporting themselves
+    unimplemented**, so a broken config exits 2 today rather than 1 after the feature
+    lands; `run` also validates `--source` against the configured sources, since a typo
+    would otherwise compile nothing and exit 0, which reads as success. `init` is
+    excluded — it writes the file — and `adapters`/`version` describe the installation.
+  - **Adapter settings are deep-frozen** (nested mappings read-only, nested lists
+    tuples). D2/D3 will therefore receive tuples where YAML had lists; iteration is
+    unaffected, mutation raises, which is the point (§5.2 forbids an adapter editing
+    shared state).
+  - **`tests/fixtures/acme/` now exists**, holding only `config/semprini.yaml`, and
+    `conftest.py` has an `instance` fixture that copies it to a temp directory and chdirs
+    there. **D2 fills in the rest** of the fixture instance around that config, which
+    already names `sources/taxonomies/product-category.xlsx` and the
+    `product-category` scheme. Its base IRI is `https://semantics.example.com/`
+    (reserved by RFC 2606) rather than the spec example's `semantics.acme.com`.
 
 - [ ] **B4 · Identity: ID map, minting, namespace lock**
   **Spec:** §3.4, §5.4
@@ -514,7 +596,7 @@ be deferred without stalling the build.
 | 2 | Confirm Apache-2.0 / CC BY 4.0 | A1 (the licence files are written there) |
 | 3 | Distribution channel | G5 |
 | 4 | Which adapters ship bundled | D3, G4 |
-| 5 | Default language tag(s) | B3 |
+| ~~5~~ | ~~Default language tag(s)~~ — **resolved in B3:** one per instance, applied only where a label carries no tag of its own | ~~B3~~; C1 applies it |
 | 6 | When missing-definition becomes blocking | per instance; H1 |
 | 7 | Ellie pagination and rate limits | D3 |
 | 8 | Whether `init` creates the remote repository | G1 |
@@ -524,7 +606,7 @@ be deferred without stalling the build.
 - **A2 is submitted and now purely a waiting game.** A3, the hosting and the PR are all
   done; the remaining dependency is a third party's review queue, which no amount of work
   here compresses. Nothing else is blocked by it until G5, so the build order below
-  proceeds unchanged — B2 next, then B3.
+  proceeds unchanged — B4 next, then C1.
 - ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
   once an instance holds generated files, every serializer change becomes a migration
   (§7). It now is one — a change to `serialize.py`'s output is a major bump.

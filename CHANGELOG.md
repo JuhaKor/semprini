@@ -34,6 +34,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `source_refs`, `merge_models()` merging objects that share a source ref, `RunContext`,
   and `Issue`/`Severity`. Objects that two sources disagree about raise rather than
   resolving to one side.
+- Instance configuration loading (`semprini.config`): `config/semprini.yaml` is parsed
+  and validated, and every rejection names the offending key and exits `2`. Unknown keys
+  and duplicate YAML keys are errors, not extras. Credentials written into the file are
+  **refused** at any depth — a source names an environment variable (`token_env`) and the
+  value is read from the environment at fetch time, never stored on a config object.
+  `run`, `check` and `migrate` now validate configuration before anything else, so a
+  broken instance fails with a key rather than with a traceback.
+- `PyYAML` as a runtime dependency (§5.1). Instances continue to install with plain pip.
 
 ### Ontology 0.1.0
 

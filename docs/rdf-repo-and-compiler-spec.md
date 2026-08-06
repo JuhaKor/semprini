@@ -312,6 +312,7 @@ semprini/
 ├── .github/workflows/             # this repository's own CI — lint, types, tests
 ├── src/semprini/
 │   ├── cli.py                     # the whole CLI surface (5.1)
+│   ├── config.py                  # config/semprini.yaml loading and validation (5.1)
 │   ├── model.py                   # internal model dataclasses
 │   ├── identity.py                # ID map, minting, namespace lock
 │   ├── serialize.py               # canonical Turtle serializer (5.5)
@@ -384,8 +385,8 @@ instance from Git alone, without installing the package.
 
 A Python 3.12+ package distributed as **`semprini`** (import name `semprini`),
 using `rdflib` for graph construction, `openpyxl` for Excel, `requests` for HTTP
-sources, `pyshacl` for validation. It installs from PyPI (or a Git tag) and exposes a
-console script:
+sources, `pyshacl` for validation and `PyYAML` for configuration. It installs from PyPI
+(or a Git tag) and exposes a console script:
 
 ```
 semprini init      --base-iri <IRI> --org <slug> [--dir <path>]   # bootstrap an instance (5.7)
@@ -461,7 +462,11 @@ sources:
 
 Credentials are never written to configuration — an adapter names an environment
 variable (`token_env`) and the value comes from the CI platform's secret store or the
-operator's shell.
+operator's shell. This is enforced, not merely documented: the compiler **rejects**
+(exit 2) a configuration whose keys name a credential rather than a variable, and no
+loaded configuration object ever holds a secret value. Unknown keys are rejected for the
+same reason a typo must not be silently ignored, and every rejection names the offending
+key.
 
 ### 5.2 Adapter interface (plugins)
 
@@ -600,8 +605,13 @@ rules:
    than joining them with `,` — one changed fact must be one changed line. Subject
    blocks are separated by a single blank line.
 5. UTF-8, LF line endings, newline at EOF. No comments in generated files.
-6. Language tags always present on `skos:prefLabel`/`skos:definition` (default `@en`;
-   set per instance in `config/semprini.yaml`).
+6. Language tags always present on `skos:prefLabel`, `skos:altLabel` and
+   `skos:definition`. One `default_language` per instance, set in
+   `config/semprini.yaml` (default `en`), is applied to every label and definition that
+   arrives without a language of its own; a label that arrives **with** one keeps it and
+   is never overwritten. An instance therefore has one language by default but is not
+   limited to one, and a source that already knows its languages does not have to
+   discard them.
 7. **No blank nodes in generated output.** Every node the compiler emits has an IRI.
    Blank-node labels are not stable across runs and would defeat the determinism check;
    any construct that would need one must instead use a deterministically minted IRI
@@ -847,7 +857,7 @@ Each deployment adopts these rules; they are what the CI checks enforce.
 | 2 | ~~Confirm Apache-2.0 / CC BY 4.0 (8), or choose AGPL for the code if hosted-service competition is a concern~~ | **Resolved:** Apache-2.0 + CC BY 4.0, copyright Datakor Consulting Oy (8) |
 | 3 | Distribution channel: PyPI, or Git tags only at first | PyPI once the interface is stable; Git tags until then |
 | 4 | Which adapters are bundled versus separately distributed (5.3) | Ellie and Excel bundled; all later adapters evaluated case by case |
-| 5 | Default language tag(s); multilingual labels needed? | `@en` only, set per instance |
+| 5 | ~~Default language tag(s); multilingual labels needed?~~ | **Resolved:** one `default_language` per instance, applied to every untagged label and definition; an already-tagged label keeps its tag (5.5 rule 6) |
 | 6 | Definition coverage: when the missing-definition warning becomes blocking | per instance, after pilot review |
 | 7 | Ellie API rate limits / pagination specifics | verify against Ellie API docs at build time |
 | 8 | Whether `semprini init` also creates the remote repository (`gh repo create`) or stays offline | stays offline (5.7) |

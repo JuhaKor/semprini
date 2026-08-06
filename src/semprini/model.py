@@ -52,6 +52,7 @@ __all__ = [
     "Severity",
     "SourceRef",
     "TaxonomyValue",
+    "is_language_tag",
     "merge_models",
 ]
 
@@ -486,6 +487,16 @@ def _check_refs_are_unique_across_kinds(model: InternalModel) -> None:
 _LANGUAGE_TAG = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*")
 
 
+def is_language_tag(value: str) -> bool:
+    """Whether ``value`` is a well-formed BCP 47 tag.
+
+    Well-formed, not registered: the shape is what decides whether the compiler can emit
+    it. Public because configuration loading rejects a bad tag with the key that carries
+    it, and both places must agree on what a tag is (spec 11 #5).
+    """
+    return _LANGUAGE_TAG.fullmatch(value) is not None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RunContext:
     """Everything a run knows about the instance it is compiling (spec 5.1, 5.2).
@@ -504,8 +515,8 @@ class RunContext:
     """The instance repository. Commands operate on the working directory (spec 5.1)."""
 
     default_language: str = "en"
-    """Applied to ``skos:prefLabel`` and ``skos:definition`` when the graph is built
-    (spec 5.5 rule 6). Which tags an instance may configure is still open (spec 11 #5)."""
+    """Applied when the graph is built to every label and definition that carries no
+    language of its own; one that does keeps it (spec 5.5 rule 6, 11 #5)."""
 
     only_source: str | None = None
     """``--source <name>``: a partial run, which must skip deprecation outside its
@@ -516,7 +527,7 @@ class RunContext:
     def __post_init__(self) -> None:
         if not self.instance_id:
             raise ValueError("an instance id is required")
-        if not _LANGUAGE_TAG.fullmatch(self.default_language):
+        if not is_language_tag(self.default_language):
             # An unusable tag would otherwise surface as unparseable Turtle at the end
             # of a long run, rather than as a configuration error at the start.
             raise ValueError(f"not a language tag: {self.default_language!r}")

@@ -69,8 +69,12 @@ def test_missing_required_argument_exits_2() -> None:
 
 
 @pytest.mark.parametrize("argv", STUB_INVOCATIONS, ids=lambda argv: " ".join(argv))
-def test_unimplemented_commands_exit_1(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
-    # Exit 1, not 2: the invocation is well formed, the feature is absent.
+def test_unimplemented_commands_exit_1(
+    argv: list[str], instance: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Exit 1, not 2: the invocation is well formed, the feature is absent. Run inside a
+    # valid instance, since the commands that read one now validate its configuration
+    # first and would exit 2 on a missing config/semprini.yaml (spec 5.1).
     assert main(argv) == ExitCode.FAILURE
 
     err = capsys.readouterr().err

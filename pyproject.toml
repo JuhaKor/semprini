@@ -24,6 +24,7 @@ dependencies = [
     "openpyxl (>=3.1,<4.0)",
     "requests (>=2.32,<3.0)",
     "pyshacl (>=0.26,<1.0)",
+    "pyyaml (>=6.0,<7.0)",
 ]
 
 [project.urls]
@@ -50,6 +51,7 @@ pytest = ">=8.0"
 ruff = ">=0.6"
 mypy = ">=1.11"
 types-requests = ">=2.32"
+types-pyyaml = ">=6.0"
 
 [tool.ruff]
 line-length = 100
