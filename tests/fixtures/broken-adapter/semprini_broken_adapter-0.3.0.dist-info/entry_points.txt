@@ -1,0 +1,2 @@
+[semprini.adapters]
+broken = semprini_broken_adapter:BrokenAdapter

@@ -1,0 +1,2 @@
+[semprini.adapters]
+dummy = semprini_dummy_adapter:DummyAdapter

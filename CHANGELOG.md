@@ -85,6 +85,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   when the run changed something**: a scheduled compile that finds nothing new now leaves
   the instance byte-identical instead of opening a pull request whose only content is a
   report saying nothing changed.
+- The adapter plugin interface (`semprini.adapters`): `BaseAdapter`, entry-point
+  discovery for the group `semprini.adapters`, and `semprini adapters`, which lists what
+  is installed with the distribution that provides each one (§5.2). A source system is
+  added by installing a package and naming it in `config/semprini.yaml` — no fork, and no
+  privileged path for the bundled adapters, which arrive by the same route. Discovery
+  imports nothing, so one broken plugin never hides the others and no command runs
+  third-party code merely to validate a configuration name.
+- A source whose `adapter:` names nothing installed is now a configuration error (exit
+  `2`) reported with its key, rather than a failure much later in the run. So are the
+  refusals discovery makes: an entry point that does not import, does not yield a
+  `BaseAdapter`, leaves `fetch()` unimplemented, calls itself something other than the
+  name it is registered under, or is claimed by two installed distributions at once.
+- **The adapter contract ships as an executable check** (`semprini.testing.check_contract`)
+  that a third-party author runs against their own adapter, from their own test suite,
+  with no pytest dependency and no base class to inherit. It catches an adapter that
+  writes to disk, mints IRIs, invents `sem:` terms, edits the configuration it was given,
+  returns a different model each run, attributes objects to the wrong source, or answers
+  a dead source with a partial model instead of raising — and reports every violation at
+  once rather than the first. "Writes to disk" includes deleting and renaming, and is
+  watched on the failure paths too: an adapter that saves what it managed to download
+  before giving up is caught on precisely the run that was supposed to change nothing.
+- `SourceUnreachableError`, which an adapter raises when its source cannot be read, is
+  mapped to exit `3` in the one place the CLI maps errors to codes. That is the code that
+  tells a scheduled compile to retry rather than open an issue, and it now means the same
+  thing whichever subcommand produced it.
 
 ### Ontology 0.1.0
 

@@ -14,9 +14,11 @@ import sys
 from collections.abc import Sequence
 from enum import IntEnum
 
-from semprini import compiler_version, config, identity, ontology_version
+from semprini import adapters, compiler_version, config, identity, ontology_version
+from semprini.adapters import AdapterError, AdapterLoadError, BaseAdapter, SourceUnreachableError
+from semprini.model import IssueError
 
-__all__ = ["ExitCode", "build_parser", "main"]
+__all__ = ["ExitCode", "build_parser", "exit_code_for", "main"]
 
 _PROGRAM = "semprini"
 
@@ -42,7 +44,6 @@ _UNIMPLEMENTED = {
     "run": "task E2",
     "check": "task F2",
     "migrate": "task G3",
-    "adapters": "task D1",
 }
 
 # Subcommands that operate on a configured instance, and therefore fail on a broken
@@ -109,32 +110,103 @@ def _version() -> int:
     return ExitCode.OK
 
 
-def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig | ExitCode:
+def _adapters() -> int:
+    """List the installed adapter plugins (spec 5.1, 5.2).
+
+    Describes the *installation*, not an instance, so it reads no configuration and
+    works outside an instance repository. This is the one command that deliberately
+    imports every discovered plugin: "is this adapter actually usable" is the question
+    it exists to answer, and it cannot be answered from metadata alone.
+    """
+    entries = adapters.discover()
+    if not entries:
+        print("no adapters are installed")
+        return ExitCode.OK
+
+    rows: list[tuple[str, str, str]] = []
+    broken: list[str] = []
+    for entry in entries:
+        try:
+            loaded = entry.load()
+        except AdapterError as error:
+            broken.append(str(error))
+            rows.append((entry.name, entry.provider, "-- not loadable, see below --"))
+        else:
+            rows.append((entry.name, entry.provider, _summary(loaded)))
+
+    name_width = max(len(row[0]) for row in rows)
+    provider_width = max(len(row[1]) for row in rows)
+    for name, provider, summary in rows:
+        print(f"{name:<{name_width}}  {provider:<{provider_width}}  {summary}".rstrip())
+
+    # A name two distributions claim is an installation that does not work, even though
+    # every plugin in it imports: `adapter: <name>` cannot be resolved, so the run would
+    # fail where the listing said everything was fine.
+    broken.extend(adapters.ambiguities(entries))
+
+    if broken:
+        if len(broken) == 1:
+            raise AdapterLoadError(broken[0])
+        listed = "\n".join(f"  - {message}" for message in broken)
+        raise AdapterLoadError(f"{len(broken)} installed adapters could not be loaded\n{listed}")
+    return ExitCode.OK
+
+
+def _summary(adapter: type[BaseAdapter]) -> str:
+    """The adapter's one-line self-description — the first line of its own docstring.
+
+    ``__doc__`` rather than ``inspect.getdoc``, which walks the MRO: an adapter that
+    documents nothing would otherwise be listed as "One source system, normalized into
+    the internal model", which is ``BaseAdapter``'s docstring and reads as the adapter
+    describing itself. An empty column is honest; an inherited sentence is not.
+    """
+    lines = (adapter.__doc__ or "").strip().splitlines()
+    return lines[0].strip() if lines else ""
+
+
+def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig:
     """Load the instance's configuration and check its namespace lock (exit code 2).
 
-    Returns the configuration or an :class:`ExitCode`, rather than raising, so that every
-    command handles the failure the same way — the exit code is the CI contract (5.1).
-    ``NamespaceLockError`` is a ``ConfigError``, so both land here: spec 5.1 makes them
-    one exit code, and the lock is the one configured value an instance may not edit.
-
-    ``known_adapters`` is not passed yet: adapter discovery arrives with task D1, and
-    checking source adapters against an empty set would reject every valid config.
+    Raises rather than returning a code: :func:`main` maps every error to its exit code
+    in one place, which is the CI contract (5.1). ``NamespaceLockError`` is a
+    ``ConfigError``, so both land there as exit 2 — spec 5.1 makes them one category, and
+    the lock is the one configured value an instance may not edit.
     """
-    try:
-        loaded = config.load()
-        if arguments.command == "run":
-            # Validates --source against the configured sources: a typo would otherwise
-            # compile nothing and exit 0, which reads as success.
-            loaded.run_context(only_source=arguments.source, dry_run=arguments.dry_run)
-        if not getattr(arguments, "force_namespace_change", False):
-            # The one invocation allowed to disagree with the lock — moving the base IRI
-            # is what it is for (3.4). Every other run aborts on a mismatch rather than
-            # minting a second set of IRIs beside the ID map's.
-            identity.verify_namespace_lock(loaded)
-    except config.ConfigError as error:
-        print(f"{_PROGRAM}: {error}", file=sys.stderr)
-        return ExitCode.CONFIG
+    installed = adapters.adapter_names()
+    # Passing `None` skips the adapter-name check. An installation with no adapters at
+    # all cannot judge a name — checking against an empty set would reject every valid
+    # configuration — and that is a real state only until the bundled adapters register
+    # themselves (D2, D3). From then on every installation has some, and a misspelled
+    # `adapter:` is exit 2 naming the key.
+    loaded = config.load(known_adapters=installed or None)
+    if arguments.command == "run":
+        # Validates --source against the configured sources: a typo would otherwise
+        # compile nothing and exit 0, which reads as success.
+        loaded.run_context(only_source=arguments.source, dry_run=arguments.dry_run)
+    if not getattr(arguments, "force_namespace_change", False):
+        # The one invocation allowed to disagree with the lock — moving the base IRI
+        # is what it is for (3.4). Every other run aborts on a mismatch rather than
+        # minting a second set of IRIs beside the ID map's.
+        identity.verify_namespace_lock(loaded)
     return loaded
+
+
+def exit_code_for(error: Exception) -> ExitCode:
+    """The published exit code for an error (spec 5.1).
+
+    One place, because the codes are contract: an adopter's CI branches on them, and a
+    command that invented its own mapping would make "3" mean something different
+    depending on which subcommand produced it. Everything unrecognized is a failure
+    rather than a configuration error, since exit 2 tells an operator to go and edit a
+    file and being wrong about that costs them a search.
+    """
+    if isinstance(error, config.ConfigError):
+        return ExitCode.CONFIG
+    if isinstance(error, SourceUnreachableError):
+        # The source was down, not wrong: a scheduled compile that hits this is retried,
+        # and nothing about the instance needs a human (spec 5.2).
+        return ExitCode.UNREACHABLE
+    return ExitCode.FAILURE
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -148,16 +220,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help(sys.stderr)
         return ExitCode.CONFIG
 
+    try:
+        return _dispatch(arguments)
+    except (IssueError, AdapterError) as error:
+        # Every error the compiler raises deliberately carries what an operator has to
+        # know; a traceback would carry it too, plus forty lines of this package's
+        # internals for them to read past.
+        print(f"{_PROGRAM}: {error}", file=sys.stderr)
+        return exit_code_for(error)
+
+
+def _dispatch(arguments: argparse.Namespace) -> int:
     if arguments.command == "version":
         return _version()
+
+    if arguments.command == "adapters":
+        return _adapters()
 
     if arguments.command in _NEEDS_CONFIG:
         # Deliberately ahead of the "not implemented" message below: a command that will
         # read the instance owes the operator the configuration error now, with the key
         # that caused it, rather than after the feature lands.
-        outcome = _load_config(arguments)
-        if isinstance(outcome, ExitCode):
-            return outcome
+        _load_config(arguments)
 
     task = _UNIMPLEMENTED[arguments.command]
     print(

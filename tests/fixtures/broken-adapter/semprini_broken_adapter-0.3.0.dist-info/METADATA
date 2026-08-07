@@ -1,0 +1,5 @@
+Metadata-Version: 2.1
+Name: semprini-broken-adapter
+Version: 0.3.0
+Summary: A Semprini adapter that cannot be imported, for the plane's own tests.
+Requires-Python: >=3.12
