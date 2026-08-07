@@ -24,7 +24,17 @@ from typing import Any
 import pytest
 
 from semprini.adapters import AdapterError, BaseAdapter, SourceUnreachableError
-from semprini.model import Entity, InternalModel, Issue, RunContext, Scheme, SchemeType, Severity
+from semprini.model import (
+    Attribute,
+    Entity,
+    InternalModel,
+    Issue,
+    RunContext,
+    Scheme,
+    SchemeType,
+    Severity,
+    SourceRef,
+)
 from semprini.testing import CONTRACT_BASE_IRI, AdapterContractError, check_contract
 
 CONTEXT = RunContext(base_iri=CONTRACT_BASE_IRI, instance_id="contract")
@@ -149,6 +159,156 @@ def test_making_a_directory_is_a_write(tmp_path: Path) -> None:
     assert violations(raised) == {"no-writes", "repeatable"}
 
 
+def test_deleting_a_file_is_a_write(tmp_path: Path) -> None:
+    """Deletion is the most damaging thing an adapter could do to an instance.
+
+    ``Path.unlink()`` reaches ``os.unlink``, which is a *different* attribute from
+    ``os.remove`` bound to a different function — so guarding one and not the other left
+    the worst case unrecorded.
+    """
+    victim = tmp_path / "doomed.json"
+    victim.write_text("{}", encoding="utf-8")
+
+    class Tidying(BaseAdapter):
+        """Cleans up after itself, on a file it did not create."""
+
+        name = "tidying-up"
+
+        def fetch(self) -> InternalModel:
+            if self.config.get("down"):
+                raise SourceUnreachableError("the source is down")
+            Path(self.config["victim"]).unlink()
+            return InternalModel(entities=(entity(),))
+
+    with pytest.raises(AdapterContractError) as raised:
+        check(Tidying, victim=str(victim))
+
+    assert "no-writes" in violations(raised)
+    assert "doomed.json" in str(raised.value)
+
+
+def test_renaming_a_file_is_a_write(tmp_path: Path) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+
+    class Moving(BaseAdapter):
+        """Rotates the file it just read, which no adapter is entitled to do."""
+
+        name = "moving"
+
+        def fetch(self) -> InternalModel:
+            if self.config.get("down"):
+                raise SourceUnreachableError("the source is down")
+            Path(self.config["path"]).rename(str(self.config["path"]) + ".done")
+            return InternalModel(entities=(entity(),))
+
+    with pytest.raises(AdapterContractError) as raised:
+        check(Moving, path=str(source))
+
+    assert "no-writes" in violations(raised)
+
+
+def test_a_write_before_a_failure_is_reported(tmp_path: Path) -> None:
+    """The case the no-writes rule exists for, and the easiest one to miss.
+
+    A run that fails midway has to leave the instance exactly as it found it. An adapter
+    that saves what it downloaded and *then* discovers the source is incomplete is how it
+    does not — and reporting only the failure would hide the file it left behind.
+    """
+
+    class HalfWay(BaseAdapter):
+        """Writes what it got, then fails."""
+
+        name = "half-way"
+
+        def fetch(self) -> InternalModel:
+            if self.config.get("down"):
+                raise SourceUnreachableError("the source is down")
+            Path(self.config["partial"]).write_text("{}", encoding="utf-8")
+            raise RuntimeError("the rest of the model is missing")
+
+    with pytest.raises(AdapterContractError) as raised:
+        check(HalfWay, partial=str(tmp_path / "partial.json"))
+
+    assert violations(raised) == {"no-writes", "fetch"}
+    assert "partial.json" in str(raised.value)
+
+
+def test_a_write_while_the_source_is_down_is_caught(tmp_path: Path) -> None:
+    class Salvaging(BaseAdapter):
+        """Saves the part it managed to download before giving up — correctly raising."""
+
+        name = "salvaging"
+
+        def fetch(self) -> InternalModel:
+            if self.config.get("down"):
+                Path(self.config["partial"]).write_text("{}", encoding="utf-8")
+                raise SourceUnreachableError("the source is down")
+            return InternalModel(entities=(entity(),))
+
+    with pytest.raises(AdapterContractError) as raised:
+        check_contract(
+            Salvaging,
+            settings={"partial": str(tmp_path / "partial.json")},
+            unreachable={"down": True, "partial": str(tmp_path / "partial.json")},
+            context=CONTEXT,
+        )
+
+    # It raises the right exception, so nothing else is wrong with it — but the run that
+    # was supposed to change nothing left a file behind.
+    assert violations(raised) == {"no-writes"}
+
+
+def test_a_write_on_the_first_fetch_alone_is_caught(tmp_path: Path) -> None:
+    """Writing once, on the first fetch, and never again.
+
+    Its own test because every other violator here writes on *every* fetch, so the
+    second-fetch guard alone would catch them and the check on the successful first
+    fetch could be deleted without a test noticing.
+    """
+
+    class WarmingOnce(BaseAdapter):
+        """Populates a cache the first time it runs, then reads it happily forever."""
+
+        name = "warming-once"
+        calls = 0
+
+        def fetch(self) -> InternalModel:
+            if self.config.get("down"):
+                raise SourceUnreachableError("the source is down")
+            type(self).calls += 1
+            if type(self).calls == 1:
+                Path(self.config["cache"]).write_text("{}", encoding="utf-8")
+            return InternalModel(entities=(entity(),))
+
+    with pytest.raises(AdapterContractError) as raised:
+        check(WarmingOnce, cache=str(tmp_path / "once.json"))
+
+    assert violations(raised) == {"no-writes"}
+    assert "once.json" in str(raised.value)
+
+
+def test_a_write_on_the_second_fetch_is_caught(tmp_path: Path) -> None:
+    class Warming(BaseAdapter):
+        """Writes a cache the second time it is asked, which the first fetch never shows."""
+
+        name = "warming"
+        calls = 0
+
+        def fetch(self) -> InternalModel:
+            if self.config.get("down"):
+                raise SourceUnreachableError("the source is down")
+            type(self).calls += 1
+            if type(self).calls > 1:
+                Path(self.config["cache"]).write_text("{}", encoding="utf-8")
+            return InternalModel(entities=(entity(),))
+
+    with pytest.raises(AdapterContractError) as raised:
+        check(Warming, cache=str(tmp_path / "warm.json"))
+
+    assert violations(raised) == {"no-writes"}
+
+
 def test_a_write_while_being_constructed_is_caught(tmp_path: Path) -> None:
     class Eager(BaseAdapter):
         """Constructing an adapter must be free — `semprini check` does it to validate."""
@@ -226,6 +386,41 @@ def test_an_adapter_that_invents_a_metamodel_term_is_caught() -> None:
         check(Inventive)
 
     assert violations(raised) == {"no-minting"}
+
+
+def test_a_minted_iri_in_a_cross_reference_is_caught() -> None:
+    """The likeliest place to mint one, and the last place a string scan looks.
+
+    ``Attribute.entity``, ``Relationship.source``/``target`` and ``TaxonomyValue.parent``
+    are ``SourceRef``s — an author who thinks "the entity this belongs to" reaches for an
+    IRI here more readily than anywhere else, and a scan that walked only strings and
+    tuples walked straight past a dataclass.
+    """
+
+    class Pointing(BaseAdapter):
+        """Points its attribute at the IRI it expects the entity to have."""
+
+        name = "pointing"
+
+        def fetch(self) -> InternalModel:
+            if self.config.get("down"):
+                raise SourceUnreachableError("the source is down")
+            return InternalModel(
+                entities=(entity(),),
+                attributes=(
+                    Attribute(
+                        source_refs={"contract-source": "a1"},
+                        pref_label="Name",
+                        entity=SourceRef("contract-source", f"{CONTRACT_BASE_IRI}concepts/e1"),
+                    ),
+                ),
+            )
+
+    with pytest.raises(AdapterContractError) as raised:
+        check(Pointing)
+
+    assert violations(raised) == {"no-minting"}
+    assert "Attribute.entity" in str(raised.value)
 
 
 def test_a_configured_enumerates_iri_is_allowed() -> None:
@@ -461,6 +656,28 @@ def test_a_multi_line_summary_is_caught() -> None:
     assert violations(raised) == {"summary"}
 
 
+def test_a_summary_that_raises_is_a_violation_not_a_traceback() -> None:
+    class Fragile(BaseAdapter):
+        """Its report line assumes a fetch that never happened."""
+
+        name = "fragile"
+
+        def fetch(self) -> InternalModel:
+            if self.config.get("down"):
+                raise SourceUnreachableError("the source is down")
+            return InternalModel(entities=(entity(),))
+
+        def summary(self) -> str:
+            raise AttributeError("no models were recorded")
+
+    with pytest.raises(AdapterContractError) as raised:
+        check(Fragile)
+
+    # Collected like every other check: an author running this wants the whole list, not
+    # whichever violation happened to raise first.
+    assert violations(raised) == {"summary"}
+
+
 def test_something_that_is_not_an_adapter_is_refused_before_anything_runs() -> None:
     with pytest.raises(AdapterContractError) as raised:
         check_contract(
@@ -520,7 +737,10 @@ def test_every_violation_is_reported_at_once() -> None:
         (io, "open"),
         (os, "open"),
         (os, "mkdir"),
+        (os, "rmdir"),
         (os, "remove"),
+        (os, "unlink"),
+        (os, "rename"),
         (os, "replace"),
     ],
 )

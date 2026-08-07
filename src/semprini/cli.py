@@ -10,7 +10,6 @@ Exit codes are part of the published contract — see :class:`ExitCode`.
 from __future__ import annotations
 
 import argparse
-import inspect
 import sys
 from collections.abc import Sequence
 from enum import IntEnum
@@ -140,6 +139,11 @@ def _adapters() -> int:
     for name, provider, summary in rows:
         print(f"{name:<{name_width}}  {provider:<{provider_width}}  {summary}".rstrip())
 
+    # A name two distributions claim is an installation that does not work, even though
+    # every plugin in it imports: `adapter: <name>` cannot be resolved, so the run would
+    # fail where the listing said everything was fine.
+    broken.extend(adapters.ambiguities(entries))
+
     if broken:
         if len(broken) == 1:
             raise AdapterLoadError(broken[0])
@@ -149,10 +153,15 @@ def _adapters() -> int:
 
 
 def _summary(adapter: type[BaseAdapter]) -> str:
-    """The adapter's one-line self-description — the first line of its docstring."""
-    documentation = inspect.getdoc(adapter) or ""
-    lines = documentation.strip().splitlines()
-    return lines[0] if lines else ""
+    """The adapter's one-line self-description — the first line of its own docstring.
+
+    ``__doc__`` rather than ``inspect.getdoc``, which walks the MRO: an adapter that
+    documents nothing would otherwise be listed as "One source system, normalized into
+    the internal model", which is ``BaseAdapter``'s docstring and reads as the adapter
+    describing itself. An empty column is honest; an inherited sentence is not.
+    """
+    lines = (adapter.__doc__ or "").strip().splitlines()
+    return lines[0].strip() if lines else ""
 
 
 def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig:

@@ -44,7 +44,7 @@ import io
 import os
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import fields
+from dataclasses import fields, is_dataclass
 from typing import Any
 
 from semprini import serialize
@@ -68,6 +68,12 @@ adapter that leaks it into a test report has leaked nothing real."""
 
 _WRITE_MODES = frozenset("wax+")
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+
+_GUARDED_OS_CALLS = ("mkdir", "rmdir", "remove", "unlink", "rename", "replace")
+"""Every :mod:`os` call that changes the filesystem without opening a file.
+
+Names, not objects: ``os.remove`` and ``os.unlink`` are separate attributes bound to
+separate functions, and :mod:`pathlib` reaches each of these by its own name."""
 
 
 class AdapterContractError(IssueError):
@@ -140,23 +146,27 @@ def _check_construction_and_fetch(
     issues: list[Issue],
 ) -> None:
     before = _snapshot(settings)
+    writes: list[str] = []
     try:
         with _no_writes() as writes:
             instance = adapter(source_name, settings, ctx)
-        if writes:
-            _fail(issues, "construction", f"wrote to {writes[0]} while being constructed")
     except Exception as error:
+        _report_writes(issues, writes, "construction", "being constructed")
         _fail(issues, "construction", f"could not be constructed: {error!r}")
         return
+    _report_writes(issues, writes, "construction", "being constructed")
 
     try:
         with _no_writes() as writes:
             model = instance.fetch()
     except Exception as error:
+        # Reported before the failure itself: a fetch that wrote and *then* failed is the
+        # case the no-writes rule exists for — a run that fails midway has to leave the
+        # instance exactly as it found it, and a half-written cache is how it does not.
+        _report_writes(issues, writes, "no-writes", "fetch()")
         _fail(issues, "fetch", f"raised on a configuration that should work: {error!r}")
         return
-    if writes:
-        _fail(issues, "no-writes", f"fetch() wrote to {writes[0]}; adapters never write")
+    _report_writes(issues, writes, "no-writes", "fetch()")
 
     if not isinstance(model, InternalModel):
         _fail(issues, "fetch", f"fetch() returned {type(model).__name__}, not an InternalModel")
@@ -231,11 +241,15 @@ def _check_it_repeats(instance: BaseAdapter, model: InternalModel, issues: list[
     reordered or renamed something per run would put a diff in front of a steward that
     no one caused.
     """
+    writes: list[str] = []
     try:
-        again = instance.fetch()
+        with _no_writes() as writes:
+            again = instance.fetch()
     except Exception as error:
+        _report_writes(issues, writes, "no-writes", "a second fetch()")
         _fail(issues, "repeatable", f"a second fetch() raised where the first did not: {error!r}")
         return
+    _report_writes(issues, writes, "no-writes", "a second fetch()")
     if again != model:
         _fail(
             issues,
@@ -288,7 +302,13 @@ def _check_validate_config(instance: BaseAdapter, issues: list[Issue]) -> None:
 
 def _check_summary(instance: BaseAdapter, issues: list[Issue]) -> None:
     """The report line is one line — it is rendered into a Markdown table (spec 5.6)."""
-    summary = instance.summary()
+    try:
+        summary = instance.summary()
+    except Exception as error:
+        # Collected like every other violation rather than escaping as a traceback: an
+        # author running this wants the list, not the first thing that went wrong.
+        _fail(issues, "summary", f"summary() raised: {error!r}")
+        return
     if not isinstance(summary, str):
         _fail(issues, "summary", f"summary() returned {type(summary).__name__}, not a string")
     elif "\n" in summary:
@@ -302,12 +322,21 @@ def _check_unreachable_raises(
     source_name: str,
     issues: list[Issue],
 ) -> None:
-    """A source that cannot be read raises, and returns nothing at all (spec 5.2)."""
+    """A source that cannot be read raises, and returns nothing at all (spec 5.2).
+
+    Guarded too, and for the sharpest version of the reason: an adapter that writes what
+    it managed to download before giving up leaves a file behind on precisely the run
+    that was supposed to change nothing.
+    """
+    writes: list[str] = []
     try:
-        model = adapter(source_name, unreachable, ctx).fetch()
+        with _no_writes() as writes:
+            model = adapter(source_name, unreachable, ctx).fetch()
     except SourceUnreachableError:
+        _report_writes(issues, writes, "no-writes", "a fetch from an unreadable source")
         return
     except AdapterError as error:
+        _report_writes(issues, writes, "no-writes", "a fetch from an unreadable source")
         _fail(
             issues,
             "unreachable-raises",
@@ -317,6 +346,7 @@ def _check_unreachable_raises(
         )
         return
     except Exception as error:
+        _report_writes(issues, writes, "no-writes", "a fetch from an unreadable source")
         _fail(
             issues,
             "unreachable-raises",
@@ -324,6 +354,7 @@ def _check_unreachable_raises(
             f"operator as a traceback: {error!r}",
         )
         return
+    _report_writes(issues, writes, "no-writes", "a fetch from an unreadable source")
     _fail(
         issues,
         "unreachable-raises",
@@ -339,20 +370,44 @@ def _fail(issues: list[Issue], check: str, message: str) -> None:
     issues.append(Issue(Severity.ERROR, message, check))
 
 
+def _report_writes(issues: list[Issue], writes: list[str], check: str, what: str) -> None:
+    """Report anything written during a guarded call, whatever else that call did.
+
+    Its own function because every guarded block has a failure path as well as a success
+    one, and the failure path is where a write matters most: the check that only looked
+    at the success path certified an adapter that wrote a partial file and then raised.
+    """
+    if writes:
+        _fail(issues, check, f"{what} wrote to {writes[0]}; adapters never write")
+
+
 def _strings(object_: SemanticObject) -> Iterator[tuple[str, str]]:
-    """Every string an adapter chose, field by field, including inside tuples."""
+    """Every string an adapter chose, field by field, however it is nested.
+
+    Recursive through dataclasses, because a :class:`~semprini.model.SourceRef` is one —
+    and ``Attribute.entity``, ``Relationship.source``/``target`` and
+    ``TaxonomyValue.parent`` are exactly the fields an author is tempted to write an IRI
+    into, since each of them names another object.
+    """
     for descriptor in fields(object_):
-        value = getattr(object_, descriptor.name)
-        if isinstance(value, str):
-            yield descriptor.name, value
-        elif isinstance(value, tuple):
-            for item in value:
-                if isinstance(item, str):
-                    yield descriptor.name, item
-        elif isinstance(value, Mapping):
-            for key, item in value.items():
-                yield descriptor.name, str(key)
-                yield descriptor.name, str(item)
+        yield from (
+            (descriptor.name, found) for found in _strings_in(getattr(object_, descriptor.name))
+        )
+
+
+def _strings_in(value: Any) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            yield from _strings_in(key)
+            yield from _strings_in(item)
+    elif isinstance(value, Sequence):
+        for item in value:
+            yield from _strings_in(item)
+    elif is_dataclass(value) and not isinstance(value, type):
+        for descriptor in fields(value):
+            yield from _strings_in(getattr(value, descriptor.name))
 
 
 def _snapshot(value: Any) -> Any:
@@ -376,11 +431,15 @@ def _no_writes() -> Iterator[list[str]]:
 
     ``io.open`` is patched as well as ``builtins.open`` even though they are the same
     function, because :mod:`pathlib` holds its own reference — ``Path.write_text`` would
-    otherwise pass straight through.
+    otherwise pass straight through. For the same reason the :mod:`os` calls are patched
+    by name from :data:`_GUARDED_OS_CALLS` rather than one at a time: ``os.remove`` and
+    ``os.unlink`` are two attributes bound to two different objects, so patching one
+    leaves ``Path.unlink()`` — deletion, the most damaging thing an adapter could do to
+    an instance — entirely unrecorded.
     """
     written: list[str] = []
     real_open, real_io_open, real_os_open = builtins.open, io.open, os.open
-    real_mkdir, real_remove, real_replace = os.mkdir, os.remove, os.replace
+    originals = {name: getattr(os, name) for name in _GUARDED_OS_CALLS}
 
     def guarded_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
         if _WRITE_MODES & set(mode):
@@ -402,11 +461,11 @@ def _no_writes() -> Iterator[list[str]]:
     builtins.open = guarded_open
     io.open = guarded_open
     os.open = guarded_os_open
-    os.mkdir = guarded(real_mkdir)
-    os.remove = guarded(real_remove)
-    os.replace = guarded(real_replace)
+    for name, real in originals.items():
+        setattr(os, name, guarded(real))
     try:
         yield written
     finally:
         builtins.open, io.open, os.open = real_open, real_io_open, real_os_open
-        os.mkdir, os.remove, os.replace = real_mkdir, real_remove, real_replace
+        for name, real in originals.items():
+            setattr(os, name, real)

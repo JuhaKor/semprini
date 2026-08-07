@@ -16,6 +16,7 @@ or in ``semprini adapters``, whose whole job is to report whether the installati
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
 
@@ -27,6 +28,7 @@ __all__ = [
     "ENTRY_POINT_GROUP",
     "AdapterEntry",
     "adapter_names",
+    "ambiguities",
     "create",
     "discover",
     "load_adapter",
@@ -150,12 +152,32 @@ def load_adapter(name: str) -> type[BaseAdapter]:
             f"an adapter is added by installing the distribution that provides it"
         )
     if len(matching) > 1:
-        providers = ", ".join(entry.provider for entry in matching)
-        raise AdapterLoadError(
-            f"adapter {name!r} is registered by more than one installed distribution "
-            f"({providers}); uninstall one, since configuration cannot say which is meant"
-        )
+        raise AdapterLoadError(_ambiguity(name, matching))
     return matching[0].load()
+
+
+def _ambiguity(name: str, matching: Sequence[AdapterEntry]) -> str:
+    providers = ", ".join(entry.provider for entry in matching)
+    return (
+        f"adapter {name!r} is registered by more than one installed distribution "
+        f"({providers}); uninstall one, since configuration cannot say which is meant"
+    )
+
+
+def ambiguities(entries: Iterable[AdapterEntry]) -> tuple[str, ...]:
+    """One message per entry-point name that more than one distribution claims.
+
+    Shared with :func:`load_adapter` so that ``semprini adapters`` reports the clash in
+    the same words the run will fail with. The command exists to say whether the
+    installation works, and an installation where ``adapter: ellie`` cannot be resolved
+    does not — even though every plugin in it imports perfectly.
+    """
+    grouped: dict[str, list[AdapterEntry]] = {}
+    for entry in entries:
+        grouped.setdefault(entry.name, []).append(entry)
+    return tuple(
+        _ambiguity(name, group) for name, group in sorted(grouped.items()) if len(group) > 1
+    )
 
 
 def create(source: SourceConfig, ctx: RunContext) -> BaseAdapter:

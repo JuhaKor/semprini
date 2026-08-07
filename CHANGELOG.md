@@ -103,7 +103,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   writes to disk, mints IRIs, invents `sem:` terms, edits the configuration it was given,
   returns a different model each run, attributes objects to the wrong source, or answers
   a dead source with a partial model instead of raising — and reports every violation at
-  once rather than the first.
+  once rather than the first. "Writes to disk" includes deleting and renaming, and is
+  watched on the failure paths too: an adapter that saves what it managed to download
+  before giving up is caught on precisely the run that was supposed to change nothing.
 - `SourceUnreachableError`, which an adapter raises when its source cannot be read, is
   mapped to exit `3` in the one place the CLI maps errors to codes. That is the code that
   tells a scheduled compile to retry rather than open an issue, and it now means the same

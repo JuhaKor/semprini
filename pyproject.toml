@@ -37,8 +37,9 @@ semprini = "semprini.cli:main"
 
 # Bundled adapters register themselves in the `semprini.adapters` entry-point group
 # (spec 5.2) — third-party distributions extend the plane by contributing to the same
-# group. Declared once the adapter classes exist (task D1); pointing an entry point
-# at a module that has no adapter yet would break discovery for `semprini adapters`.
+# group. Each line is uncommented by the task that writes its adapter class — D2 for
+# excel-taxonomy, D3 for ellie — since an entry point pointing at a module with no
+# adapter in it would be discovered and then refused as broken.
 # [project.entry-points."semprini.adapters"]
 # ellie = "semprini.adapters.ellie:EllieAdapter"
 # excel-taxonomy = "semprini.adapters.excel_taxonomy:ExcelTaxonomyAdapter"

@@ -19,7 +19,7 @@ from semprini import adapters, cli, config, identity
 from semprini.adapters import AdapterEntry, AdapterError, AdapterLoadError, SourceUnreachableError
 from semprini.adapters import discovery as discovery_module
 from semprini.cli import ExitCode, exit_code_for, main
-from semprini.model import Issue, RunContext, Severity
+from semprini.model import InternalModel, Issue, RunContext, Severity
 
 CONTEXT = RunContext(base_iri="https://semantics.example.com/", instance_id="acme")
 
@@ -307,6 +307,52 @@ def test_several_broken_plugins_are_reported_together(
     assert "2 installed adapters could not be loaded" in err
     assert "semprini-broken-adapter 0.3.0" in err
     assert "another 9" in err
+
+
+def test_a_duplicate_name_fails_the_listing_too(
+    installed_dummy_adapter: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An installation where `adapter: dummy` cannot be resolved is a broken one.
+
+    Every plugin in it imports perfectly, so loading each entry in turn says nothing is
+    wrong — while the run that reads the configuration fails. The command exists to
+    report whether the installation works, so it has to ask the same question
+    `load_adapter` does.
+    """
+    rival = AdapterEntry(
+        name="dummy",
+        value="semprini_dummy_adapter:DummyAdapter",
+        distribution="someone-elses-adapter",
+        version="2.0.0",
+    )
+    both = (dummy_entry(), rival)
+    monkeypatch.setattr(adapters, "discover", lambda: both)
+
+    assert main(["adapters"]) == ExitCode.FAILURE
+
+    captured = capsys.readouterr()
+    # Both rows are still listed — the operator needs to see the two claimants.
+    assert [line.split()[1] for line in captured.out.splitlines()] == [
+        "semprini-dummy-adapter",
+        "someone-elses-adapter",
+    ]
+    assert "more than one installed distribution" in captured.err
+    assert "someone-elses-adapter 2.0.0" in captured.err
+
+
+def test_an_adapter_that_documents_nothing_is_listed_without_a_description() -> None:
+    class Undocumented(adapters.BaseAdapter):
+        name = "undocumented"
+
+        def fetch(self) -> InternalModel:
+            return InternalModel()
+
+    # BaseAdapter has a docstring, and an MRO-walking lookup would print it here as
+    # though this adapter had described itself.
+    assert adapters.BaseAdapter.__doc__
+    assert cli._summary(Undocumented) == ""
 
 
 # ------------------------------------------------------------------ exit codes

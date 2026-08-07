@@ -641,7 +641,9 @@ does not yield a `BaseAdapter` subclass, leaves `fetch()` unimplemented, or decl
 about it name a thing that appears in no file the operator can open. An alias is a
 subclass. Two installed distributions claiming one entry-point name are likewise refused
 rather than resolved by order: `adapter: ellie` must not mean different things on a
-laptop and in CI.
+laptop and in CI. `semprini adapters` reports that clash as well, since an installation
+whose configured adapter cannot be resolved does not work even though every plugin in it
+imports.
 
 **The contract is executable.** The obligations above are all negative — an adapter that
 violates them looks exactly like one that does not until an instance has committed the

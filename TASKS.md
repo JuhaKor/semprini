@@ -774,9 +774,9 @@ done and green.
   and listed; the contract suite catches an adapter that writes to disk, mints IRIs, or
   returns a partial model instead of raising; fetch failure exits 3.
   **Depends:** B2
-  **Done.** 465 tests green (61 of them D1's); ruff, ruff format and mypy (strict) clean;
+  **Done.** 478 tests green (74 of them D1's); ruff, ruff format and mypy (strict) clean;
   the wheel still installs into a bare venv with pip and `semprini adapters` runs from it.
-  Forty-four mutations were checked against the suite — discovery unsorted, discovery
+  Fifty-three mutations were checked against the suite — discovery unsorted, discovery
   importing every plugin, a duplicate name silently resolved, `load()` skipping each of
   its four refusals in turn, an unimportable plugin escaping as its own exception, an
   entry forgetting its distribution, `adapter_names()` listing only loadable adapters,
@@ -849,6 +849,39 @@ done and green.
     module says so. `io.open` is patched *as well as* `builtins.open` even though they are
     the same function, because `pathlib` holds its own reference and `Path.write_text`
     would otherwise pass straight through; a mutation pins that.
+
+  **Review found six issues; all are fixed**, with a test and a mutation each (9 more
+  mutations, 53/53 now caught). Four were in the contract suite, and they share one
+  shape worth remembering: **a check that only runs on the happy path certifies the
+  failure it exists to catch.**
+  - **The write guard was blind to deletion and renaming.** `os.remove` and `os.unlink`
+    are two module attributes bound to two different functions, so patching one left
+    `Path.unlink()` unrecorded — deletion being the most damaging thing an adapter could
+    do to an instance, and `Path.rename()` was never patched at all. The guarded calls
+    are now a named list (`_GUARDED_OS_CALLS`), patched by name in a loop, so adding one
+    is a word rather than three edits.
+  - **Writes were discarded on every failure path.** A fetch that wrote a partial file
+    and *then* raised was reported only as a failure; the fetch against the unreachable
+    configuration and the second fetch ran with no guard at all. So an adapter that saved
+    what it managed to download before giving up passed the contract — on precisely the
+    run that was supposed to change nothing. Every guarded block now reports through one
+    helper, on both paths.
+  - **The minting scan never looked inside a `SourceRef`.** It walked strings, tuples and
+    mappings, and a `SourceRef` is a frozen dataclass — so `Attribute.entity`,
+    `Relationship.source`/`target` and `TaxonomyValue.parent` escaped it. Those are the
+    fields an author is likeliest to write an IRI into, since each one names another
+    object. The scan is now recursive through dataclasses.
+  - `summary()` was called outside a `try`, so an adapter whose report line raised
+    escaped as a traceback rather than joining the collected list.
+
+  The two in the CLI: **`semprini adapters` exited 0 on an installation where the
+  configured adapter cannot be resolved** — two distributions claiming one name are
+  refused at run time, but the listing loaded each entry independently and reported
+  nothing, so the command whose job is "does this installation work" said yes and the run
+  said no (`adapters.ambiguities()` is now shared by both, so they answer in the same
+  words); and `_summary` used `inspect.getdoc`, which walks the MRO, so an adapter with
+  no docstring was listed under `BaseAdapter`'s — a sentence the adapter never wrote,
+  reading as though it had.
 
   **For the tasks that come next:**
   - **D2 and D3 each uncomment their own line in `pyproject.toml`** as their adapter class
