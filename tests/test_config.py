@@ -632,8 +632,10 @@ def test_an_unknown_source_argument_exits_2(
 def test_commands_that_do_not_read_an_instance_ignore_a_broken_configuration(
     instance: Path,
 ) -> None:
-    """`init` writes the configuration and `version` describes the installation."""
+    """`init` writes the configuration; `version` and `adapters` describe the installation."""
     (instance / config.CONFIG_PATH).write_text("semprini: [", encoding="utf-8")
 
     assert main(["version"]) == ExitCode.OK
-    assert main(["adapters"]) == ExitCode.FAILURE  # unimplemented, not misconfigured
+    # Not exit 2: `adapters` answers a question about the machine, and an instance whose
+    # configuration is broken is exactly when an operator asks it (spec 5.1).
+    assert main(["adapters"]) == ExitCode.OK

@@ -364,9 +364,11 @@ semprini/
 │   ├── report.py                  # generated/.report.md — the run report (5.6)
 │   ├── serialize.py               # canonical Turtle serializer (5.5)
 │   ├── validate.py                # SHACL + structural checks (6.1)
+│   ├── testing.py                 # the adapter contract, as a check authors run (5.2)
 │   ├── migrate/                   # version-to-version migrations (7)
 │   ├── adapters/
 │   │   ├── base.py                # BaseAdapter — the plugin contract (5.2)
+│   │   ├── discovery.py           # entry-point discovery (5.2)
 │   │   ├── ellie.py               # bundled (5.3)
 │   │   └── excel_taxonomy.py      # bundled (5.3)
 │   ├── ontology/
@@ -375,7 +377,9 @@ semprini/
 ├── templates/instance/            # the scaffold `semprini init` materializes (4.2)
 ├── workflows/                     # reusable/portable CI definitions for *instances* (6.2, 6.3)
 └── tests/
-    └── fixtures/acme/             # a complete synthetic instance + golden TTL (6.1)
+    └── fixtures/
+        ├── acme/                  # a complete synthetic instance + golden TTL (6.1)
+        └── dummy-adapter/         # a third-party adapter distribution, as installed (5.2)
 ```
 
 ### 4.2 An instance repository
@@ -488,10 +492,14 @@ semprini adapters                                                 # list discove
 semprini version                                                  # compiler + ontology versions
 ```
 
-All commands operate on the instance repository in the working directory and read
-`config/semprini.yaml`. Exit codes are part of the contract, so any CI system can act on
-them: `0` success · `1` validation or compile failure · `2` configuration or namespace-lock
-error · `3` a configured source was unreachable.
+Commands operate on the instance repository in the working directory and read
+`config/semprini.yaml` — except `version` and `adapters`, which describe the
+*installation* rather than an instance and therefore work outside an instance
+repository, and `init`, which writes the configuration the others read. Exit codes are
+part of the contract, so any CI system can act on them: `0` success · `1` validation or
+compile failure · `2` configuration or namespace-lock error · `3` a configured source
+was unreachable. One mapping from error to code serves every subcommand, so a given code
+means the same thing whichever one produced it.
 
 Dependencies, the development environment and releases of the plane itself are managed
 with **Poetry**: `pyproject.toml` is a Poetry project built by `poetry-core`, and
@@ -585,13 +593,16 @@ project.
 class BaseAdapter(ABC):
     name: str  # entry-point name, e.g. "ellie"
 
-    def __init__(self, source_name: str, config: dict, ctx: RunContext): ...
+    def __init__(self, source_name: str, config: Mapping[str, Any], ctx: RunContext): ...
 
     @abstractmethod
     def fetch(self) -> InternalModel: ...
 
     def validate_config(self) -> list[Issue]:  # called by `semprini check`
         return []
+
+    def summary(self) -> str:  # one line for the run report (5.6)
+        return ""
 ```
 
 Contract obligations on every adapter, which the core relies on:
@@ -599,13 +610,47 @@ Contract obligations on every adapter, which the core relies on:
 - `fetch()` performs **no writes** and no identity minting; it returns normalized
   objects carrying a `source_key` per object. Identity resolution is the core's job.
 - Objects carry `source_refs: dict[str, str]`, so the same real-world concept seen by
-  two adapters merges onto one IRI after identity resolution.
-- Fetch failures raise; they never return partial models silently (exit code `3`).
+  two adapters merges onto one IRI after identity resolution. Every object carries at
+  least one ref under the source's own configured `name`, since that is what the ID map
+  is keyed by (5.4).
+- Fetch failures raise `SourceUnreachableError`; they never return partial models
+  silently (exit code `3`). The distinction is the one CI acts on: a source that was
+  down is retried, a source that answered with unusable data is a compile failure
+  (exit `1`).
 - An adapter contributes only data — never IRIs in another instance's namespace, and
   never `sem:` terms.
+- Construction is free of side effects. `semprini check` constructs every configured
+  adapter purely to call `validate_config()` (6.1), and must not open a connection to
+  do it.
 
 Adapters bundled with the plane are ordinary plugins registered by the same mechanism,
 so a third-party adapter is never a second-class citizen.
+
+**Discovery imports nothing.** Listing what is installed is a question about metadata:
+answering it by importing every registered plugin would run arbitrary third-party code
+on every command that loads a configuration. Import happens when an adapter is about to
+be used, or in `semprini adapters`, which exists to report whether the installation
+works. Consequences: one plugin that fails to import never hides the others, and a
+source naming an adapter no installed distribution provides is a *configuration* error
+(exit `2`), reported with its key like any other.
+
+An entry point is refused, naming the distribution to uninstall, when it does not import,
+does not yield a `BaseAdapter` subclass, leaves `fetch()` unimplemented, or declares a
+`name` other than the one it is registered under — an instance writes that name in
+`config/semprini.yaml`, so a class calling itself something else would make every message
+about it name a thing that appears in no file the operator can open. An alias is a
+subclass. Two installed distributions claiming one entry-point name are likewise refused
+rather than resolved by order: `adapter: ellie` must not mean different things on a
+laptop and in CI.
+
+**The contract is executable.** The obligations above are all negative — an adapter that
+violates them looks exactly like one that does not until an instance has committed the
+damage — so the plane ships `semprini.testing.check_contract()`, which an adapter author
+runs against their own adapter from their own test suite. It is framework-free (no
+pytest dependency, no base class to inherit), it collects every violation rather than
+stopping at the first, and it requires the author to supply both a working configuration
+and one whose source cannot be read: an adapter never asked what it does when its source
+is down is the adapter that one day answers "deprecate everything" (5.4).
 
 ### 5.3 Bundled adapters (v1)
 

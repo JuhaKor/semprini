@@ -764,7 +764,7 @@ done and green.
 
 ## Phase D — Adapters
 
-- [ ] **D1 · Adapter interface and plugin discovery**
+- [x] **D1 · Adapter interface and plugin discovery**
   **Spec:** §5.2, §5.1 (`semprini adapters`)
   **Deliver:** `BaseAdapter`, entry-point discovery for group
   `semprini.adapters`, and the `semprini adapters` command.
@@ -774,6 +774,102 @@ done and green.
   and listed; the contract suite catches an adapter that writes to disk, mints IRIs, or
   returns a partial model instead of raising; fetch failure exits 3.
   **Depends:** B2
+  **Done.** 465 tests green (61 of them D1's); ruff, ruff format and mypy (strict) clean;
+  the wheel still installs into a bare venv with pip and `semprini adapters` runs from it.
+  Forty-four mutations were checked against the suite — discovery unsorted, discovery
+  importing every plugin, a duplicate name silently resolved, `load()` skipping each of
+  its four refusals in turn, an unimportable plugin escaping as its own exception, an
+  entry forgetting its distribution, `adapter_names()` listing only loadable adapters,
+  `create()` passing the adapter's name as the source's, configuration loaded without the
+  installed names, an empty installation rejecting every configuration, an unreachable
+  source reported as a compile failure, every error mapped to exit 2, a broken plugin
+  listed but not reported, `adapters` reading an instance, the write guard watching only
+  `builtins.open` / ignoring `os.open` / ignoring `os.mkdir` / never restoring itself /
+  treating reads as writes, construction unguarded, fetch writes tolerated, minting
+  tolerated, a configured `enumerates` counted as minting, `sem:` terms tolerated,
+  misattributed objects tolerated, a self-contradictory model tolerated, no second fetch,
+  settings mutation undetected, the snapshot aliasing the settings, `validate_config`
+  raising or rejecting tolerated, a warning treated as a violation, a multi-line summary
+  tolerated, any exception counted as unreachable, a partial model tolerated, the
+  unreachable case never exercised, only the first violation reported, a non-slug name
+  tolerated, a non-adapter tolerated, tuple contents unscanned, the listing printing whole
+  docstrings, and one broken plugin rendered as a list of one — and each fails it. Two
+  earned their keep: the docstring mutation survived at first because the dummy adapter's
+  docstring was a single line, so "first line" and "whole docstring" were the same string
+  (it now has a body, like a real adapter will); and the `os.mkdir` guard turned out to be
+  reported twice over, since the second fetch trips on the directory the first left behind
+  — which is the concrete reason the no-writes rule exists, so the test now pins both.
+
+  **Decisions taken** (all implemented and now in the spec):
+  - **The dummy adapter is a real distribution, committed as it looks once installed** —
+    `tests/fixtures/dummy-adapter/` holds the importable package beside its `.dist-info`,
+    and a fixture puts that directory on `sys.path`. `importlib.metadata` then finds it by
+    the same scan that finds every pip-installed package. Building and `pip install`ing
+    it per run would exercise pip, need a build backend and a writable environment, and
+    test the same one line. Nothing in `semprini` imports or names it;
+    `entry_points.txt` is the only thing connecting the two, which is the claim §1.2
+    makes. `tests/fixtures/broken-adapter/` is its counterpart: a plugin that raises on
+    import, because "one broken plugin must not hide the others" cannot be faked well.
+  - **Discovery imports nothing.** Listing what is installed is a metadata question, and
+    answering it by importing would run arbitrary third-party code on every command that
+    loads a configuration. `AdapterEntry.load()` is where import happens, and
+    `semprini adapters` is the one command that loads everything — that is the question it
+    exists to answer. Consequence: `adapter_names()` includes a broken plugin's name, so a
+    plugin that fails to import is reported as broken rather than as missing.
+  - **An adapter's `name` must equal the entry-point name it is registered under**, and
+    `load()` refuses it otherwise, along with an entry point that does not import, is not
+    a class, is not a `BaseAdapter`, or leaves `fetch()` abstract. An instance writes
+    `adapter: <name>` in its configuration, so a class calling itself something else makes
+    every message about it name a thing that appears in no file the operator can open. The
+    cost is that one class cannot be registered under two names; an alias is a subclass,
+    and that is written into the spec. **Two distributions claiming one name are refused
+    too**, never resolved by installation order.
+  - **`known_adapters` is now wired** (B3's handover), as `config.load(known_adapters=
+    installed or None)`. Passing `None` when *nothing* is installed keeps B3's rule —
+    checking against an empty set would reject every valid configuration — and that
+    branch stops being reachable in a real install the moment D2 registers the first
+    bundled adapter. **It is what keeps the fixture instance loadable today**, since its
+    config names `excel-taxonomy` and nothing provides it yet.
+  - **One error→exit-code mapping, `cli.exit_code_for`**, and `main()` wraps the whole
+    dispatch in one handler. This also settles what B4 and C2 deferred: `IdentityError`
+    and `ManifestError` are `IssueError`s, so they now reach the operator as a message
+    and exit 1 rather than as a traceback, without either module gaining a handler of its
+    own. `_load_config` no longer returns `ConfigError | ExitCode`; it raises, and what an
+    operator sees is unchanged (asserted).
+  - **`semprini.testing.check_contract()` is the contract, executable** — framework-free
+    (no pytest import, no base class), so it ships in the wheel and runs under whatever
+    the author's project uses. It collects every violation rather than stopping at the
+    first, and requires the author to supply *both* a working configuration and one whose
+    source cannot be read: `unreachable` is a required argument, because an adapter never
+    asked what it does when its source is down is the one that answers "deprecate
+    everything". §4.1 gained `testing.py` and `adapters/discovery.py`.
+  - The write guard patches `builtins.open`, `io.open`, `os.open`, `os.mkdir`, `os.remove`
+    and `os.replace`, **records rather than blocks**, and restores them in a `finally`. It
+    is a guard, not a proof — an adapter determined to write behind it can — and the
+    module says so. `io.open` is patched *as well as* `builtins.open` even though they are
+    the same function, because `pathlib` holds its own reference and `Path.write_text`
+    would otherwise pass straight through; a mutation pins that.
+
+  **For the tasks that come next:**
+  - **D2 and D3 each uncomment their own line in `pyproject.toml`** as their adapter class
+    lands (A1's note). D2's is `excel-taxonomy = "semprini.adapters.excel_taxonomy:ExcelTaxonomyAdapter"`,
+    and doing it turns the unknown-adapter check on for the fixture instance.
+  - **Both should run `check_contract` against their adapter**, exactly as a third party
+    would — `tests/test_adapter_contract.py::test_the_installed_dummy_adapter_meets_the_contract`
+    is the call to copy. Note it fetches **twice** (determinism), which for D3 means two
+    passes over the recorded responses.
+  - **E2's fetch loop is `adapters.create(source, ctx)` per configured source**, then
+    `fetch()`, then `merge_models(...)`; `adapter.summary()` is the line that fills
+    `report.SourceSummary.note`, and the adapter is constructed before it fetches so
+    `semprini check` can call `validate_config()` without opening a connection.
+  - **Exit 3 is mapped but not yet reachable from the CLI**, since no command fetches.
+    `exit_code_for` is tested directly and through the shape E2 will use
+    (`test_an_unreachable_source_exits_3`); wiring it into a real run is E2's, and it
+    needs no new mapping.
+  - **G4's adapter authoring guide should point at `semprini.testing`** and at
+    `tests/fixtures/dummy-adapter/`, which is written to be the worked example — a
+    `fetch()` that reads and returns, a `validate_config()` that reports rather than
+    raises, a `summary()` line, and a source failure raised as `SourceUnreachableError`.
 
 - [ ] **D2 · Excel taxonomy adapter, and the fixture instance**
   **Spec:** §5.3 (Excel adapter), §6.1 (fixture instance), §9.2 rule 5
@@ -978,11 +1074,13 @@ be deferred without stalling the build.
   `/ontology/X.Y.Z/` must keep resolving.
 - ~~**The compiler now emits RDF.**~~ Done, and `generated/` is now machine-owned in
   practice rather than by convention: C2's manifest hashes every file the compiler writes
-  and refuses to be written by an uninstalled one. Phase C is complete. **D1 next** — the
-  adapter contract is the last thing between the emit stage and a real end-to-end
-  compile, and D2, D3 and G4 all wait on it. Note that the run report already has a slot
-  for per-source fetch summaries; D1's `BaseAdapter` should make filling it natural rather
-  than leaving E2 to invent it.
+  and refuses to be written by an uninstalled one. Phase C is complete.
+- ~~**D1 next.**~~ Done: the plane now has a plugin interface, discovery that imports
+  nothing, and a contract an outside author can run against their own adapter. **D2
+  next** — it is the first real source, and the first to close the loop end to end, since
+  it needs no network. It also flips two switches D1 deliberately left off: registering
+  `excel-taxonomy` as an entry point turns the unknown-adapter check on for real, and
+  fills in the fixture instance the whole suite compiles against.
 - ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
   once an instance holds generated files, every serializer change becomes a migration
   (§7). It now is one — a change to `serialize.py`'s output is a major bump.
