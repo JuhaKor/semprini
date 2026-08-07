@@ -774,6 +774,7 @@ done and green.
   and listed; the contract suite catches an adapter that writes to disk, mints IRIs, or
   returns a partial model instead of raising; fetch failure exits 3.
   **Depends:** B2
+  **Merged — [PR #8](https://github.com/JuhaKor/semprini/pull/8).**
   **Done.** 478 tests green (74 of them D1's); ruff, ruff format and mypy (strict) clean;
   the wheel still installs into a bare venv with pip and `semprini adapters` runs from it.
   Fifty-three mutations were checked against the suite — discovery unsorted, discovery
