@@ -360,6 +360,8 @@ semprini/
 │   ├── model.py                   # internal model dataclasses
 │   ├── identity.py                # ID map, minting, namespace lock
 │   ├── build.py                   # internal model → the graphs of generated/ (3.2, 3.3, 4.2)
+│   ├── manifest.py                # generated/.manifest.json — hashes and versions (4.3, 7)
+│   ├── report.py                  # generated/.report.md — the run report (5.6)
 │   ├── serialize.py               # canonical Turtle serializer (5.5)
 │   ├── validate.py                # SHACL + structural checks (6.1)
 │   ├── migrate/                   # version-to-version migrations (7)
@@ -445,6 +447,21 @@ A file with no content is **not written**: a glossary with no relationships prod
   `generated/.manifest.json`, which records content hashes plus the compiler and
   ontology versions; validation recomputes and compares). The manifest contains **no
   timestamps** — it must be reproducible.
+- **What the manifest records.** Every file the run writes under `generated/`, the
+  ontology copy included, as `<file name>: "sha256:<hex>"` — the algorithm is written into
+  each value so that a line means something on its own. The document is a JSON object with
+  keys sorted at both levels, indented by two spaces, ending in one LF, and holding exactly
+  `compiler_version`, `files` and `ontology_version`; an unknown key is an error, for the
+  reason a misspelled configuration key is (5.1). Two files are deliberately **not**
+  hashed: the manifest, which cannot contain its own hash, and `.report.md`, which is prose
+  about a run rather than governed content and is written on different terms (5.6).
+- **A file present but unrecorded fails the check** as surely as an edited one. Otherwise
+  an instance accumulates output from a scheme that no longer exists, and a consumer
+  loading the directory from Git reads statements no source still makes.
+- **A manifest is never written by an uninstalled compiler.** Run from a source tree the
+  package reports version `0.0.0+source`, which identifies no release — two different
+  working trees record the same string and the drift check (6.1) passes between them, so
+  writing to `generated/` is refused instead (7).
 - `overlays/` and `shapes/local/` are written by humans through normal PRs and
   validated against the same core shapes.
 - Excel taxonomy files are committed under `sources/taxonomies/` so that a taxonomy
@@ -741,10 +758,24 @@ byte-identical output (6.1).
 
 ### 5.6 Run report
 
-Every run writes `generated/.report.md` (overwritten): compiler and ontology versions,
-counts per class and per file, new/changed/deprecated objects, objects missing
-definitions, same-name/different-IRI warnings, and per-source fetch summaries. The
-compile workflow pastes this into the PR description — it is the reviewer's summary.
+`generated/.report.md` carries: compiler and ontology versions, counts per class and per
+file, new/changed/deprecated objects, objects missing definitions,
+same-name/different-IRI warnings, and per-source fetch summaries. The compile workflow
+pastes it into the PR description — it is the reviewer's summary.
+
+Everything in it is derived from the graphs the run produced and the state they replaced,
+never from what an adapter believed it fetched; "changed" and a refreshed
+`dcterms:modified` (3.3) are decided by one comparison, so the report and the Turtle
+beside it cannot tell different stories. It carries no timestamp and no run identifier
+(5.5 rule 8), and each listing of nodes is capped — the counts above it are not — because
+a first compile of a large instance would otherwise bury them in a PR description.
+
+**The report is rewritten only when the run changed something.** A run whose output is
+byte-identical to what is committed leaves it alone. Written unconditionally, a scheduled
+no-op compile would rewrite "12 new" to "0 new" and open a PR containing nothing else —
+the empty diff the whole design exists to avoid (1.2, 4.3). A committed report is
+therefore always the report of the run that produced the files beside it, which is also
+what a reviewer wants it to be.
 
 ### 5.7 Bootstrapping an instance
 
@@ -772,8 +803,9 @@ All checks are implemented in `semprini check` — CI invokes the CLI and nothin
 Steps, all blocking unless noted:
 
 1. **Syntax**: every `.ttl` parses (rdflib).
-2. **Manifest integrity**: `generated/*` hashes match `.manifest.json` (blocks hand
-   edits to generated files).
+2. **Manifest integrity**: `generated/*` hashes match `.manifest.json`, every recorded
+   file is present, and no unrecorded file is (4.3) — this blocks hand edits to generated
+   files and stale output alike.
 3. **Version drift**: the compiler and ontology versions recorded in `.manifest.json`
    match the versions actually running. This makes a plane upgrade a deliberate,
    separately reviewable "recompile with `<version>`" PR rather than a surprise reflow

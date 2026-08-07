@@ -13,11 +13,21 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _distribution_version
 from pathlib import Path
 
-__all__ = ["ONTOLOGY_PATH", "compiler_version", "ontology_version"]
+__all__ = [
+    "ONTOLOGY_PATH",
+    "UNINSTALLED_VERSION",
+    "compiler_version",
+    "ontology_version",
+]
 
 ONTOLOGY_PATH = Path(__file__).parent / "ontology" / "sem.ttl"
 
-_UNINSTALLED = "0.0.0+source"
+UNINSTALLED_VERSION = "0.0.0+source"
+"""What :func:`compiler_version` reports from a source tree with nothing installed.
+
+Public because it is a value other modules must recognize rather than merely produce: a
+manifest records which release wrote a file, and this string identifies no release, so
+:class:`semprini.manifest.Manifest` refuses to write one carrying it (spec 7)."""
 
 
 def compiler_version() -> str:
@@ -27,7 +37,7 @@ def compiler_version() -> str:
     except PackageNotFoundError:
         # Imported straight from a source tree with nothing installed. Runs, but
         # nothing may record this value in a manifest.
-        return _UNINSTALLED
+        return UNINSTALLED_VERSION
 
 
 def ontology_version(path: Path = ONTOLOGY_PATH) -> str:

@@ -1,0 +1,11 @@
+{
+  "compiler_version": "0.1.0",
+  "files": {
+    "concepts-finance.ttl": "sha256:a3d1842c37cf659d13fe55a15ff2eb0c8f6d1e26d261139740caf7f25508998c",
+    "concepts-sales.ttl": "sha256:cb5bd06e8852f2162eb572c27368d62edeceda2c7d30ed38120ea7916b938f7a",
+    "ontology.ttl": "sha256:c345403ac2481822a9801b46152c38b7d79581aa72e6f5e16643c0af574fae31",
+    "relationships-sales.ttl": "sha256:bc6a7e47768853c92e7e921503772c7327d0d023f635f2dfb8ca56b1b8fccdb1",
+    "taxonomy-product-category.ttl": "sha256:eaf52460645d0274e4c9977c9cc7b482a9a8e384e95aca59316a396b34f2a3ad"
+  },
+  "ontology_version": "0.1.0"
+}

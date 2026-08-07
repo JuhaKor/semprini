@@ -60,6 +60,8 @@ __all__ = [
     "OutputFile",
     "build",
     "read_previous",
+    "statements_by_subject",
+    "unchanged",
     "write_all",
 ]
 
@@ -215,6 +217,58 @@ def read_previous(repo_root: Path | None = None) -> Graph:
     return graph
 
 
+def statements_by_subject(graph: Graph) -> dict[URIRef, set[tuple[URIRef, Node]]]:
+    """Group a graph's statements by subject, **excluding** ``dcterms:modified``.
+
+    The one definition of "what is said about this node", shared by the
+    ``dcterms:modified`` carry-forward below and by the run report's new/changed counts
+    (spec 5.6). Two answers to one question would eventually disagree, and the way they
+    would disagree is the worst available: a report saying nothing changed beside a file
+    whose dates all moved.
+
+    The date is excluded because including it makes the comparison meaningless — a node
+    compared against its own previous state *including* its date differs from itself
+    whenever the previous run happened to be a different day.
+    """
+    statements: dict[URIRef, set[tuple[URIRef, Node]]] = {}
+    for subject, predicate, object_ in graph:
+        if not isinstance(subject, URIRef) or not isinstance(predicate, URIRef):
+            continue
+        if predicate == DCTERMS.modified:
+            continue
+        statements.setdefault(subject, set()).add((predicate, object_))
+    return statements
+
+
+def unchanged(files: Sequence[OutputFile], repo_root: Path | None = None) -> bool:
+    """Whether every produced file is already on disk with exactly these bytes.
+
+    What decides whether a run writes ``generated/.report.md`` at all (spec 5.6), and so
+    whether a scheduled compile that found nothing new opens a pull request containing
+    only a report saying it found nothing new.
+
+    **Pass the manifest's own file, not only the Turtle.** It carries the compiler and
+    ontology versions (spec 4.3), so a recompile after a plane upgrade produces identical
+    Turtle and a *different* manifest — a real change, and one whose report must be
+    rewritten. Comparing the Turtle alone would commit a manifest saying 0.2.0 produced
+    these files beside a report whose header says 0.1.0 did, which is exactly the
+    disagreement the report is supposed to be incapable of.
+
+    A file the run did *not* produce is not consulted: removing stale output is a
+    different question, and one that needs the run's scope to answer (spec 4.3) — a
+    ``--source X`` run legitimately regenerates part of the directory. **E2 owns it.**
+    """
+    root = Path.cwd() if repo_root is None else Path(repo_root)
+    for file in files:
+        try:
+            found = (root / file.path).read_bytes()
+        except OSError:
+            return False
+        if found != file.text.encode("utf-8"):
+            return False
+    return True
+
+
 def write_all(files: Sequence[OutputFile], repo_root: Path | None = None) -> tuple[Path, ...]:
     """Write every file into ``<repo_root>/generated/``.
 
@@ -241,14 +295,10 @@ class _Previous:
         self._modified: dict[URIRef, Literal] = {}
         if graph is None:
             return
-        for subject, predicate, object_ in graph:
-            if not isinstance(subject, URIRef) or not isinstance(predicate, URIRef):
-                continue
-            if predicate == DCTERMS.modified:
-                if isinstance(object_, Literal):
-                    self._modified[subject] = object_
-                continue
-            self._statements.setdefault(subject, set()).add((predicate, object_))
+        self._statements = statements_by_subject(graph)
+        for subject, object_ in graph.subject_objects(DCTERMS.modified):
+            if isinstance(subject, URIRef) and isinstance(object_, Literal):
+                self._modified[subject] = object_
 
     def modified(self, subject: URIRef, statements: set[tuple[URIRef, Node]]) -> Literal | None:
         """The date to carry forward, or ``None`` if this node's content changed.
