@@ -399,8 +399,7 @@ done and green.
   rewrites map and lock together. Property test: minting is stable across processes
   (no reliance on hash seed or dict order).
   **Depends:** B2, B3
-  **Status — reviewed, fixed, and open as
-  [PR #4](https://github.com/JuhaKor/semprini/pull/4).** Merge is the one step left.
+  **Merged — [PR #4](https://github.com/JuhaKor/semprini/pull/4).**
   **Done.** 261 tests green; ruff, ruff format and mypy (strict) clean. Twenty-nine
   mutations were checked against the suite — a source UUID left unnormalized, taxonomy
   schemes taken in arrival order, a value minted from its code, an unsafe local name
@@ -501,8 +500,7 @@ done and green.
   produces a byte-identical file **and** leaves `dcterms:modified` untouched — the test
   that proves scheduled no-op runs generate no diff.
   **Depends:** B1, B2, B4
-  **Status — reviewed, fixed, and open as
-  [PR #6](https://github.com/JuhaKor/semprini/pull/6).** Merge is the one step left.
+  **Merged — [PR #6](https://github.com/JuhaKor/semprini/pull/6).**
 
   **Done.** 308 tests green (47 of them C1's); ruff, ruff format and mypy (strict) clean.
   Thirty mutations were checked against the suite — a subject duplicated into every
@@ -645,6 +643,7 @@ done and green.
   hashes match; a hand-edited generated file is detected; the report renders the counts
   and warning categories §5.6 lists.
   **Depends:** C1
+  **Merged — [PR #7](https://github.com/JuhaKor/semprini/pull/7).**
   **Done.** 405 tests green (97 of them C2's); ruff, ruff format and mypy (strict) clean.
   Thirty-seven mutations were checked against the suite — hashes not compared, a missing
   recorded file tolerated, an unrecorded file tolerated, only the top level of
