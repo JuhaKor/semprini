@@ -60,9 +60,12 @@ def test_the_fixture_instance_loads(instance: Path) -> None:
     assert loaded.base_iri == "https://semantics.example.com/"
     assert loaded.instance_id == "acme"
     assert loaded.default_language == "en"
-    assert [source.name for source in loaded.sources] == ["taxonomies"]
+    assert [source.name for source in loaded.sources] == ["product-category"]
     assert loaded.sources[0].adapter == "excel-taxonomy"
-    assert loaded.sources[0].settings["files"][0]["scheme_slug"] == "product-category"
+    # One workbook is one source, so the settings are flat: a path and the scheme slug
+    # (spec 5.3).
+    assert loaded.sources[0].settings["scheme_slug"] == "product-category"
+    assert loaded.sources[0].settings["path"] == "sources/taxonomies/product-category.xlsx"
 
 
 def test_the_spec_example_loads() -> None:
@@ -86,9 +89,29 @@ def test_an_instance_with_no_sources_loads() -> None:
     assert loaded.default_language == config.DEFAULT_LANGUAGE
 
 
-def test_adapter_settings_are_read_only(instance: Path) -> None:
-    """An adapter may read its configuration and must not be able to edit it (spec 5.2)."""
-    settings = config.load(instance).sources[0].settings
+def test_adapter_settings_are_read_only() -> None:
+    """An adapter may read its configuration and must not be able to edit it (spec 5.2).
+
+    Written inline rather than read from the fixture instance: this is about how *any*
+    adapter's subtree is frozen, and the fixture's own is now flat, so leaning on it would
+    stop exercising the nested case the moment its shape changed — which is exactly what
+    happened when D2 gave each workbook its own source.
+    """
+    settings = (
+        load_text("""
+        semprini:
+          base_iri: https://semantics.example.com/
+          instance_id: acme
+        sources:
+          - adapter: excel-taxonomy
+            name: taxonomies
+            config:
+              files:
+                - path: sources/taxonomies/a.xlsx
+    """)
+        .sources[0]
+        .settings
+    )
 
     assert isinstance(settings["files"], tuple)
     with pytest.raises(TypeError):
@@ -572,13 +595,13 @@ def test_the_default_credential_lookup_reads_the_process_environment(
 def test_the_run_context_carries_the_configured_instance(instance: Path) -> None:
     loaded = config.load(instance)
 
-    context = loaded.run_context(only_source="taxonomies", dry_run=True)
+    context = loaded.run_context(only_source="product-category", dry_run=True)
 
     assert context.base_iri == loaded.base_iri
     assert context.instance_id == "acme"
     assert context.default_language == "en"
     assert context.repo_root == instance
-    assert context.only_source == "taxonomies"
+    assert context.only_source == "product-category"
     assert context.dry_run is True
 
 
@@ -587,10 +610,11 @@ def test_an_unknown_source_is_a_configuration_error(instance: Path) -> None:
     loaded = config.load(instance)
 
     with pytest.raises(ConfigError) as raised:
-        loaded.run_context(only_source="taxonomy")
+        loaded.run_context(only_source="product-categories")
 
-    assert "taxonomy" in str(raised.value)
-    assert "taxonomies" in str(raised.value)
+    assert "product-categories" in str(raised.value)
+    # And what *is* configured, or a typo and a source nobody added look identical.
+    assert "configured: product-category" in str(raised.value)
 
 
 # -------------------------------------------------------------------------- through CLI

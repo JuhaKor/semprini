@@ -1,1 +1,10 @@
 iri,kind,source_name,source_key,first_seen,note
+https://semantics.example.com/schemes/product-category,scheme,product-category,product-category,2026-08-06,
+https://semantics.example.com/values/ccc6b7cb-8931-598a-9f0f-39a1b18a3f54,taxonomy-value,product-category,Drills,2026-08-06,
+https://semantics.example.com/values/84df0f0b-80a6-5a49-94c9-6fde0147f5aa,taxonomy-value,product-category,Fasteners,2026-08-06,
+https://semantics.example.com/values/ca74c4dd-93b4-50ab-8349-55e68c84fdd0,taxonomy-value,product-category,HandTools,2026-08-06,
+https://semantics.example.com/values/3bad4453-7647-59f2-961a-f1eeac2e349c,taxonomy-value,product-category,PowerTools,2026-08-06,
+https://semantics.example.com/values/379597ff-2296-57e3-8f05-6f03cc657969,taxonomy-value,product-category,Sanders,2026-08-06,
+https://semantics.example.com/values/b713df24-2b3e-5964-abcb-fbbc6da83791,taxonomy-value,product-category,Screws,2026-08-06,
+https://semantics.example.com/values/76a9ead3-2ba1-5fa3-b5a9-ed6486a78c4a,taxonomy-value,product-category,Spanners,2026-08-06,
+https://semantics.example.com/values/a74722cf-1249-5ee9-b6f1-49c47ac3a408,taxonomy-value,product-category,Tools,2026-08-06,

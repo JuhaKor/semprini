@@ -189,7 +189,13 @@ def test_an_adapter_registered_under_another_name_is_refused(
         entry.load()
 
 
-def test_an_unknown_name_with_nothing_installed_says_so() -> None:
+def test_an_unknown_name_with_nothing_installed_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Discovery is emptied rather than left to the ambient installation: since D2
+    # registered `excel-taxonomy`, a real install always offers at least one adapter, and
+    # a test that depended on finding none would have been silently testing something
+    # else the moment the first bundled adapter landed.
+    monkeypatch.setattr(discovery_module, "discover", tuple)
+
     with pytest.raises(AdapterLoadError, match="installed: none"):
         adapters.load_adapter("dummy")
 
@@ -248,12 +254,17 @@ def test_adapters_lists_what_is_installed(
 
     out = capsys.readouterr().out
     # One adapter, one line: the adapter's own self-description is its docstring, and
-    # pasting a whole docstring into the table would break the column it sits in.
-    (line,) = out.splitlines()
-    assert line.startswith("dummy  semprini-dummy-adapter 1.0.0  ")
+    # pasting a whole docstring into the table would break the column it sits in. The
+    # bundled excel-taxonomy is listed alongside it, so the dummy's line is picked out
+    # rather than assumed to be the only one.
+    (line,) = [entry for entry in out.splitlines() if entry.startswith("dummy ")]
+    # Split rather than matched against fixed spacing: the name column widens to fit the
+    # longest name, so asserting the exact gap would pin the *other* adapters installed.
+    assert line.split()[:4] == ["dummy", "semprini-dummy-adapter", "1.0.0", "A"]
     assert line.endswith(
         "A JSON document standing in for a source system (the plane's own test fixture)."
     )
+    assert any(entry.startswith("excel-taxonomy ") for entry in out.splitlines())
 
 
 def test_adapters_describes_the_installation_not_an_instance(
@@ -266,7 +277,16 @@ def test_adapters_describes_the_installation_not_an_instance(
     assert main(["adapters"]) == ExitCode.OK
 
 
-def test_adapters_with_nothing_installed_says_so(capsys: pytest.CaptureFixture[str]) -> None:
+def test_adapters_with_nothing_installed_says_so(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only reachable now by emptying discovery — the plane ships excel-taxonomy — but the
+    # branch still runs on an installation whose entry points are stripped, and an empty
+    # listing that printed nothing at all would read as a crash. Patched on the package,
+    # which is the name the command resolves; the module attribute is a different binding
+    # and patching it here would leave the command reading the real installation.
+    monkeypatch.setattr(adapters, "discover", tuple)
+
     assert main(["adapters"]) == ExitCode.OK
     assert capsys.readouterr().out == "no adapters are installed\n"
 
@@ -359,18 +379,26 @@ def test_an_adapter_that_documents_nothing_is_listed_without_a_description() -> 
 
 
 def test_a_configured_adapter_that_is_not_installed_exits_2(
-    instance: Path, installed_dummy_adapter: Path, capsys: pytest.CaptureFixture[str]
+    instance: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The check B3 left for this task to wire up.
 
-    The fixture instance configures ``excel-taxonomy``, which lands with D2. With some
-    other adapter installed, the installation can judge the name — and a source naming an
-    adapter nobody installed is a configuration error, reported with its key.
+    A source naming an adapter nobody installed is a configuration error, reported with
+    its key. The fixture instance used to be the example, because it configured
+    ``excel-taxonomy`` before that adapter existed; now that D2 ships it, the case needs
+    a name that really is absent.
     """
+    config = instance / "config" / "semprini.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace("adapter: excel-taxonomy", "adapter: collibra"),
+        encoding="utf-8",
+        newline="\n",
+    )
+
     assert main(["check"]) == ExitCode.CONFIG
 
     err = capsys.readouterr().err
-    assert "excel-taxonomy" in err
+    assert "collibra" in err
     assert "sources[0].adapter" in err
 
 

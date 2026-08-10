@@ -1,0 +1,106 @@
+@prefix sem: <https://w3id.org/semprini/ontology#> .
+@prefix c: <https://semantics.example.com/concepts/> .
+@prefix r: <https://semantics.example.com/relationships/> .
+@prefix sch: <https://semantics.example.com/schemes/> .
+@prefix v: <https://semantics.example.com/values/> .
+@prefix x: <https://semantics.example.com/ext#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix a: <https://semantics.example.com/assets/> .
+@prefix d: <https://semantics.example.com/docs/> .
+
+sch:product-category a skos:ConceptScheme ;
+  skos:prefLabel "Product category taxonomy"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:definition "A small synthetic taxonomy of hardware product categories, used by the plane's own test suite."@en ;
+  sem:schemeType "taxonomy" ;
+  sem:sourceRef "product-category:product-category" ;
+  sem:status "active" .
+
+v:379597ff-2296-57e3-8f05-6f03cc657969 a skos:Concept ;
+  skos:prefLabel "Sanders"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:broader v:3bad4453-7647-59f2-961a-f1eeac2e349c ;
+  skos:definition "Power tools that abrade a surface smooth."@en ;
+  skos:inScheme sch:product-category ;
+  sem:sourceRef "product-category:Sanders" ;
+  sem:status "active" .
+
+v:3bad4453-7647-59f2-961a-f1eeac2e349c a skos:Concept ;
+  skos:prefLabel "Power tools"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Electric tools"@en ;
+  skos:altLabel "Powered tools"@en ;
+  skos:broader v:a74722cf-1249-5ee9-b6f1-49c47ac3a408 ;
+  skos:definition "Tools driven by an electric motor or compressed air."@en ;
+  skos:inScheme sch:product-category ;
+  sem:sourceRef "product-category:PowerTools" ;
+  sem:status "active" .
+
+v:76a9ead3-2ba1-5fa3-b5a9-ed6486a78c4a a skos:Concept ;
+  skos:prefLabel "Spanners"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Wrenches"@en ;
+  skos:broader v:ca74c4dd-93b4-50ab-8349-55e68c84fdd0 ;
+  skos:definition "Hand tools that grip and turn a nut or bolt head."@en ;
+  skos:inScheme sch:product-category ;
+  sem:sourceRef "product-category:Spanners" ;
+  sem:status "active" .
+
+v:84df0f0b-80a6-5a49-94c9-6fde0147f5aa a skos:Concept ;
+  skos:prefLabel "Fasteners"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:definition "Hardware that joins two things together."@en ;
+  skos:example "Screw, bolt, rivet"@en ;
+  skos:inScheme sch:product-category ;
+  skos:scopeNote "Excludes adhesives, which are consumables."@en ;
+  skos:topConceptOf sch:product-category ;
+  sem:sourceRef "product-category:Fasteners" ;
+  sem:status "active" .
+
+v:a74722cf-1249-5ee9-b6f1-49c47ac3a408 a skos:Concept ;
+  skos:prefLabel "Tools"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Implements"@en ;
+  skos:definition "Implements used to work material by hand or by power."@en ;
+  skos:example "Drill, hammer, spanner"@en ;
+  skos:hiddenLabel "Toolz"@en ;
+  skos:inScheme sch:product-category ;
+  skos:scopeNote "Covers the implement itself, never the consumable it drives."@en ;
+  skos:topConceptOf sch:product-category ;
+  sem:sourceRef "product-category:Tools" ;
+  sem:status "active" .
+
+v:b713df24-2b3e-5964-abcb-fbbc6da83791 a skos:Concept ;
+  skos:prefLabel "Screws"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:broader v:84df0f0b-80a6-5a49-94c9-6fde0147f5aa ;
+  skos:definition "Threaded fasteners driven into material."@en ;
+  skos:hiddenLabel "Screwes"@en ;
+  skos:inScheme sch:product-category ;
+  sem:sourceRef "product-category:Screws" ;
+  sem:status "active" .
+
+v:ca74c4dd-93b4-50ab-8349-55e68c84fdd0 a skos:Concept ;
+  skos:prefLabel "Hand tools"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Manual tools"@en ;
+  skos:broader v:a74722cf-1249-5ee9-b6f1-49c47ac3a408 ;
+  skos:definition "Tools worked entirely by hand."@en ;
+  skos:inScheme sch:product-category ;
+  sem:sourceRef "product-category:HandTools" ;
+  sem:status "active" .
+
+v:ccc6b7cb-8931-598a-9f0f-39a1b18a3f54 a skos:Concept ;
+  skos:prefLabel "Drills"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Drivers"@en ;
+  skos:broader v:3bad4453-7647-59f2-961a-f1eeac2e349c ;
+  skos:definition "Power tools that bore holes by rotating a bit."@en ;
+  skos:example "Cordless drill, hammer drill"@en ;
+  skos:hiddenLabel "Drils"@en ;
+  skos:inScheme sch:product-category ;
+  skos:scopeNote "Includes drivers, which share the same chuck."@en ;
+  sem:sourceRef "product-category:Drills" ;
+  sem:status "active" .

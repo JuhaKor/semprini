@@ -423,9 +423,13 @@ def test_a_minted_iri_in_a_cross_reference_is_caught() -> None:
     assert "Attribute.entity" in str(raised.value)
 
 
-def test_a_configured_enumerates_iri_is_allowed() -> None:
+def test_a_scheme_points_at_its_entity_with_a_source_ref() -> None:
+    # sem:enumerates used to hold an IRI the instance configured by hand, and the minting
+    # check had to carve out an exception for it. It is a SourceRef now (spec 5.3), so
+    # there is nothing an adapter may return that is allowed to look like an IRI, and the
+    # rule reads the same for every field.
     class Taxonomy(BaseAdapter):
-        """Relays the sem:enumerates IRI its instance configured — passing through, not minting."""
+        """Names the entity its taxonomy enumerates by that source's own key."""
 
         name = "taxonomy"
 
@@ -439,12 +443,44 @@ def test_a_configured_enumerates_iri_is_allowed() -> None:
                         pref_label="Sizes",
                         slug="sizes",
                         scheme_type=SchemeType.TAXONOMY,
-                        enumerates=f"{CONTRACT_BASE_IRI}concepts/1e5c",
+                        enumerates=SourceRef("contract-source", "1e5c"),
                     ),
                 )
             )
 
     check(Taxonomy)
+
+
+def test_an_enumerates_that_smuggles_an_iri_through_is_caught() -> None:
+    # A SourceRef's key is free text, so the escape is still reachable by an author who
+    # pastes an IRI into it. The recursive scan walks into dataclasses (it has to, for
+    # Attribute.entity), so it is caught by the same rule as everything else.
+    class Smuggling(BaseAdapter):
+        """Puts a minted IRI in the key of the source ref its scheme enumerates."""
+
+        name = "smuggling"
+
+        def fetch(self) -> InternalModel:
+            if self.config.get("down"):
+                raise SourceUnreachableError("the source is down")
+            return InternalModel(
+                schemes=(
+                    Scheme(
+                        source_refs={"contract-source": "sizes"},
+                        pref_label="Sizes",
+                        slug="sizes",
+                        scheme_type=SchemeType.TAXONOMY,
+                        enumerates=SourceRef(
+                            "contract-source", f"{CONTRACT_BASE_IRI}concepts/1e5c"
+                        ),
+                    ),
+                )
+            )
+
+    with pytest.raises(AdapterContractError) as raised:
+        check(Smuggling)
+
+    assert violations(raised) == {"no-minting"}
 
 
 # ------------------------------------------------------------------ failures and drift

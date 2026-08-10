@@ -743,6 +743,18 @@ files = [
 ]
 
 [[package]]
+name = "types-openpyxl"
+version = "3.1.5.20260807"
+description = "Typing stubs for openpyxl"
+optional = false
+python-versions = ">=3.10"
+groups = ["dev"]
+files = [
+    {file = "types_openpyxl-3.1.5.20260807-py3-none-any.whl", hash = "sha256:e64e9342cdac8a2d7b09f992d3606c532b75da43874f8107b6b5a122dc9d5681"},
+    {file = "types_openpyxl-3.1.5.20260807.tar.gz", hash = "sha256:1a0a42b125f8023d3ae83cc057e379d301a87f45e60b6160917824fef28ab015"},
+]
+
+[[package]]
 name = "types-pyyaml"
 version = "6.0.12.20260724"
 description = "Typing stubs for PyYAML"
@@ -814,4 +826,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "fd985c4a706411cd269ff33af3cf41bccde8c95882de8c92bdd1d3e9599891cc"
+content-hash = "5af3900ba34ded1ab661578503e00881d12fe7a60a3d76fe31ffd97533714175"

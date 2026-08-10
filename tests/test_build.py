@@ -52,6 +52,7 @@ from semprini.model import (
     SchemeType,
     SourceRef,
     TaxonomyValue,
+    Text,
     merge_models,
 )
 
@@ -582,12 +583,12 @@ def test_enumerating_an_unknown_iri_is_refused() -> None:
                 pref_label="Product category taxonomy",
                 slug="product-category",
                 scheme_type=SchemeType.TAXONOMY,
-                enumerates=f"{BASE}concepts/does-not-exist",
+                enumerates=SourceRef(ELLIE, "does-not-exist"),
             ),
         ),
     )
 
-    with pytest.raises(BuildError, match="not an IRI this instance has minted"):
+    with pytest.raises(BuildError, match="which no run has compiled"):
         compile_(merge_models(wrong))
 
 
@@ -603,7 +604,7 @@ def test_enumerating_something_that_is_not_an_entity_is_refused() -> None:
                 pref_label="Product category taxonomy",
                 slug="product-category",
                 scheme_type=SchemeType.TAXONOMY,
-                enumerates=f"{BASE}schemes/sales",
+                enumerates=SourceRef(ELLIE, "1234"),
             ),
         ),
     )
@@ -754,7 +755,7 @@ def test_scheme_and_enumerates_problems_are_reported_together() -> None:
                 pref_label="Product category taxonomy",
                 slug="product-category",
                 scheme_type=SchemeType.TAXONOMY,
-                enumerates=f"{BASE}concepts/does-not-exist",
+                enumerates=SourceRef(ELLIE, "does-not-exist"),
             ),
         ),
         entities=(Entity(source_refs={ELLIE: CUSTOMER}, pref_label="Customer"),),
@@ -765,9 +766,7 @@ def test_scheme_and_enumerates_problems_are_reported_together() -> None:
 
     assert len(raised.value.issues) == 2
     assert any("is in no scheme" in issue.message for issue in raised.value.issues)
-    assert any(
-        "not an IRI this instance has minted" in issue.message for issue in raised.value.issues
-    )
+    assert any("which no run has compiled" in issue.message for issue in raised.value.issues)
 
 
 def test_unreadable_generated_output_names_the_file(tmp_path: Path) -> None:
@@ -789,3 +788,50 @@ def test_the_output_parses_back_to_the_same_graph() -> None:
             continue
         reparsed = Graph().parse(data=file.text, format="turtle")
         assert set(reparsed) == set(file.graph), file.name
+
+
+def test_a_label_that_arrives_tagged_keeps_its_own_language() -> None:
+    """Spec 5.5 rule 6, at the point where it becomes bytes.
+
+    The model-level test proves the tag survives into the internal model; this is the
+    half that proves the *graph builder* does not overwrite it with the instance default.
+    Both halves are needed, and the instance default has to differ from the tag or the
+    two branches produce the same literal and neither is under test.
+    """
+    tagged = Entity(
+        source_refs={ELLIE: CUSTOMER},
+        pref_label=Text("Asiakas", "fi"),
+        definition=Text("Ostaja.", "fi"),
+        alt_labels=(Text("Klientti", "fi"),),
+        schemes=("sales",),
+    )
+    model = merge_models(
+        InternalModel(
+            schemes=(
+                Scheme(
+                    source_refs={ELLIE: "1234"},
+                    pref_label="Sales domain model",
+                    slug="sales",
+                    scheme_type=SchemeType.GLOSSARY,
+                ),
+            ),
+            entities=(tagged,),
+        )
+    )
+
+    graph = union(compile_(model, ctx=context()))
+    customer = URIRef(f"{BASE}concepts/{CUSTOMER}")
+
+    assert context().default_language == "en"
+    assert set(graph.objects(customer, SKOS.prefLabel)) == {Literal("Asiakas", lang="fi")}
+    assert set(graph.objects(customer, SKOS.definition)) == {Literal("Ostaja.", lang="fi")}
+    assert set(graph.objects(customer, SKOS.altLabel)) == {Literal("Klientti", lang="fi")}
+
+
+def test_an_untagged_label_takes_the_instance_default() -> None:
+    # The paired half: a source that states no language gets the instance's, which is the
+    # only place that knows it (spec 11 #5).
+    graph = union(compile_())
+    customer = URIRef(f"{BASE}concepts/{CUSTOMER}")
+
+    assert set(graph.objects(customer, SKOS.prefLabel)) == {Literal("Customer", lang="en")}

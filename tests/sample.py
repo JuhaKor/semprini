@@ -84,7 +84,7 @@ def sample_model() -> InternalModel:
                     pref_label="Product category taxonomy",
                     slug="product-category",
                     scheme_type=SchemeType.TAXONOMY,
-                    enumerates=f"{BASE}concepts/{NUMBER}",
+                    enumerates=SourceRef(ELLIE, NUMBER),
                 ),
             ),
             entities=(

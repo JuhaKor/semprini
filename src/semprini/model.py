@@ -53,6 +53,7 @@ __all__ = [
     "Severity",
     "SourceRef",
     "TaxonomyValue",
+    "Text",
     "is_language_tag",
     "merge_models",
 ]
@@ -172,6 +173,69 @@ class SourceRef:
         return f"{self.source}:{self.key}"
 
 
+@dataclass(frozen=True, slots=True)
+class Text:
+    """A label, definition or note, and the language it is written in (spec 5.5 rule 6).
+
+    Adapters may return a plain ``str`` anywhere one of these is accepted, and every field
+    normalizes it to ``Text(value, language=None)``. ``None`` means *the source did not
+    say*, not *no language*: the instance's ``default_language`` is applied when the graph
+    is built, and a value that arrived with a tag of its own keeps it (spec 11 #5).
+
+    Two texts with the same characters and different languages are **not** equal, which
+    makes them a merge conflict rather than an order-dependent silent choice. That is a
+    real limitation: spec 3.3 allows one ``skos:prefLabel`` per language per node, and a
+    scalar field cannot hold two. No v1 adapter produces one, and failing loudly is the
+    honest way to meet it — the alternative drops a language with nothing in the diff to
+    say so.
+    """
+
+    value: str
+    language: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.value:
+            # Empty is normalized to absent before it gets here (spec 5.3): an empty
+            # definition emits no triple, and a Text that renders as "" would emit one.
+            raise ValueError("text must not be empty")
+        if self.language is not None and not is_language_tag(self.language):
+            raise ValueError(f"not a language tag: {self.language!r}")
+
+    def __str__(self) -> str:
+        return self.value
+
+    @property
+    def sort_key(self) -> tuple[str, str]:
+        """A total order over texts, tagged and untagged alike.
+
+        Sorting ``Text`` against ``Text`` by field order would compare ``None`` with
+        ``str`` and raise, which the union of two set-valued fields does routinely.
+        """
+        return (self.value, self.language or "")
+
+
+def _as_text(value: str | Text) -> Text:
+    return value if isinstance(value, Text) else Text(value)
+
+
+def _as_optional_text(value: str | Text | None) -> Text | None:
+    """Normalize to a text or to absent, treating empty as absent (spec 5.3)."""
+    if value is None:
+        return None
+    text = value if isinstance(value, Text) else Text(value) if value else None
+    return text
+
+
+def _as_texts(values: Sequence[str | Text]) -> tuple[Text, ...]:
+    """Normalize a set-valued text field, dropping empties rather than emitting them."""
+    return tuple(_as_text(value) for value in values if str(value))
+
+
+def _union_sort_key(value: object) -> tuple[str, str]:
+    """Order a set-valued field's members, whether they are texts or plain strings."""
+    return value.sort_key if isinstance(value, Text) else (str(value), "")
+
+
 class MergeConflictError(ValueError):
     """Two sources describe one object and disagree about a value.
 
@@ -193,7 +257,12 @@ class SemanticObject:
     kind: ClassVar[Kind]
 
     # Field names whose values union on merge instead of having to agree.
-    UNION_FIELDS: ClassVar[tuple[str, ...]] = ("alt_labels",)
+    UNION_FIELDS: ClassVar[tuple[str, ...]] = (
+        "alt_labels",
+        "hidden_labels",
+        "scope_notes",
+        "examples",
+    )
 
     source_refs: Mapping[str, str] = field(hash=False)
     """Source name → that source's key. Several entries means several sources produced
@@ -204,14 +273,29 @@ class SemanticObject:
     a set or key a dict — which is exactly what identity resolution does with these
     (spec 5.4). Hashing a subset of the compared fields keeps the two consistent."""
 
-    pref_label: str
-    """``skos:prefLabel``. Untagged here — the instance's configured language is applied
-    when the graph is built, since an adapter does not know it (spec 5.5 rule 6)."""
+    pref_label: str | Text
+    """``skos:prefLabel``. A plain string means the source did not state a language, and
+    the instance's configured one is applied when the graph is built (spec 5.5 rule 6)."""
 
-    definition: str | None = None
+    definition: str | Text | None = None
     """``skos:definition``. ``None`` and empty both emit no triple (spec 5.3)."""
 
-    alt_labels: tuple[str, ...] = ()
+    alt_labels: tuple[str | Text, ...] = ()
+    """``skos:altLabel`` — synonyms."""
+
+    hidden_labels: tuple[str | Text, ...] = ()
+    """``skos:hiddenLabel`` — misspellings and retired names, matched by search but never
+    displayed."""
+
+    scope_notes: tuple[str | Text, ...] = ()
+    """``skos:scopeNote`` — guidance on where the concept's boundaries lie."""
+
+    examples: tuple[str | Text, ...] = ()
+    """``skos:example`` — instances that fall under the concept.
+
+    Set-valued, like the two above and unlike ``definition``: a concept has *the*
+    definition, but two sources each contributing an example are not in conflict, and
+    making these scalars would fail a run over data that agrees (spec 3.3)."""
 
     def __post_init__(self) -> None:
         if not self.source_refs:
@@ -226,11 +310,13 @@ class SemanticObject:
         for source, key in self.source_refs.items():
             SourceRef(source, key)
         object.__setattr__(self, "source_refs", MappingProxyType(dict(self.source_refs)))
-        object.__setattr__(self, "alt_labels", tuple(self.alt_labels))
+        object.__setattr__(self, "pref_label", _as_text(self.pref_label))
+        for name in ("alt_labels", "hidden_labels", "scope_notes", "examples"):
+            object.__setattr__(self, name, _as_texts(getattr(self, name)))
         # Empty and absent are the same statement — neither emits a skos:definition
         # triple (spec 5.3) — so they are made one state here rather than two that
         # every later comparison has to know are equivalent.
-        object.__setattr__(self, "definition", self.definition or None)
+        object.__setattr__(self, "definition", _as_optional_text(self.definition))
 
     @property
     def refs(self) -> tuple[SourceRef, ...]:
@@ -247,7 +333,9 @@ class SemanticObject:
 class SchemeMember(SemanticObject):
     """An object that can belong to schemes (everything except a scheme itself)."""
 
-    UNION_FIELDS: ClassVar[tuple[str, ...]] = ("alt_labels", "schemes")
+    # Derived rather than re-spelled: a field added to the base class and forgotten here
+    # would silently become a scalar that two sources have to agree on.
+    UNION_FIELDS: ClassVar[tuple[str, ...]] = (*SemanticObject.UNION_FIELDS, "schemes")
 
     schemes: tuple[str, ...] = ()
     """Slugs of the schemes this object is in — ``skos:inScheme``. Several means the
@@ -300,12 +388,20 @@ class TaxonomyValue(SchemeMember):
 
     kind: ClassVar[Kind] = Kind.TAXONOMY_VALUE
 
-    code: str
-    """``skos:notation`` — the business code. Mutable in the source: the ID map keeps the
-    IRI stable when it changes (spec 3.4)."""
+    code: str | None = None
+    """``skos:notation`` — the business code, when the source states one. Mutable in the
+    source: the ID map keeps the IRI stable when it changes (spec 3.4).
+
+    Optional because not every taxonomy format carries a notation. A ragged workbook
+    (spec 5.3) states hierarchy and labels and no code at all, and inventing one from the
+    row's identity key would emit a ``skos:notation`` no source ever said."""
 
     parent: SourceRef | None = None
     """The broader value — ``skos:broader``. ``None`` means a top concept."""
+
+    def __post_init__(self) -> None:
+        SchemeMember.__post_init__(self)
+        object.__setattr__(self, "code", self.code or None)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -320,10 +416,12 @@ class Scheme(SemanticObject):
 
     scheme_type: SchemeType
 
-    enumerates: str | None = None
-    """IRI of the entity whose values this taxonomy provides — ``sem:enumerates``. An
-    IRI rather than a ``SourceRef`` because it is configured by hand in the instance
-    (spec 5.3); that it exists in the ID map is checked when the graph is built."""
+    enumerates: SourceRef | None = None
+    """The entity whose values this taxonomy provides — ``sem:enumerates``.
+
+    A source ref like every other cross-reference: the workbook states the entity's key in
+    the modelling tool (spec 5.3), and an adapter has no IRIs to point with (spec 5.2).
+    Resolution and the check that it names an *entity* happen when the graph is built."""
 
     def __post_init__(self) -> None:
         SemanticObject.__post_init__(self)
@@ -465,7 +563,7 @@ def _combine_pair[ObjectT: SemanticObject](first: ObjectT, second: ObjectT) -> O
         if name == "source_refs":
             values[name] = _combined_refs(first, second)
         elif name in first.UNION_FIELDS:
-            values[name] = tuple(sorted(set(left) | set(right)))
+            values[name] = tuple(sorted(set(left) | set(right), key=_union_sort_key))
         elif left is None or right is None:
             # One source knowing something the other does not is the ordinary case — a
             # definition in one tool and none in the other. Empty descriptions never
