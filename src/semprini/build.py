@@ -485,6 +485,14 @@ class _Builder:
             statements.update(
                 (SKOS.inScheme, URIRef(schemes[slug].iri)) for slug in object_.schemes
             )
+        if isinstance(object_, Entity):
+            # Inheritance, stated with the reused SKOS property rather than a sem: term
+            # (spec 3.3): every entity is a skos:Concept, and a specialization of one is
+            # narrower than it. Only this direction is emitted — skos:narrower would state
+            # the same fact a second time, in the other entity's file (spec 5.5 rule 4).
+            statements.update(
+                (SKOS.broader, self._reference(object_, ref, "broader")) for ref in object_.broader
+            )
         if isinstance(object_, Attribute):
             statements.add((SEM_ATTRIBUTE_OF, self._reference(object_, object_.entity, "entity")))
         if isinstance(object_, Relationship):

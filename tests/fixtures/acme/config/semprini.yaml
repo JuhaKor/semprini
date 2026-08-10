@@ -6,14 +6,32 @@ semprini:
   instance_id: acme
   default_language: en
 
-# One workbook is one taxonomy is one source (spec 5.3). The source's `name` is what
-# every object in that workbook carries as sem:sourceRef and what the ID map is keyed by,
-# so it says which file an object came from — and it deliberately does *not* name the
-# adapter, which would freeze "read by excel-taxonomy" into identity and re-mint every
-# IRI the day the same taxonomy arrives in another format.
 sources:
+  # One Ellie *instance* is one source (spec 5.3). Entity UUIDs are unique across an
+  # instance rather than within a model, which is what lets the same entity appear in two
+  # domain models and resolve to one node — so every model of one instance is listed
+  # under one source name, and a second Ellie instance would be a second source.
+  - adapter: ellie
+    name: ellie-main
+    config:
+      base_url: https://acme.ellie.ai/api/v1
+      # The allowlist: nothing is read that is not listed here, and a listed model that
+      # cannot be read fails the run rather than being skipped.
+      models:
+        - id: 70337
+          path: sources/ellie/storefront.json
+          scheme_slug: storefront
+
+  # One workbook is one taxonomy is one source (spec 5.3). The source's `name` is what
+  # every object in that workbook carries as sem:sourceRef and what the ID map is keyed by,
+  # so it says which file an object came from — and it deliberately does *not* name the
+  # adapter, which would freeze "read by excel-taxonomy" into identity and re-mint every
+  # IRI the day the same taxonomy arrives in another format.
   - adapter: excel-taxonomy
     name: product-category
     config:
       path: sources/taxonomies/product-category.xlsx
       scheme_slug: product-category
+      # The workbook's `Reference Entity UUID` is a key in the modelling tool, so the ID
+      # map has to be asked under *that* source's name (spec 5.4).
+      enumerates_source: ellie-main

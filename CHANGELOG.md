@@ -110,6 +110,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   mapped to exit `3` in the one place the CLI maps errors to codes. That is the code that
   tells a scheduled compile to retry rather than open an issue, and it now means the same
   thing whichever subcommand produced it.
+- **The bundled Excel taxonomy adapter** (`excel-taxonomy`): one workbook is one taxonomy
+  is one configured source, read from the ragged `L1..Ln` sheet the pilot's workbooks use.
+  Identity comes from the `Concept URI` column and never from the labels, so a taxonomy
+  can be re-worded without minting a single new IRI. Every problem in a workbook is
+  reported at once — a taxonomy is edited in bulk, so its mistakes arrive in bulk.
+- **The bundled Ellie adapter** (`ellie`): reads domain models exported from Ellie as
+  JSON and committed under `sources/ellie/`, behind an allowlist keyed by Ellie's model
+  id. Nothing outside the allowlist is read, and an export whose `modelId` disagrees with
+  the id it is listed under is refused — a file copied over the wrong path would otherwise
+  replace a scheme's entire contents and read as ordinary change. Both export shapes are
+  accepted, with and without the outer `model` wrapper. **One Ellie instance is one
+  source**, so an entity appearing in two domain models resolves to one node carrying two
+  `skos:inScheme` triples; two Ellie instances are two sources, since their UUID spaces
+  are unrelated. Entities, attributes and relationships become `sem:Entity`,
+  `sem:Attribute` + `sem:attributeOf`, and reified `sem:Relationship` nodes, and each
+  model becomes a glossary scheme. **Supertype relationships become `skos:broader`
+  between the two entities** rather than reified relationships — Ellie gives those rows
+  no name or verb, so reifying one would mean inventing a label no modeller wrote.
+  Entity synonyms become `skos:altLabel` and the examples field one `skos:example`.
+  `progressStatus`, source-system and ownership fields, relationship cardinality and
+  every attribute metadata field but `Description` are deliberately **not** carried yet:
+  each needs a metamodel term that does not exist, and adding one is a version bump.
+- **v1 makes no network call.** Both bundled adapters read files that are committed with
+  the instance and reviewed with it, so a compile needs no credential and no outbound
+  access, and an adapter's configured path may not lead outside the repository. A direct
+  Ellie API mode is a later mode of the same adapter, and will re-use every IRI, since
+  identity is keyed by the Ellie UUID either way.
+- A taxonomy workbook that names a reference entity now states which configured source
+  issued that key, as `enumerates_source`. It is required exactly when the workbook's
+  `Reference Entity UUID` cell is filled: the ID map is keyed by `(source name, source
+  key)`, so `sem:enumerates` could not previously resolve to an entity another source
+  defined.
 
 ### Ontology 0.1.0
 

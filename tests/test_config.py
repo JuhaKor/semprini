@@ -60,12 +60,14 @@ def test_the_fixture_instance_loads(instance: Path) -> None:
     assert loaded.base_iri == "https://semantics.example.com/"
     assert loaded.instance_id == "acme"
     assert loaded.default_language == "en"
-    assert [source.name for source in loaded.sources] == ["product-category"]
-    assert loaded.sources[0].adapter == "excel-taxonomy"
-    # One workbook is one source, so the settings are flat: a path and the scheme slug
-    # (spec 5.3).
-    assert loaded.sources[0].settings["scheme_slug"] == "product-category"
-    assert loaded.sources[0].settings["path"] == "sources/taxonomies/product-category.xlsx"
+    assert [source.name for source in loaded.sources] == ["ellie-main", "product-category"]
+    assert [source.adapter for source in loaded.sources] == ["ellie", "excel-taxonomy"]
+    # One Ellie instance is one source, holding its allowlist of models; one workbook is
+    # one source, so its settings are flat — a path and the scheme slug (spec 5.3).
+    ellie, taxonomy = loaded.sources
+    assert [model["id"] for model in ellie.settings["models"]] == [70337]
+    assert taxonomy.settings["scheme_slug"] == "product-category"
+    assert taxonomy.settings["path"] == "sources/taxonomies/product-category.xlsx"
 
 
 def test_the_spec_example_loads() -> None:
@@ -614,7 +616,7 @@ def test_an_unknown_source_is_a_configuration_error(instance: Path) -> None:
 
     assert "product-categories" in str(raised.value)
     # And what *is* configured, or a typo and a source nobody added look identical.
-    assert "configured: product-category" in str(raised.value)
+    assert "configured: ellie-main, product-category" in str(raised.value)
 
 
 # -------------------------------------------------------------------------- through CLI

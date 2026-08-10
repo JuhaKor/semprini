@@ -25,7 +25,7 @@ import os
 import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from typing import Any
 
@@ -40,6 +40,7 @@ __all__ = [
     "ConfigError",
     "InstanceConfig",
     "SourceConfig",
+    "escapes_the_instance",
     "is_slug",
     "load",
     "loads",
@@ -95,6 +96,29 @@ def is_slug(value: str) -> bool:
     instance id, a source name and a scheme slug cannot mean three different things.
     """
     return _SLUG.fullmatch(value) is not None
+
+
+def escapes_the_instance(raw: str) -> bool:
+    """Whether a configured path could reach outside the instance repository.
+
+    Public for the same reason :func:`is_slug` is: several adapters configure a file to
+    read (spec 5.3), and every one of them has to refuse a path leading out of the
+    repository. Source files are committed with the instance and reviewed with it
+    (spec 4.2), so a path pointing elsewhere reads content nobody reviewed.
+
+    Judged under **both** path flavours, not the running platform's. ``config/semprini.yaml``
+    is committed and travels: a path written on one operating system is validated on
+    whatever CI runs, and ``/etc/passwd`` is not absolute to :class:`pathlib.PureWindowsPath`
+    while ``C:\\keys`` is not absolute to :class:`pathlib.PurePosixPath`. Judging only the
+    local flavour makes the guard depend on where it happens to run.
+    """
+    for flavour in (PurePosixPath, PureWindowsPath):
+        candidate = flavour(raw)
+        if candidate.is_absolute() or candidate.root or candidate.drive:
+            return True
+        if ".." in candidate.parts:
+            return True
+    return False
 
 
 class ConfigError(IssueError):

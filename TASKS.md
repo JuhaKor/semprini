@@ -1071,18 +1071,140 @@ done and green.
     `Reference Entity UUID` points at, so the fixture can gain a populated one once that
     adapter lands.
 
-- [ ] **D3 · Ellie adapter**
+- [x] **D3 · Ellie adapter**
   **Spec:** §5.3 (Ellie adapter)
-  **Deliver:** `src/semprini/adapters/ellie.py` against the Ellie REST API, with recorded
-  responses for tests. Reuse the field semantics documented in
+  **Deliver:** `src/semprini/adapters/ellie.py` reading **exported** Ellie models, with a
+  synthetic export in the fixture instance. Reuse the field semantics documented in
   `background-material/kg-converter-old/README.md` §1.1 — that project read the same
   data and its field tables are trustworthy, though nothing about its RDF mapping is.
-  **Verify:** against mocked responses — an allowlisted model that is missing or
-  inaccessible fails the run; an entity in two models yields one node with two
-  `skos:inScheme` triples; two UUIDs sharing a name yield two nodes plus a report
-  warning; an empty description emits no `skos:definition`.
+  **Verify:** an allowlisted model that is missing or unreadable fails the run; an entity
+  in two models yields one node with two `skos:inScheme` triples; two UUIDs sharing a name
+  yield two nodes plus a report warning; an empty description emits no `skos:definition`.
   **Depends:** D1
-  **Gated by:** §11 #7 (API pagination and rate-limit specifics)
+  **~~Gated by:~~ §11 #7 is resolved by the scope change below** — v1 makes no API call,
+  so pagination and rate limits belong to the later API mode.
+  **Done.** 612 tests green (65 of them D3's); ruff, ruff format and mypy (strict) clean;
+  the wheel installs into a bare venv with pip and `semprini adapters` lists both `ellie`
+  and `excel-taxonomy` from it. Forty-four mutations were checked against the suite — the
+  model never unwrapped, an unrecognized document read as a model, `modelId` unchecked or
+  compared raw rather than as text, inheritance detected from one end only, inheritance
+  also reified, an entity its own supertype, only the first supertype kept, `broader` not
+  a union field, self-broader tolerated, `skos:narrower` emitted instead, `broader` not
+  emitted at all, the label preferred over Ellie's `name`, any direction taken as the
+  reading direction, the preferred label repeated as an alternative, an unlabelled
+  relationship skipped, a missing end tolerated, synonyms unsplit, examples split, an
+  entity or attribute missing an id or name skipped, attributes not read, a nameless model
+  tolerated, the scheme keyed by its slug, a malformed array read as empty, a non-object
+  member skipped, nested metadata never read, the model not normalized, a merge conflict
+  escaping as itself, a missing export reported as a compile error, unreadable JSON
+  reported as unreachable, only the first problem reported, `fetch` not validating its own
+  settings, `base_url` optional or unchecked, duplicate model ids or scheme slugs
+  tolerated, a path outside the instance tolerated, an unknown model setting tolerated,
+  `token_env` accepted silently, the summary omitting the model name, and the three
+  `enumerates_source` mutations below — and each fails it. **Three survived the first
+  run**, and all three were gaps in the tests rather than in the code: the
+  reading-direction test happened to list the target-direction label first, so "take
+  whichever label comes first" passed it; nothing covered a malformed *member* of a
+  well-formed array; and the `base_url` test asserted only the issue's location, which
+  both the missing and the malformed branch produce.
+
+  **The scope changed before the work started, and that is the headline.** §5.3 specified
+  the Ellie REST API; the requirement is to ingest a JSON file already exported from
+  `GET /api/v1/models/{id}`, with a direct API call considered later. The spec was
+  rewritten to match, and the consequences are worth knowing before reading the code:
+  - **The API mode is a later mode of *this* adapter, not a second adapter.** Identity is
+    keyed by `(source name, Ellie UUID)`, so a source that switched adapters would re-mint
+    every IRI it owns. `base_url` is therefore configured in file mode too — it records
+    which Ellie instance the UUIDs belong to, appears in the run report, and is what the
+    API mode will read. A `token_env` is **refused** today with a message saying the API
+    mode has not shipped, rather than accepted and ignored.
+  - **v1 makes no network call at all**, since both bundled adapters now read committed
+    files. `requests` stays a declared dependency for the API mode and is currently unused.
+  - **§11 #7 stops gating anything.** Pagination and rate limits are settled against
+    Ellie's API documentation when that mode is built.
+
+  **One Ellie instance is one source, which is the opposite of D2's arrangement and for
+  the opposite reason.** Ellie UUIDs are unique across an *instance*, not within a model —
+  that is exactly what lets one entity appear in two domain models and resolve to one node
+  — so every model of an instance is listed under one source name, and two Ellie instances
+  are two sources. A workbook's keys are unique only within the file, hence one workbook,
+  one source. The allowlist is the `models:` list, each entry carrying `id`, `path` and
+  `scheme_slug`; an export whose `modelId` disagrees with the id it is listed under is
+  refused, because a file copied over the wrong path otherwise replaces a scheme's whole
+  contents and reads as ordinary change.
+
+  **Decisions taken** (all implemented and now in the spec):
+  - **Inheritance is `skos:broader`, and emits no relationship node.** Ellie draws a
+    supertype as an ordinary relationship whose ends are typed `superType`/`subType` — and
+    gives it no name and no verb labels, so reifying it would mean inventing a
+    `skos:prefLabel` no modeller wrote. `Entity.broader` is a **tuple**, not a scalar: the
+    source can express multiple inheritance, and two models that differ only in whether
+    they draw the supertype must union rather than conflict. §3.3 now says `skos:broader`
+    has two uses, and that a `sem:` term for inheritance would say no more while costing a
+    metamodel version bump.
+  - **A relationship's label is Ellie's `name` when a modeller filled one in**, and
+    otherwise the verb whose direction reads source → target; every other verb becomes a
+    `skos:altLabel`. In the fixture's export `name` is null on all thirteen relationships,
+    so the fallback is the live path — but a name appearing later re-labels the node
+    without re-minting it, which is why it is preferred.
+  - **The scheme's source key is Ellie's model id, not the slug.** The slug is this
+    instance's name for the scheme and the id is the source's, and the ID map is keyed by
+    the source's (§5.4). Renaming a model in Ellie then costs no identity.
+  - **Both file shapes are accepted** — with and without the outer `model` wrapper —
+    recognized by *structure* rather than by key presence, and a document that is neither
+    is refused by name. A lenient reader here does not fail, it produces an empty model,
+    which compiles to an empty scheme and deprecates everything that was in it.
+  - **What is deliberately not carried**: `progressStatus`, entity `type`, `Source
+    systems`, `Administrated by`, relationship cardinality, and every attribute metadata
+    field but `Description`. Each needs a term the metamodel does not have, and minting one
+    per Ellie field is what the removal of `sem:ellieId` ruled out (§3.3). The spec records
+    them as **deferred, not ignored**, and names `Data type`/`Semantic link` as what
+    `sem:represents` is reserved for. A test asserts none of those values reaches a
+    statement, so a future task adding them changes it on purpose.
+  - **Synonyms are comma-split into `skos:altLabel`; the examples field is one
+    `skos:example`, uncut** — it is prose a modeller wrote, and splitting it would invent
+    several statements where the source made one. Same rule D2 applied to workbook cells.
+
+  **A defect in D2's `sem:enumerates` was found by populating the fixture, and it made the
+  feature unusable rather than merely wrong.** The Excel adapter built the reference as
+  `SourceRef(self.source_name, uuid)` — the *taxonomy's* own source name — while the
+  entity's ID-map row is keyed under the modelling tool's. The lookup could therefore never
+  hit, and the only visible symptom was the build error "enumerates …, which no run has
+  compiled", naming a source ref nobody had written. Nothing caught it because no fixture
+  had ever filled the cell in. The workbook's source now states `enumerates_source` in its
+  configuration, required exactly when the cell is filled: the workbook states a UUID, and
+  which configured source issued that UUID is not a fact about the workbook. §5.3 says so.
+
+  **The fixture instance now has two sources whose objects meet.** `Storefront.json` from
+  the old prototype's tests is synthetic demo data cleared for use, and is committed as
+  `tests/fixtures/acme/sources/ellie/storefront.json` (normalized to LF, otherwise
+  verbatim); the taxonomy's `Reference Entity UUID` names its `Product category` entity, so
+  `sem:enumerates` resolves across sources for the first time. That deliberately moved the
+  committed golden files. What the fixture now exercises that nothing did before: a
+  cross-source reference through the ID map, `skos:broader` between entities, a reified
+  relationship with its `sem:relatesTo` shortcut, and C2's same-name warning — the export
+  has a `Product ID` attribute on both `Product` and `Order line`, which is D3's own verify
+  line about two UUIDs sharing a name.
+
+  **For the tasks that come next:**
+  - **E1/E2 inherit an unexercised path**: nothing yet compiles a model whose entity is in
+    two schemes across two *files*, since the fixture lists one model. The unit tests cover
+    the merge; the partitioning rule (written once, in the lexicographically first scheme)
+    is covered by C1's own tests.
+  - **`config.escapes_the_instance()` is now public**, moved out of the Excel adapter: two
+    adapters configure a file to read, and both must refuse a path leading out of the
+    repository. A third should import it rather than re-derive it.
+  - **The tests that need an uninstalled adapter now name `no-such-adapter`**, not `ellie`.
+    They named `ellie` because it was not installed, and D2 had already had to move them
+    off `excel-taxonomy` for the same reason. A test whose premise quietly becomes false
+    does not fail — it stops testing what it says it does.
+  - **D2's language question is still open and still unreachable.** `Text` makes "same
+    characters, different language" a merge conflict; Ellie states no language, so its
+    labels arrive untagged and take the instance's `default_language` at build time. The
+    conflict needs two sources describing *one object*, which nothing produces: the
+    taxonomy and the models share no source key. Left raising, deliberately.
+  - **G4's adapter guide** now has two worked examples of different shapes — one file, one
+    file per allowlisted item — plus the dummy adapter D1 wrote for the purpose.
 
 ---
 
@@ -1248,10 +1370,10 @@ be deferred without stalling the build.
 | ~~1~~ | ~~w3id namespace registration~~ — **resolved:** PR #6488 merged, `https://w3id.org/semprini/ontology` live and verified | ~~A2~~; nothing now. G5 must still keep every released `/ontology/X.Y.Z/` resolving |
 | 2 | Confirm Apache-2.0 / CC BY 4.0 | A1 (the licence files are written there) |
 | 3 | Distribution channel | G5 |
-| 4 | Which adapters ship bundled | D3, G4 |
+| 4 | Which adapters ship bundled | ~~D3~~ (Ellie and Excel are both bundled and registered); G4 |
 | ~~5~~ | ~~Default language tag(s)~~ — **resolved in B3:** one per instance, applied only where a label carries no tag of its own | ~~B3~~; C1 applies it |
 | 6 | When missing-definition becomes blocking | per instance; H1 |
-| 7 | Ellie pagination and rate limits | D3 |
+| ~~7~~ | ~~Ellie pagination and rate limits~~ — **resolved by scope:** the adapter reads exported files, so v1 makes no API call | ~~D3~~; whoever builds the API mode |
 | 8 | Whether `init` creates the remote repository | G1 |
 
 ## Sequencing notes
@@ -1269,10 +1391,14 @@ be deferred without stalling the build.
   from a workbook to Turtle and recompiles to the same bytes, minting nothing. Both
   switches D1 left off are on — `excel-taxonomy` is a registered entry point, so the
   unknown-adapter check judges real names, and `tests/fixtures/acme/` is a complete
-  instance. **E1 next** by the dependency order (it needs D2), though **E2** is the
-  larger prize: `tools/build_fixture_instance.py` is a working sketch of `semprini run`
-  and shows the remaining work is orchestration, stale-file deletion and the partial-run
-  question, not new machinery.
+  instance.
+- ~~**D3 next.**~~ Done, and **Phase D is complete**: both bundled adapters exist, the
+  fixture instance compiles two sources whose objects reference each other, and v1 needs
+  no network access or credential to compile anything. §11 #7 is resolved by scope and
+  #4 is settled for the bundled pair. **E1 next** by the dependency order (it needs D2),
+  though **E2** is the larger prize: `tools/build_fixture_instance.py` is a working
+  sketch of `semprini run` and shows the remaining work is orchestration, stale-file
+  deletion and the partial-run question, not new machinery.
 - ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
   once an instance holds generated files, every serializer change becomes a migration
   (§7). It now is one — a change to `serialize.py`'s output is a major bump.

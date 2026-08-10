@@ -1,0 +1,996 @@
+{
+"model": 
+{
+  "modelId": 70337,
+  "name": "Storefront Orders domain",
+  "description": "",
+  "level": "conceptual",
+  "folderId": 11152,
+  "dbEngine": null,
+  "progressStatus": "work-in-progress",
+  "createdAt": "2026-03-01T07:55:32.299Z",
+  "updatedAt": "2026-07-29T07:51:30.139Z",
+  "entities": [
+    {
+      "id": "07666880-aa23-11ee-94e1-0242ac1e0003",
+      "name": "Delivery",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2024-01-03T10:29:51.955Z",
+      "updatedAt": "2026-05-09T15:59:28.893Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "A delivery is an event where goods are delivered from us to our customers.",
+        "Examples": "",
+        "Synonyms": "Shipment, Dispatch, Consignment",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": [
+        {
+          "id": "5bd5a6f4-4bbd-11f1-b821-0242ac120002",
+          "name": "Delivery date",
+          "order": 1,
+          "createdAt": "2026-05-09T15:40:08.234Z",
+          "metadata": {
+            "PK": "false",
+            "FK": "false",
+            "Data type": "",
+            "Not null": "false",
+            "Unique": "false",
+            "Partitioned by": "false",
+            "Default": "",
+            "Description": "The date on which the goods were delivered (or are scheduled to be delivered) to the customer.",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        },
+        {
+          "id": "5bd5fc58-4bbd-11f1-b821-0242ac120002",
+          "name": "Delivery address",
+          "order": 2,
+          "createdAt": "2026-05-09T15:40:08.234Z",
+          "metadata": {
+            "PK": "false",
+            "FK": "false",
+            "Data type": "",
+            "Not null": "false",
+            "Unique": "false",
+            "Partitioned by": "false",
+            "Default": "",
+            "Description": "The physical address to which the goods are shipped.",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        }
+      ]
+    },
+    {
+      "id": "33ef202c-aa23-11ee-9167-0242ac1e0003",
+      "name": "Warehouse",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2024-01-03T10:31:06.683Z",
+      "updatedAt": "2026-05-09T15:41:13.007Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "A warehouse refers to a storage building in which our products are stored.",
+        "Examples": "",
+        "Synonyms": "Storage facility, Distribution center",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": []
+    },
+    {
+      "id": "8f4b1bf5-8ec7-465b-8e0f-c221d260a34c",
+      "name": "Product category",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2026-03-01T08:04:38.302Z",
+      "updatedAt": "2026-05-09T15:40:48.934Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "A product category is a grouping of related products used to organize the product catalog and help customers navigate the storefront.",
+        "Examples": "",
+        "Synonyms": "Category, Product group, Product class",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": []
+    },
+    {
+      "id": "e1881e8c-aa23-11ee-9f34-0242ac1e0003",
+      "name": "Product",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2024-01-03T10:35:57.864Z",
+      "updatedAt": "2026-05-09T15:39:25.900Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "A product is anything our organization sells: either physical products or services such as consulting.",
+        "Examples": "",
+        "Synonyms": "Item, Article, SKU, Offering",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": [
+        {
+          "id": "2e40c94e-4bbd-11f1-9ac3-0242ac120002",
+          "name": "Product ID",
+          "order": 1,
+          "createdAt": "2026-05-09T15:38:51.758Z",
+          "metadata": {
+            "PK": "",
+            "FK": "",
+            "Data type": "",
+            "Not null": "",
+            "Unique": "",
+            "Partitioned by": "",
+            "Default": "",
+            "Description": "Unique identifier of the product within our catalog.",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        },
+        {
+          "id": "381ead64-4bbd-11f1-949d-0242ac120002",
+          "name": "Product name",
+          "order": 2,
+          "createdAt": "2026-05-09T15:39:08.318Z",
+          "metadata": {
+            "PK": "",
+            "FK": "",
+            "Data type": "",
+            "Not null": "",
+            "Unique": "",
+            "Partitioned by": "",
+            "Default": "",
+            "Description": "The display name of the product as shown to customers in the storefront.",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        },
+        {
+          "id": "429a8e66-4bbd-11f1-8891-0242ac120002",
+          "name": "Unit price",
+          "order": 3,
+          "createdAt": "2026-05-09T15:39:25.900Z",
+          "metadata": {
+            "PK": "",
+            "FK": "",
+            "Data type": "",
+            "Not null": "",
+            "Unique": "",
+            "Partitioned by": "",
+            "Default": "",
+            "Description": "The standard list price for one unit of the product, before any discounts or taxes.",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        }
+      ]
+    },
+    {
+      "id": "50b852fc-1158-45f1-8955-3d71ab5ada91",
+      "name": "Return",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2026-03-01T07:56:56.794Z",
+      "updatedAt": "2026-05-09T15:40:30.420Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "A return is an event where a customer sends previously delivered goods back to us, typically for refund, replacement, or exchange.",
+        "Examples": "",
+        "Synonyms": "RMA, Product return, Refund request",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": []
+    },
+    {
+      "id": "a280ce96-ba5c-49d7-8e8f-0fb7d6a897aa",
+      "name": "Payment",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2026-03-01T08:04:19.134Z",
+      "updatedAt": "2026-05-09T15:41:40.430Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "A payment is a transfer of money from a customer to our organization in settlement of an invoice.",
+        "Examples": "",
+        "Synonyms": "Settlement, Payment transaction",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": []
+    },
+    {
+      "id": "bc2c3f24-f991-43f0-8283-5d7753485213",
+      "name": "Order line",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2026-03-01T07:56:41.848Z",
+      "updatedAt": "2026-05-09T15:42:41.817Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "An order line represents a single product entry within an order, capturing which product is being purchased, how many units, and at what price.",
+        "Examples": "",
+        "Synonyms": "Line item, Order item, Order detail",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": [
+        {
+          "id": "b75fcd2e-4bbd-11f1-9a8b-0242ac120002",
+          "name": "Order line ID",
+          "order": 1,
+          "createdAt": "2026-05-09T15:42:41.817Z",
+          "metadata": {
+            "PK": "",
+            "FK": "",
+            "Data type": "",
+            "Not null": "",
+            "Unique": "",
+            "Partitioned by": "",
+            "Default": "",
+            "Description": "",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        },
+        {
+          "id": "b760209e-4bbd-11f1-9a8b-0242ac120002",
+          "name": "Quantity",
+          "order": 2,
+          "createdAt": "2026-05-09T15:42:41.817Z",
+          "metadata": {
+            "PK": "",
+            "FK": "",
+            "Data type": "",
+            "Not null": "",
+            "Unique": "",
+            "Partitioned by": "",
+            "Default": "",
+            "Description": "",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        },
+        {
+          "id": "b7602300-4bbd-11f1-9a8b-0242ac120002",
+          "name": "Line price",
+          "order": 3,
+          "createdAt": "2026-05-09T15:42:41.817Z",
+          "metadata": {
+            "PK": "",
+            "FK": "",
+            "Data type": "",
+            "Not null": "",
+            "Unique": "",
+            "Partitioned by": "",
+            "Default": "",
+            "Description": "",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        },
+        {
+          "id": "b7602404-4bbd-11f1-9a8b-0242ac120002",
+          "name": "Product ID",
+          "order": 4,
+          "createdAt": "2026-05-09T15:42:41.817Z",
+          "metadata": {
+            "PK": "",
+            "FK": "",
+            "Data type": "",
+            "Not null": "",
+            "Unique": "",
+            "Partitioned by": "",
+            "Default": "",
+            "Description": "",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        }
+      ]
+    },
+    {
+      "id": "41dc893a-afa1-11ee-8f04-0242ac1e0003",
+      "name": "Order",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2024-01-10T10:16:02.282Z",
+      "updatedAt": "2026-05-09T15:43:59.281Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "An order is a customer's request to purchase one or more products from our storefront. Each order consists of one or more order lines and progresses through stages such as placed, paid, fulfilled, and (optionally) returned.",
+        "Examples": "",
+        "Synonyms": "Sales order",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": []
+    },
+    {
+      "id": "b154b33c-afa8-48e0-8640-9310e5e46e2b",
+      "name": "Invoice",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2026-01-14T10:46:08.397Z",
+      "updatedAt": "2026-05-09T15:44:21.307Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "An invoice is a formal request for payment issued to a customer for one or more orders, listing the goods or services provided and the amount owed.",
+        "Examples": "",
+        "Synonyms": "Bill, Statement, Sales invoice",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": []
+    },
+    {
+      "id": "612c4957-40ba-4ec7-89fe-58fc7bfd0d89",
+      "name": "Discount code",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2026-03-01T07:56:58.958Z",
+      "updatedAt": "2026-05-09T15:44:42.604Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "A discount code is a code that customers can apply to an order to receive a price reduction, typically used for promotions or loyalty rewards.",
+        "Examples": "",
+        "Synonyms": "Promo code, Coupon code",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": []
+    },
+    {
+      "id": "350b0f84-aa23-11ee-8161-0242ac1e0003",
+      "name": "Customer",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "approved",
+      "createdAt": "2024-01-03T10:31:08.446Z",
+      "updatedAt": "2026-07-29T07:49:20.694Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "A customer is someone who buys our products.",
+        "Examples": "",
+        "Synonyms": "Client",
+        "Source systems": "CRM",
+        "Administrated by": ""
+      },
+      "attributes": [
+        {
+          "id": "63d09d4d-e15d-4c2b-821c-ca5bc0967759",
+          "name": "Customer ID",
+          "order": 1,
+          "createdAt": "2024-04-04T13:09:48.192Z",
+          "metadata": {
+            "PK": "false",
+            "FK": "false",
+            "Data type": "",
+            "Not null": "false",
+            "Unique": "false",
+            "Partitioned by": "false",
+            "Default": "",
+            "Description": "Customer ID",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        },
+        {
+          "id": "39910458-36e2-457c-8095-da9455a7c21e",
+          "name": "Address",
+          "order": 2,
+          "createdAt": "2024-04-04T13:09:49.357Z",
+          "metadata": {
+            "PK": "false",
+            "FK": "false",
+            "Data type": "",
+            "Not null": "false",
+            "Unique": "false",
+            "Partitioned by": "false",
+            "Default": "",
+            "Description": "Official address of the customer's head office",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        },
+        {
+          "id": "8b27eb4e-94fd-4cfe-8136-c708d5f40c2d",
+          "name": "Customer Type",
+          "order": 3,
+          "createdAt": "2024-04-04T13:09:56.594Z",
+          "metadata": {
+            "PK": "false",
+            "FK": "false",
+            "Data type": "",
+            "Not null": "false",
+            "Unique": "false",
+            "Partitioned by": "false",
+            "Default": "",
+            "Description": "Type",
+            "Source system": "",
+            "Source table": "",
+            "Source column": "",
+            "Constraints": "",
+            "Notes": "",
+            "Semantic link": ""
+          }
+        }
+      ]
+    },
+    {
+      "id": "7e313c88-eb86-42e4-840b-138835c95e53",
+      "name": "Trial customer",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2026-07-29T07:49:05.860Z",
+      "updatedAt": "2026-07-29T07:50:00.594Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "A trial customer is someone who has received some of our products or services for free, but has not yet committed to actually paying anything. We still consider them customers.",
+        "Examples": "",
+        "Synonyms": "",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": []
+    },
+    {
+      "id": "36627181-eb35-495a-83ca-38b0d1cdbd37",
+      "name": "Active customer",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2026-01-14T10:34:54.396Z",
+      "updatedAt": "2026-07-29T07:50:42.154Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "An active customer is someone who has purchased a product or service (i.e. made an order) during the last 90 days.",
+        "Examples": "",
+        "Synonyms": "",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": []
+    },
+    {
+      "id": "2de177b5-eff9-4455-8c80-87094aabe312",
+      "name": "Passive customer",
+      "level": "conceptual",
+      "type": "Default",
+      "progressStatus": "work-in-progress",
+      "createdAt": "2026-07-29T07:50:56.277Z",
+      "updatedAt": "2026-07-29T07:51:30.139Z",
+      "folderId": 11152,
+      "metadata": {
+        "Description": "A passive customer is someone who has at some point purchased products or services from us, but hasn't made an order in the last 90 days.",
+        "Examples": "",
+        "Synonyms": "",
+        "Source systems": "",
+        "Administrated by": ""
+      },
+      "attributes": []
+    }
+  ],
+  "extras": [
+    {
+      "id": "715d388a-81de-449b-8f6b-aa9afdba60f3",
+      "value": "Orders",
+      "type": "entity-group",
+      "textSize": "medium",
+      "colorHex": "#5BBFF9"
+    },
+    {
+      "id": "3e382d06-fcc3-4740-8fdd-55d239bc928b",
+      "value": "Customers",
+      "type": "entity-group",
+      "textSize": "medium",
+      "colorHex": "#4ECD89"
+    },
+    {
+      "id": "8a39e280-07d5-4bf8-8ed2-478d83f7fe4e",
+      "value": "Product Catalog",
+      "type": "entity-group",
+      "textSize": "medium",
+      "colorHex": "#FF8084"
+    },
+    {
+      "id": "b0982d2d-4529-4812-8757-f8458fc57fec",
+      "value": "Fulfillment",
+      "type": "entity-group",
+      "textSize": "medium",
+      "colorHex": "#FFB95D"
+    }
+  ],
+  "relationships": [
+    {
+      "id": "0dd6485e-fff0-493a-8ce2-9d71c9fef27b",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "41dc893a-afa1-11ee-8f04-0242ac1e0003",
+        "name": "Order",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "bc2c3f24-f991-43f0-8283-5d7753485213",
+        "name": "Order line",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": [
+        {
+          "name": "has one or more",
+          "direction": "target"
+        },
+        {
+          "name": "is part of",
+          "direction": "source"
+        }
+      ]
+    },
+    {
+      "id": "e6469789-0ba2-4f60-816c-483640d36a16",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "e1881e8c-aa23-11ee-9f34-0242ac1e0003",
+        "name": "Product",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "bc2c3f24-f991-43f0-8283-5d7753485213",
+        "name": "Order line",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": [
+        {
+          "name": "included in",
+          "direction": "target"
+        },
+        {
+          "name": "contains",
+          "direction": "source"
+        }
+      ]
+    },
+    {
+      "id": "b74699c5-60b6-40e5-877e-5a886a231942",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "612c4957-40ba-4ec7-89fe-58fc7bfd0d89",
+        "name": "Discount code",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "41dc893a-afa1-11ee-8f04-0242ac1e0003",
+        "name": "Order",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": [
+        {
+          "name": "can apply to",
+          "direction": "target"
+        },
+        {
+          "name": "can have",
+          "direction": "source"
+        }
+      ]
+    },
+    {
+      "id": "5b7f2c57-b07a-46a5-8ae3-f3fb72665859",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "350b0f84-aa23-11ee-8161-0242ac1e0003",
+        "name": "Customer",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "41dc893a-afa1-11ee-8f04-0242ac1e0003",
+        "name": "Order",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": [
+        {
+          "name": "makes",
+          "direction": "target"
+        },
+        {
+          "name": "is made by",
+          "direction": "source"
+        }
+      ]
+    },
+    {
+      "id": "1b8936fd-237e-4963-88b5-ee430619ca21",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "8f4b1bf5-8ec7-465b-8e0f-c221d260a34c",
+        "name": "Product category",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "e1881e8c-aa23-11ee-9f34-0242ac1e0003",
+        "name": "Product",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": [
+        {
+          "name": "has",
+          "direction": "target"
+        },
+        {
+          "name": "belongs to",
+          "direction": "source"
+        }
+      ]
+    },
+    {
+      "id": "11cd945a-075c-4e31-8a3f-120d0384ccb6",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "41dc893a-afa1-11ee-8f04-0242ac1e0003",
+        "name": "Order",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "50b852fc-1158-45f1-8955-3d71ab5ada91",
+        "name": "Return",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": [
+        {
+          "name": "can be returned",
+          "direction": "target"
+        },
+        {
+          "name": "returns",
+          "direction": "source"
+        }
+      ]
+    },
+    {
+      "id": "4acc2272-c7c4-4923-8404-f2beb34253ea",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "33ef202c-aa23-11ee-9167-0242ac1e0003",
+        "name": "Warehouse",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "07666880-aa23-11ee-94e1-0242ac1e0003",
+        "name": "Delivery",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": [
+        {
+          "name": "is source of",
+          "direction": "target"
+        },
+        {
+          "name": "made from",
+          "direction": "source"
+        }
+      ]
+    },
+    {
+      "id": "6697517b-5ada-4a4d-86b4-613c9e0e2944",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "41dc893a-afa1-11ee-8f04-0242ac1e0003",
+        "name": "Order",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "07666880-aa23-11ee-94e1-0242ac1e0003",
+        "name": "Delivery",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": [
+        {
+          "name": "delivered as",
+          "direction": "target"
+        },
+        {
+          "name": "fulfills",
+          "direction": "source"
+        }
+      ]
+    },
+    {
+      "id": "b9af2b2d-c94f-44b0-8892-14cabec96808",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "41dc893a-afa1-11ee-8f04-0242ac1e0003",
+        "name": "Order",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "b154b33c-afa8-48e0-8640-9310e5e46e2b",
+        "name": "Invoice",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": [
+        {
+          "name": "invoiced with",
+          "direction": "target"
+        },
+        {
+          "name": "invoices",
+          "direction": "source"
+        }
+      ]
+    },
+    {
+      "id": "210930cd-b4a6-48eb-8a22-7f3bb0f78eea",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "b154b33c-afa8-48e0-8640-9310e5e46e2b",
+        "name": "Invoice",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "a280ce96-ba5c-49d7-8e8f-0fb7d6a897aa",
+        "name": "Payment",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "one",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": [
+        {
+          "name": "paid with",
+          "direction": "target"
+        },
+        {
+          "name": "pays for",
+          "direction": "source"
+        }
+      ]
+    },
+    {
+      "id": "cbd33b09-a6f8-4e5e-80b8-d0aef0d27c2c",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "350b0f84-aa23-11ee-8161-0242ac1e0003",
+        "name": "Customer",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "superType",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "7e313c88-eb86-42e4-840b-138835c95e53",
+        "name": "Trial customer",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "subType",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": []
+    },
+    {
+      "id": "951d6d3f-0d69-4ded-8a7b-922785dad0bd",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "350b0f84-aa23-11ee-8161-0242ac1e0003",
+        "name": "Customer",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "superType",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "36627181-eb35-495a-83ca-38b0d1cdbd37",
+        "name": "Active customer",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "subType",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": []
+    },
+    {
+      "id": "e64711ca-7656-42c8-88e6-ab47e019e89f",
+      "name": null,
+      "description": null,
+      "level": "conceptual",
+      "folderId": null,
+      "sourceEntity": {
+        "id": "350b0f84-aa23-11ee-8161-0242ac1e0003",
+        "name": "Customer",
+        "level": "conceptual",
+        "folderId": 11152,
+        "startType": "superType",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "targetEntity": {
+        "id": "2de177b5-eff9-4455-8c80-87094aabe312",
+        "name": "Passive customer",
+        "level": "conceptual",
+        "folderId": 11152,
+        "endType": "subType",
+        "attributeNames": [],
+        "attributes": []
+      },
+      "labels": []
+    }
+  ]
+}
+}

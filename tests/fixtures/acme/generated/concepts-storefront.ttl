@@ -1,0 +1,264 @@
+@prefix sem: <https://w3id.org/semprini/ontology#> .
+@prefix c: <https://semantics.example.com/concepts/> .
+@prefix r: <https://semantics.example.com/relationships/> .
+@prefix sch: <https://semantics.example.com/schemes/> .
+@prefix v: <https://semantics.example.com/values/> .
+@prefix x: <https://semantics.example.com/ext#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix a: <https://semantics.example.com/assets/> .
+@prefix d: <https://semantics.example.com/docs/> .
+
+c:07666880-aa23-11ee-94e1-0242ac1e0003 a sem:Entity ;
+  skos:prefLabel "Delivery"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Consignment"@en ;
+  skos:altLabel "Dispatch"@en ;
+  skos:altLabel "Shipment"@en ;
+  skos:definition "A delivery is an event where goods are delivered from us to our customers."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:07666880-aa23-11ee-94e1-0242ac1e0003" ;
+  sem:status "active" .
+
+c:2de177b5-eff9-4455-8c80-87094aabe312 a sem:Entity ;
+  skos:prefLabel "Passive customer"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:broader c:350b0f84-aa23-11ee-8161-0242ac1e0003 ;
+  skos:definition "A passive customer is someone who has at some point purchased products or services from us, but hasn't made an order in the last 90 days."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:2de177b5-eff9-4455-8c80-87094aabe312" ;
+  sem:status "active" .
+
+c:2e40c94e-4bbd-11f1-9ac3-0242ac120002 a sem:Attribute ;
+  skos:prefLabel "Product ID"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:definition "Unique identifier of the product within our catalog."@en ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:e1881e8c-aa23-11ee-9f34-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:2e40c94e-4bbd-11f1-9ac3-0242ac120002" ;
+  sem:status "active" .
+
+c:33ef202c-aa23-11ee-9167-0242ac1e0003 a sem:Entity ;
+  skos:prefLabel "Warehouse"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Distribution center"@en ;
+  skos:altLabel "Storage facility"@en ;
+  skos:definition "A warehouse refers to a storage building in which our products are stored."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:33ef202c-aa23-11ee-9167-0242ac1e0003" ;
+  sem:status "active" .
+
+c:350b0f84-aa23-11ee-8161-0242ac1e0003 a sem:Entity ;
+  skos:prefLabel "Customer"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Client"@en ;
+  skos:definition "A customer is someone who buys our products."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:350b0f84-aa23-11ee-8161-0242ac1e0003" ;
+  sem:status "active" .
+
+c:36627181-eb35-495a-83ca-38b0d1cdbd37 a sem:Entity ;
+  skos:prefLabel "Active customer"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:broader c:350b0f84-aa23-11ee-8161-0242ac1e0003 ;
+  skos:definition "An active customer is someone who has purchased a product or service (i.e. made an order) during the last 90 days."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:36627181-eb35-495a-83ca-38b0d1cdbd37" ;
+  sem:status "active" .
+
+c:381ead64-4bbd-11f1-949d-0242ac120002 a sem:Attribute ;
+  skos:prefLabel "Product name"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:definition "The display name of the product as shown to customers in the storefront."@en ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:e1881e8c-aa23-11ee-9f34-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:381ead64-4bbd-11f1-949d-0242ac120002" ;
+  sem:status "active" .
+
+c:39910458-36e2-457c-8095-da9455a7c21e a sem:Attribute ;
+  skos:prefLabel "Address"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:definition "Official address of the customer's head office"@en ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:350b0f84-aa23-11ee-8161-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:39910458-36e2-457c-8095-da9455a7c21e" ;
+  sem:status "active" .
+
+c:41dc893a-afa1-11ee-8f04-0242ac1e0003 a sem:Entity ;
+  skos:prefLabel "Order"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Sales order"@en ;
+  skos:definition "An order is a customer's request to purchase one or more products from our storefront. Each order consists of one or more order lines and progresses through stages such as placed, paid, fulfilled, and (optionally) returned."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:41dc893a-afa1-11ee-8f04-0242ac1e0003" ;
+  sem:status "active" .
+
+c:429a8e66-4bbd-11f1-8891-0242ac120002 a sem:Attribute ;
+  skos:prefLabel "Unit price"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:definition "The standard list price for one unit of the product, before any discounts or taxes."@en ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:e1881e8c-aa23-11ee-9f34-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:429a8e66-4bbd-11f1-8891-0242ac120002" ;
+  sem:status "active" .
+
+c:50b852fc-1158-45f1-8955-3d71ab5ada91 a sem:Entity ;
+  skos:prefLabel "Return"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Product return"@en ;
+  skos:altLabel "RMA"@en ;
+  skos:altLabel "Refund request"@en ;
+  skos:definition "A return is an event where a customer sends previously delivered goods back to us, typically for refund, replacement, or exchange."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:50b852fc-1158-45f1-8955-3d71ab5ada91" ;
+  sem:status "active" .
+
+c:5bd5a6f4-4bbd-11f1-b821-0242ac120002 a sem:Attribute ;
+  skos:prefLabel "Delivery date"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:definition "The date on which the goods were delivered (or are scheduled to be delivered) to the customer."@en ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:07666880-aa23-11ee-94e1-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:5bd5a6f4-4bbd-11f1-b821-0242ac120002" ;
+  sem:status "active" .
+
+c:5bd5fc58-4bbd-11f1-b821-0242ac120002 a sem:Attribute ;
+  skos:prefLabel "Delivery address"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:definition "The physical address to which the goods are shipped."@en ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:07666880-aa23-11ee-94e1-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:5bd5fc58-4bbd-11f1-b821-0242ac120002" ;
+  sem:status "active" .
+
+c:612c4957-40ba-4ec7-89fe-58fc7bfd0d89 a sem:Entity ;
+  skos:prefLabel "Discount code"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Coupon code"@en ;
+  skos:altLabel "Promo code"@en ;
+  skos:definition "A discount code is a code that customers can apply to an order to receive a price reduction, typically used for promotions or loyalty rewards."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:612c4957-40ba-4ec7-89fe-58fc7bfd0d89" ;
+  sem:status "active" .
+
+c:63d09d4d-e15d-4c2b-821c-ca5bc0967759 a sem:Attribute ;
+  skos:prefLabel "Customer ID"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:definition "Customer ID"@en ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:350b0f84-aa23-11ee-8161-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:63d09d4d-e15d-4c2b-821c-ca5bc0967759" ;
+  sem:status "active" .
+
+c:7e313c88-eb86-42e4-840b-138835c95e53 a sem:Entity ;
+  skos:prefLabel "Trial customer"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:broader c:350b0f84-aa23-11ee-8161-0242ac1e0003 ;
+  skos:definition "A trial customer is someone who has received some of our products or services for free, but has not yet committed to actually paying anything. We still consider them customers."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:7e313c88-eb86-42e4-840b-138835c95e53" ;
+  sem:status "active" .
+
+c:8b27eb4e-94fd-4cfe-8136-c708d5f40c2d a sem:Attribute ;
+  skos:prefLabel "Customer Type"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:definition "Type"@en ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:350b0f84-aa23-11ee-8161-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:8b27eb4e-94fd-4cfe-8136-c708d5f40c2d" ;
+  sem:status "active" .
+
+c:8f4b1bf5-8ec7-465b-8e0f-c221d260a34c a sem:Entity ;
+  skos:prefLabel "Product category"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Category"@en ;
+  skos:altLabel "Product class"@en ;
+  skos:altLabel "Product group"@en ;
+  skos:definition "A product category is a grouping of related products used to organize the product catalog and help customers navigate the storefront."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:8f4b1bf5-8ec7-465b-8e0f-c221d260a34c" ;
+  sem:status "active" .
+
+c:a280ce96-ba5c-49d7-8e8f-0fb7d6a897aa a sem:Entity ;
+  skos:prefLabel "Payment"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Payment transaction"@en ;
+  skos:altLabel "Settlement"@en ;
+  skos:definition "A payment is a transfer of money from a customer to our organization in settlement of an invoice."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:a280ce96-ba5c-49d7-8e8f-0fb7d6a897aa" ;
+  sem:status "active" .
+
+c:b154b33c-afa8-48e0-8640-9310e5e46e2b a sem:Entity ;
+  skos:prefLabel "Invoice"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Bill"@en ;
+  skos:altLabel "Sales invoice"@en ;
+  skos:altLabel "Statement"@en ;
+  skos:definition "An invoice is a formal request for payment issued to a customer for one or more orders, listing the goods or services provided and the amount owed."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:b154b33c-afa8-48e0-8640-9310e5e46e2b" ;
+  sem:status "active" .
+
+c:b75fcd2e-4bbd-11f1-9a8b-0242ac120002 a sem:Attribute ;
+  skos:prefLabel "Order line ID"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:bc2c3f24-f991-43f0-8283-5d7753485213 ;
+  sem:sourceRef "ellie-main:b75fcd2e-4bbd-11f1-9a8b-0242ac120002" ;
+  sem:status "active" .
+
+c:b760209e-4bbd-11f1-9a8b-0242ac120002 a sem:Attribute ;
+  skos:prefLabel "Quantity"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:bc2c3f24-f991-43f0-8283-5d7753485213 ;
+  sem:sourceRef "ellie-main:b760209e-4bbd-11f1-9a8b-0242ac120002" ;
+  sem:status "active" .
+
+c:b7602300-4bbd-11f1-9a8b-0242ac120002 a sem:Attribute ;
+  skos:prefLabel "Line price"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:bc2c3f24-f991-43f0-8283-5d7753485213 ;
+  sem:sourceRef "ellie-main:b7602300-4bbd-11f1-9a8b-0242ac120002" ;
+  sem:status "active" .
+
+c:b7602404-4bbd-11f1-9a8b-0242ac120002 a sem:Attribute ;
+  skos:prefLabel "Product ID"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:inScheme sch:storefront ;
+  sem:attributeOf c:bc2c3f24-f991-43f0-8283-5d7753485213 ;
+  sem:sourceRef "ellie-main:b7602404-4bbd-11f1-9a8b-0242ac120002" ;
+  sem:status "active" .
+
+c:bc2c3f24-f991-43f0-8283-5d7753485213 a sem:Entity ;
+  skos:prefLabel "Order line"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Line item"@en ;
+  skos:altLabel "Order detail"@en ;
+  skos:altLabel "Order item"@en ;
+  skos:definition "An order line represents a single product entry within an order, capturing which product is being purchased, how many units, and at what price."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:bc2c3f24-f991-43f0-8283-5d7753485213" ;
+  sem:status "active" .
+
+c:e1881e8c-aa23-11ee-9f34-0242ac1e0003 a sem:Entity ;
+  skos:prefLabel "Product"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "Article"@en ;
+  skos:altLabel "Item"@en ;
+  skos:altLabel "Offering"@en ;
+  skos:altLabel "SKU"@en ;
+  skos:definition "A product is anything our organization sells: either physical products or services such as consulting."@en ;
+  skos:inScheme sch:storefront ;
+  sem:sourceRef "ellie-main:e1881e8c-aa23-11ee-9f34-0242ac1e0003" ;
+  sem:status "active" .
+
+sch:storefront a skos:ConceptScheme ;
+  skos:prefLabel "Storefront Orders domain"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  sem:schemeType "glossary" ;
+  sem:sourceRef "ellie-main:70337" ;
+  sem:status "active" .

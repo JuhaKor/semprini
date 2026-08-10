@@ -76,7 +76,7 @@ fundamentally different RDF. Treating prototype behaviour as a requirement is th
 | Modelling | OWL: entity → `owl:Class`, attribute → `owl:DatatypeProperty`, relationship → `owl:ObjectProperty` (+ `owl:inverseOf`) | SKOS-based `sem:` metamodel: `sem:Entity`/`sem:Attribute`/reified `sem:Relationship`, all `skos:Concept` subclasses |
 | Taxonomy↔model join | OWL 2 punning (class doubles as `skos:ConceptScheme`) | `sem:enumerates` from scheme to entity; no punning |
 | Namespaces | one namespace per source model, everything in it | fixed `sem:` metamodel + per-instance content namespaces partitioned by *kind* (`c:`, `r:`, `sch:`, `v:`) |
-| Input | Ellie JSON export file | plugin adapters; Ellie via REST API with a model allowlist |
+| Input | Ellie JSON export file | plugin adapters; Ellie reads the same export shape, behind a model allowlist keyed by model id (a direct API mode is later) |
 | Output style | commented, sectioned, human-flavoured Turtle | comment-free canonical Turtle, byte-deterministic, no blank nodes |
 | Identity | Ellie UUID / readable local names derived on the fly | persistent `mappings/id-map.csv` is authoritative over the minting formula |
 | Lifecycle | none (one run = one file) | deprecation, `dcterms:isReplacedBy`, merge register |

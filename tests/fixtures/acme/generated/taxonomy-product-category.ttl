@@ -14,6 +14,7 @@ sch:product-category a skos:ConceptScheme ;
   skos:prefLabel "Product category taxonomy"@en ;
   dcterms:modified "2026-08-06"^^xsd:date ;
   skos:definition "A small synthetic taxonomy of hardware product categories, used by the plane's own test suite."@en ;
+  sem:enumerates c:8f4b1bf5-8ec7-465b-8e0f-c221d260a34c ;
   sem:schemeType "taxonomy" ;
   sem:sourceRef "product-category:product-category" ;
   sem:status "active" .

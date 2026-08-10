@@ -25,14 +25,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from semprini.adapters.base import AdapterError, BaseAdapter, SourceUnreachableError
-from semprini.config import ConfigError, is_slug
+from semprini.config import ConfigError, escapes_the_instance, is_slug
 from semprini.model import (
     InternalModel,
     Issue,
@@ -50,7 +50,7 @@ __all__ = ["ExcelTaxonomyAdapter"]
 SCHEME_SHEET = "Concept Scheme"
 TAXONOMY_SHEET = "Taxonomy"
 
-_SETTINGS = frozenset({"path", "scheme_slug"})
+_SETTINGS = frozenset({"path", "scheme_slug", "enumerates_source"})
 
 # Scheme-sheet rows this adapter reads. Every other row in the sheet — creator, dates,
 # version, domain, the scheme URI and prefix — is documentation for whoever maintains the
@@ -120,6 +120,14 @@ class ExcelTaxonomyAdapter(BaseAdapter):
         The scheme's permanent slug. In the configuration rather than the workbook
         because it names the scheme's IRI local name *and* its output file, and both are
         frozen by the ID map on the run that mints them (spec 3.4.2, 4.2).
+    ``enumerates_source``
+        The configured source that issued the ``Reference Entity UUID`` — the modelling
+        tool, normally the instance's ``ellie`` source. Required exactly when that cell
+        is filled, and in the configuration rather than the workbook because a source
+        *name* is this instance's to choose (spec 5.1): the workbook states a UUID, and
+        which configured source that UUID belongs to is not a fact about the workbook.
+        Without it the reference would be looked up under the *taxonomy's* own source
+        name, where an entity's key can never be found (spec 5.4).
     """
 
     name = "excel-taxonomy"
@@ -180,7 +188,7 @@ class ExcelTaxonomyAdapter(BaseAdapter):
             issues.append(
                 Issue(Severity.ERROR, "a taxonomy source needs a 'path'", f"{where}.path")
             )
-        elif _escapes_the_instance(str(raw)):
+        elif escapes_the_instance(str(raw)):
             # The workbook is part of the instance and is reviewed with it; a path leading
             # out of the repository is content nobody reviewed (spec 4.2).
             issues.append(
@@ -211,6 +219,19 @@ class ExcelTaxonomyAdapter(BaseAdapter):
                 )
             )
 
+        owner = self.config.get("enumerates_source")
+        if owner is not None and not is_slug(str(owner)):
+            # A source name, held to the definition config.py holds every source name to,
+            # so that a typo is caught here rather than as an unresolvable reference two
+            # stages later (spec 5.1).
+            issues.append(
+                Issue(
+                    Severity.ERROR,
+                    f"not a source name: {owner!r} (lower-case letters, digits, '-' and '_')",
+                    f"{where}.enumerates_source",
+                )
+            )
+
         for key in sorted(set(self.config) - _SETTINGS):
             issues.append(Issue(Severity.ERROR, f"unknown setting {key!r}", f"{where}.{key}"))
         return issues
@@ -224,6 +245,24 @@ class ExcelTaxonomyAdapter(BaseAdapter):
 
     def _scheme(self, metadata: Mapping[str, str], slug: str, language: str | None) -> Scheme:
         enumerates = metadata.get(_SCHEME_ENUMERATES)
+        owner = str(self.config.get("enumerates_source") or "")
+        if enumerates and not owner:
+            # Exit 2, not a content error: the workbook is right and the configuration is
+            # incomplete. Checked here rather than in validate_config() because only the
+            # workbook knows whether the cell is filled, and a source that enumerates
+            # nothing must not be made to configure something it does not use.
+            raise ConfigError(
+                [
+                    Issue(
+                        Severity.ERROR,
+                        f"the workbook names {enumerates!r} as the entity this taxonomy "
+                        f"enumerates, so 'enumerates_source' must name the configured "
+                        f"source that issued that key — the modelling tool's source, not "
+                        f"this one",
+                        f"sources.{self.source_name}.config.enumerates_source",
+                    )
+                ]
+            )
         return Scheme(
             # Keyed by the slug, not by the file name: the path lives in the
             # configuration precisely so a workbook can be moved or renamed without
@@ -235,8 +274,11 @@ class ExcelTaxonomyAdapter(BaseAdapter):
             scheme_type=SchemeType.TAXONOMY,
             # A key in the modelling tool, resolved against the ID map when the graph is
             # built (spec 3.3). Until that tool's source is configured and compiled there
-            # is nothing to resolve, which is why the cell is optional.
-            enumerates=SourceRef(self.source_name, enumerates) if enumerates else None,
+            # is nothing to resolve, which is why the cell is optional — and the ref is
+            # keyed under *that* source, not this one, since the ID map is keyed by
+            # (source name, source key) and the entity's row carries the modelling tool's
+            # name (spec 5.4).
+            enumerates=SourceRef(owner, enumerates) if enumerates else None,
         )
 
     def _path(self) -> Path:
@@ -266,24 +308,6 @@ class ExcelTaxonomyAdapter(BaseAdapter):
 
 
 # --------------------------------------------------------------------------- the sheets
-
-
-def _escapes_the_instance(raw: str) -> bool:
-    """Whether a configured path could reach outside the instance repository.
-
-    Judged under **both** path flavours, not the running platform's. ``config/semprini.yaml``
-    is committed and travels: a path written on one operating system is validated on
-    whatever CI runs, and ``/etc/passwd`` is not absolute to :class:`pathlib.WindowsPath`
-    while ``C:\\keys`` is not absolute to :class:`pathlib.PosixPath`. Judging only the
-    local flavour makes the guard depend on where it happens to run.
-    """
-    for flavour in (PurePosixPath, PureWindowsPath):
-        candidate = flavour(raw)
-        if candidate.is_absolute() or candidate.root or candidate.drive:
-            return True
-        if ".." in candidate.parts:
-            return True
-    return False
 
 
 def _normalize_header(value: object) -> str:

@@ -1,8 +1,10 @@
 {
   "compiler_version": "0.1.0",
   "files": {
+    "concepts-storefront.ttl": "sha256:05fdbc2a1d85f886fe85fec2dff7dd05656b0d70cfe136f5a3e50a3fe18108ae",
     "ontology.ttl": "sha256:c345403ac2481822a9801b46152c38b7d79581aa72e6f5e16643c0af574fae31",
-    "taxonomy-product-category.ttl": "sha256:8471beab8a0a727f69c690c7eac81531b86b9b140cb37923461f66be9b07fff6"
+    "relationships-storefront.ttl": "sha256:fca4d36b7fd1ce612c77263a2dde9f9b4641a8c6ad4dd0ecefff2436be803093",
+    "taxonomy-product-category.ttl": "sha256:344707517e17e87edf19aaa875a543b4594a4a3128a701453d206d4a982469d5"
   },
   "ontology_version": "0.1.0"
 }
