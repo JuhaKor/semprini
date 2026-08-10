@@ -1,0 +1,128 @@
+@prefix sem: <https://w3id.org/semprini/ontology#> .
+@prefix c: <https://semantics.example.com/concepts/> .
+@prefix r: <https://semantics.example.com/relationships/> .
+@prefix sch: <https://semantics.example.com/schemes/> .
+@prefix v: <https://semantics.example.com/values/> .
+@prefix x: <https://semantics.example.com/ext#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix a: <https://semantics.example.com/assets/> .
+@prefix d: <https://semantics.example.com/docs/> .
+
+c:33ef202c-aa23-11ee-9167-0242ac1e0003 sem:relatesTo c:07666880-aa23-11ee-94e1-0242ac1e0003 .
+
+c:350b0f84-aa23-11ee-8161-0242ac1e0003 sem:relatesTo c:41dc893a-afa1-11ee-8f04-0242ac1e0003 .
+
+c:41dc893a-afa1-11ee-8f04-0242ac1e0003 sem:relatesTo c:07666880-aa23-11ee-94e1-0242ac1e0003 ;
+  sem:relatesTo c:50b852fc-1158-45f1-8955-3d71ab5ada91 ;
+  sem:relatesTo c:b154b33c-afa8-48e0-8640-9310e5e46e2b ;
+  sem:relatesTo c:bc2c3f24-f991-43f0-8283-5d7753485213 .
+
+c:612c4957-40ba-4ec7-89fe-58fc7bfd0d89 sem:relatesTo c:41dc893a-afa1-11ee-8f04-0242ac1e0003 .
+
+c:8f4b1bf5-8ec7-465b-8e0f-c221d260a34c sem:relatesTo c:e1881e8c-aa23-11ee-9f34-0242ac1e0003 .
+
+c:b154b33c-afa8-48e0-8640-9310e5e46e2b sem:relatesTo c:a280ce96-ba5c-49d7-8e8f-0fb7d6a897aa .
+
+c:e1881e8c-aa23-11ee-9f34-0242ac1e0003 sem:relatesTo c:bc2c3f24-f991-43f0-8283-5d7753485213 .
+
+r:0dd6485e-fff0-493a-8ce2-9d71c9fef27b a sem:Relationship ;
+  skos:prefLabel "has one or more"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "is part of"@en ;
+  skos:inScheme sch:storefront ;
+  sem:source c:41dc893a-afa1-11ee-8f04-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:0dd6485e-fff0-493a-8ce2-9d71c9fef27b" ;
+  sem:status "active" ;
+  sem:target c:bc2c3f24-f991-43f0-8283-5d7753485213 .
+
+r:11cd945a-075c-4e31-8a3f-120d0384ccb6 a sem:Relationship ;
+  skos:prefLabel "can be returned"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "returns"@en ;
+  skos:inScheme sch:storefront ;
+  sem:source c:41dc893a-afa1-11ee-8f04-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:11cd945a-075c-4e31-8a3f-120d0384ccb6" ;
+  sem:status "active" ;
+  sem:target c:50b852fc-1158-45f1-8955-3d71ab5ada91 .
+
+r:1b8936fd-237e-4963-88b5-ee430619ca21 a sem:Relationship ;
+  skos:prefLabel "has"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "belongs to"@en ;
+  skos:inScheme sch:storefront ;
+  sem:source c:8f4b1bf5-8ec7-465b-8e0f-c221d260a34c ;
+  sem:sourceRef "ellie-main:1b8936fd-237e-4963-88b5-ee430619ca21" ;
+  sem:status "active" ;
+  sem:target c:e1881e8c-aa23-11ee-9f34-0242ac1e0003 .
+
+r:210930cd-b4a6-48eb-8a22-7f3bb0f78eea a sem:Relationship ;
+  skos:prefLabel "paid with"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "pays for"@en ;
+  skos:inScheme sch:storefront ;
+  sem:source c:b154b33c-afa8-48e0-8640-9310e5e46e2b ;
+  sem:sourceRef "ellie-main:210930cd-b4a6-48eb-8a22-7f3bb0f78eea" ;
+  sem:status "active" ;
+  sem:target c:a280ce96-ba5c-49d7-8e8f-0fb7d6a897aa .
+
+r:4acc2272-c7c4-4923-8404-f2beb34253ea a sem:Relationship ;
+  skos:prefLabel "is source of"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "made from"@en ;
+  skos:inScheme sch:storefront ;
+  sem:source c:33ef202c-aa23-11ee-9167-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:4acc2272-c7c4-4923-8404-f2beb34253ea" ;
+  sem:status "active" ;
+  sem:target c:07666880-aa23-11ee-94e1-0242ac1e0003 .
+
+r:5b7f2c57-b07a-46a5-8ae3-f3fb72665859 a sem:Relationship ;
+  skos:prefLabel "makes"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "is made by"@en ;
+  skos:inScheme sch:storefront ;
+  sem:source c:350b0f84-aa23-11ee-8161-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:5b7f2c57-b07a-46a5-8ae3-f3fb72665859" ;
+  sem:status "active" ;
+  sem:target c:41dc893a-afa1-11ee-8f04-0242ac1e0003 .
+
+r:6697517b-5ada-4a4d-86b4-613c9e0e2944 a sem:Relationship ;
+  skos:prefLabel "delivered as"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "fulfills"@en ;
+  skos:inScheme sch:storefront ;
+  sem:source c:41dc893a-afa1-11ee-8f04-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:6697517b-5ada-4a4d-86b4-613c9e0e2944" ;
+  sem:status "active" ;
+  sem:target c:07666880-aa23-11ee-94e1-0242ac1e0003 .
+
+r:b74699c5-60b6-40e5-877e-5a886a231942 a sem:Relationship ;
+  skos:prefLabel "can apply to"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "can have"@en ;
+  skos:inScheme sch:storefront ;
+  sem:source c:612c4957-40ba-4ec7-89fe-58fc7bfd0d89 ;
+  sem:sourceRef "ellie-main:b74699c5-60b6-40e5-877e-5a886a231942" ;
+  sem:status "active" ;
+  sem:target c:41dc893a-afa1-11ee-8f04-0242ac1e0003 .
+
+r:b9af2b2d-c94f-44b0-8892-14cabec96808 a sem:Relationship ;
+  skos:prefLabel "invoiced with"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "invoices"@en ;
+  skos:inScheme sch:storefront ;
+  sem:source c:41dc893a-afa1-11ee-8f04-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:b9af2b2d-c94f-44b0-8892-14cabec96808" ;
+  sem:status "active" ;
+  sem:target c:b154b33c-afa8-48e0-8640-9310e5e46e2b .
+
+r:e6469789-0ba2-4f60-816c-483640d36a16 a sem:Relationship ;
+  skos:prefLabel "included in"@en ;
+  dcterms:modified "2026-08-06"^^xsd:date ;
+  skos:altLabel "contains"@en ;
+  skos:inScheme sch:storefront ;
+  sem:source c:e1881e8c-aa23-11ee-9f34-0242ac1e0003 ;
+  sem:sourceRef "ellie-main:e6469789-0ba2-4f60-816c-483640d36a16" ;
+  sem:status "active" ;
+  sem:target c:bc2c3f24-f991-43f0-8283-5d7753485213 .

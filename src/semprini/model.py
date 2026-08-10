@@ -354,6 +354,33 @@ class Entity(SchemeMember):
 
     kind: ClassVar[Kind] = Kind.ENTITY
 
+    UNION_FIELDS: ClassVar[tuple[str, ...]] = (*SchemeMember.UNION_FIELDS, "broader")
+
+    broader: tuple[SourceRef, ...] = ()
+    """Entities this one is a specialization of — ``skos:broader`` (spec 3.3).
+
+    Inheritance, as a modelling tool states it: "Active customer" is narrower than
+    "Customer". Expressed with the reused SKOS property rather than a ``sem:`` term of its
+    own, which keeps a metamodel version bump out of it — and says the right thing, since
+    every entity here is a ``skos:Concept``.
+
+    Set-valued for two reasons. A source may state multiple inheritance, and a scalar
+    field would have to pick one or fail. And the same entity seen in two domain models
+    where only one of them draws the inheritance is not a disagreement — it unions, the
+    way scheme membership does (spec 5.3), rather than raising a merge conflict over
+    something both sources agree about as far as each can see."""
+
+    def __post_init__(self) -> None:
+        SchemeMember.__post_init__(self)
+        # The same coercion every other collection here gets: an adapter handing over a
+        # list would leave the object holding something it can mutate, and two objects
+        # built from the same refs would compare unequal for holding list against tuple.
+        object.__setattr__(self, "broader", tuple(self.broader))
+        if any(ref in self.refs for ref in self.broader):
+            # Nothing downstream would catch this: skos:broader onto itself is
+            # well-formed RDF and a permanent, meaningless cycle of one.
+            raise ValueError(f"{self.refs[0]} cannot be broader than itself")
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Attribute(SchemeMember):

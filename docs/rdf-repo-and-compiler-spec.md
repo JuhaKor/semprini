@@ -88,7 +88,7 @@ configuration, source content, overlays, or local shapes.
 - Metamodel: RDF classes, properties, IRI policy, lifecycle rules
 - Instance repository structure, file conventions, canonical serialization rules
 - Compiler: packaging, CLI, adapter plugin interface, merge, emit
-- Bundled adapters: Ellie API, Excel taxonomy files
+- Bundled adapters: exported Ellie models, Excel taxonomy files
 - Identity management (IRI minting, the persistent ID map, the namespace lock)
 - Core SHACL shapes and CI validation, with portable workflow templates
 - Instance bootstrap (`semprini init`) and compile orchestration producing pull requests
@@ -209,7 +209,14 @@ tell the same story.
   version change.
 
 - `skos:inScheme`, `skos:topConceptOf`, `skos:hasTopConcept` — scheme membership
-- `skos:broader` / `skos:narrower` — taxonomy hierarchy (only inside taxonomy schemes)
+- `skos:broader` / `skos:narrower` — taxonomy hierarchy, and **entity inheritance**
+
+  Two uses, one property, and deliberately so. Inside a taxonomy scheme it is the value
+  hierarchy. Between two `sem:Entity` nodes it is specialization as a modelling tool
+  states it — "Active customer" is narrower than "Customer" (5.3). A `sem:` term of its
+  own would say no more: every entity here is a `skos:Concept`, so the SKOS property
+  already means what the modeller drew, and adding one would be a metamodel version bump
+  (7) for a fact the vocabulary can already carry.
 
   Of each inverse pair the compiler emits **one direction only** — `skos:topConceptOf`
   and `skos:broader`, both stated on the narrower node. The inverse says the same fact a
@@ -413,6 +420,7 @@ semprini/
 │   ├── ext/                       # the organization's own x: terms (3.6)
 │   └── patches/                   # axioms the sources cannot express
 ├── sources/
+│   ├── ellie/                     # exported domain models, one JSON per model (5.3)
 │   └── taxonomies/                # the Excel taxonomy files (committed here)
 ├── mappings/
 │   ├── id-map.csv                 # persistent identity registry (5.4)
@@ -482,8 +490,10 @@ A file with no content is **not written**: a glossary with no relationships prod
   writing to `generated/` is refused instead (7).
 - `overlays/` and `shapes/local/` are written by humans through normal PRs and
   validated against the same core shapes.
-- Excel taxonomy files are committed under `sources/taxonomies/` so that a taxonomy
-  edit and its generated TTL land in the same PR and are reviewed together.
+- Source files are committed — Excel taxonomies under `sources/taxonomies/`, exported
+  Ellie models under `sources/ellie/` — so that a source edit and its generated TTL land
+  in the same PR and are reviewed together. This is also why an adapter's configured path
+  may not lead outside the repository: a file elsewhere is content nobody reviewed.
 
 ---
 
@@ -567,19 +577,20 @@ semprini:
   default_language: en
 
 sources:
+  # One Ellie *instance* is one source (5.3): its UUIDs are unique across the instance,
+  # so every model exported from it is listed under one source name.
   - adapter: ellie              # entry-point name of an installed adapter
     name: ellie-main            # source name — appears in sem:sourceRef and the ID
                                 # map; assigned once and NEVER changed or reused
     config:
-      base_url: https://acme.ellie.ai/api/v1
-      token_env: ELLIE_API_TOKEN
-      models:
+      base_url: https://acme.ellie.ai/api/v1   # which Ellie instance these UUIDs are from
+      models:                   # the allowlist: nothing outside it is read
         - id: 1234
+          path: sources/ellie/sales.json
           scheme_slug: sales
-          label: "Sales domain model"
         - id: 1287
+          path: sources/ellie/finance.json
           scheme_slug: finance
-          label: "Finance domain model"
 
   # One workbook is one taxonomy is one source (5.3). A second taxonomy is a second
   # entry here, and its objects then carry `product-hazard:...` as their sem:sourceRef.
@@ -588,13 +599,17 @@ sources:
     config:
       path: sources/taxonomies/product-category.xlsx
       scheme_slug: product-category
+      enumerates_source: ellie-main   # required only if the workbook names an entity
 ```
 
 Credentials are never written to configuration — an adapter names an environment
 variable (`token_env`) and the value comes from the CI platform's secret store or the
 operator's shell. This is enforced, not merely documented: the compiler **rejects**
 (exit 2) a configuration whose keys name a credential rather than a variable, and no
-loaded configuration object ever holds a secret value. Unknown keys are rejected for the
+loaded configuration object ever holds a secret value. The rule is the plane's, not any
+adapter's, and it holds for third-party adapters that do call a network service; neither
+bundled adapter needs a credential in v1, since both read files committed with the
+instance (5.3). Unknown keys are rejected for the
 same reason a typo must not be silently ignored, and every rejection names the offending
 key.
 
@@ -675,30 +690,87 @@ is down is the adapter that one day answers "deprecate everything" (5.4).
 
 **Ellie adapter (`ellie`).**
 
-- Reads via Ellie's REST API (token from the environment variable named by
-  `token_env`; endpoint in `config/semprini.yaml`).
-- **Model allowlist.** Ellie contains many models; only explicitly registered,
-  validated domain models are ingested, keyed by Ellie's model ID — nothing is fetched
-  that is not listed. The compiler fails the run (rather than skipping silently) if a
-  listed model ID is not found or not accessible, and the run report lists each model's
-  ID, name as returned by the API, and object counts — so a model swapped or renamed in
-  Ellie is visible to the reviewer. Removing a model from the allowlist removes its
-  `skos:ConceptScheme` and the corresponding `skos:inScheme` triples — but because the
+**One Ellie instance is one configured source, and it reads exported files.** Each domain
+model is exported from Ellie as JSON — the response body of `GET /api/v1/models/{id}` —
+and committed under `sources/ellie/`, where it is reviewed with the instance like any
+other source. A direct call to the API is a later mode of this same adapter, and
+deliberately not a second adapter: identity is keyed by `(source name, Ellie UUID)`, so a
+source that changed adapters would re-mint every IRI it owns (5.4). The switch will change
+how the bytes arrive and nothing about what they mean, which is also why `base_url` is
+configured in file mode — it records *which* Ellie instance the UUIDs belong to, and
+appears in the run report.
+
+The instance, not the model, is the unit of a source, and that is the opposite of the
+Excel arrangement below for the opposite reason. Ellie UUIDs are unique across an
+instance rather than within a model, which is precisely what lets one entity appear in two
+domain models and resolve to one node. So every model of one instance is listed under one
+source name — listing them separately would give the same entity two identities — and two
+Ellie instances are two sources, since their UUID spaces are unrelated.
+
+Both file shapes are accepted: some exports wrap the model in a `model` object and some do
+not. The document is recognized by structure, and one that is neither is refused by name
+rather than read as a model with no entities — an empty model compiles to an empty scheme,
+which deprecates everything the model used to hold (5.4). For the same reason a document
+that states no `entities` key **at all** is refused as truncated: an export of an empty
+model states an empty list, and the two must not be read alike.
+
+- **Model allowlist.** Ellie contains many models; only explicitly registered, validated
+  domain models are ingested, keyed by Ellie's model ID — nothing is read that is not
+  listed. Each entry states the model's `id`, the `path` of its export and its
+  `scheme_slug`; an export whose `modelId` disagrees with the `id` it is listed under is
+  refused, because a file copied over the wrong path otherwise replaces a scheme's entire
+  contents and the run reports it as ordinary change. The compiler fails the run (rather
+  than skipping silently) if a listed model cannot be read, and the run report lists each
+  model's ID, name as the export states it, and object counts — so a model swapped or
+  renamed in Ellie is visible to the reviewer. Removing a model from the allowlist removes
+  its `skos:ConceptScheme` and the corresponding `skos:inScheme` triples — but because the
   same Ellie entity can be referenced in multiple models, an object is deprecated only
   if it no longer appears in **any** registered model (deprecation is always evaluated
   against the union of all fetches, per 5.4). An object that remains in other models
   simply loses one scheme membership, identity and statements intact. The run report
   flags both cases prominently, since delisting is expected to be rare and deliberate.
-- Fetches, per registered model: entities (id, name, description), attributes (id,
-  name, description, parent entity id), relationships (id, name/verb, source and target
-  entity ids).
+- Reads, per registered model: entities (id, name, description, synonyms, examples),
+  attributes (id, name, description, parent entity id), relationships (id, name, verb
+  labels, source and target entity ids).
 - Mapping: entity → `sem:Entity`; attribute → `sem:Attribute` + `sem:attributeOf`;
   relationship → `sem:Relationship` node + `sem:source`/`sem:target` + one
   `sem:relatesTo` shortcut triple; each registered model → `skos:ConceptScheme`
   (`sem:schemeType "glossary"`, IRI from `scheme_slug`) + `skos:inScheme` for its
-  members.
+  members. The scheme's *source key* is Ellie's model id, not the slug: the slug is this
+  instance's name for the scheme and the id is the source's, and the ID map is keyed by
+  the source's (5.4).
+- **Inheritance becomes `skos:broader`.** Ellie draws a supertype relationship as an
+  ordinary relationship whose ends are typed `superType`/`subType`, and gives it no name
+  and no verb labels. It is emitted as `skos:broader` from the narrower entity to the
+  broader one, and **no** reified `sem:Relationship` or `sem:relatesTo` shortcut is
+  emitted for it: reifying it would mean inventing a preferred label no modeller wrote,
+  and the reused SKOS term states the fact once and costs the metamodel no new vocabulary
+  (3.3). Only that direction is emitted — `skos:narrower` would state the same fact a
+  second time, in the other entity's block (5.5 rule 4). An entity may have several
+  broader entities; multiple inheritance is a thing the source can express. A supertype
+  relationship whose narrower end is not among the model's own entities is refused: the
+  fact lands *on* that entity, so with no entity to carry it there is no cross-reference
+  for a later stage to fail on, and the inheritance would vanish without a diff line.
+- **A relationship's `skos:prefLabel` is Ellie's `name` when a modeller filled one in**,
+  and otherwise the verb label whose direction reads source → target ("Order *has one or
+  more* Order line"). A label reads source → target unless its `direction` is `"source"` —
+  `"target"` and an **absent** direction alike, since a relationship carrying a single
+  label often omits the field. Every other verb label becomes a `skos:altLabel`. A name appearing
+  later re-labels the node without re-minting it, so preferring it costs no identity
+  (5.4); a relationship with neither is refused, since a node has to have a label and
+  inventing one is not an adapter's to do.
 - Ellie descriptions become `skos:definition`. Empty descriptions emit **no**
-  `skos:definition` triple (reported by SHACL as a warning in v1; see 6.1).
+  `skos:definition` triple (reported by SHACL as a warning in v1; see 6.1). Entity
+  synonyms (comma-separated) become `skos:altLabel`; the entity's examples field is one
+  `skos:example`, uncut — it is prose a modeller wrote, and splitting it on its commas
+  would invent several statements where the source made one.
+- **What is deliberately not carried yet**: `progressStatus`, entity `type`, `Source
+  systems`, `Administrated by`, relationship cardinality, and every attribute metadata
+  field but `Description` — `PK`, `FK`, `Data type`, `Not null`, `Unique`, `Semantic
+  link` and the rest. Each would need a term the metamodel does not have, and minting one
+  per Ellie field is what the removal of `sem:ellieId` ruled out (3.3). Deferred, not
+  dismissed: an attribute's `Data type` and `Semantic link` are what `sem:represents` is
+  reserved for (3.1), and adding any of them is a metamodel version bump (7).
 - An entity appearing in multiple domain models must resolve to the **same** Ellie
   UUID (Ellie's cross-model reuse); the compiler merges statements onto one node with
   multiple `skos:inScheme` triples. If two distinct UUIDs carry the same name, they
@@ -733,7 +805,15 @@ required and becomes the scheme's `skos:prefLabel`; `Description` becomes its
 `skos:definition`; `Language` is a BCP 47 tag applied to every cell in the workbook that
 states none of its own; `Reference Entity UUID` is the *source key* of the entity this
 taxonomy enumerates (`sem:enumerates`), optional, and resolved against the ID map when the
-graph is built. Any other row — creator, dates, version, domain — is documentation for
+graph is built — under the source named by the configured `enumerates_source`, which is
+required exactly when that cell is filled. The source name lives in the configuration
+rather than the workbook because it is this instance's to choose (5.1): the workbook
+states a UUID, and which configured source issued that UUID is not a fact about the
+workbook. Without it the reference would be looked up under the taxonomy's *own* source
+name, where an entity's key can never be found, since the ID map is keyed by
+`(source name, source key)` (5.4) — which is also why `enumerates_source` naming the
+taxonomy's own source is refused as configuration (exit `2`) rather than left to fail as
+an unresolvable reference much later. Any other row — creator, dates, version, domain — is documentation for
 whoever maintains the workbook and is read by nobody.
 
 **Sheet 2, `Taxonomy`** — one value per row, header row required:
@@ -975,7 +1055,10 @@ Steps, all blocking unless noted:
      to blocking per instance when steward workflows are ready.
    - `sem:Attribute` has exactly one `sem:attributeOf`; `sem:Relationship` has exactly
      one `sem:source` and one `sem:target`, both `sem:Entity`.
-   - `skos:broader` only between concepts in the same taxonomy scheme; no cycles.
+   - `skos:broader` only between two nodes of the same class — taxonomy value to taxonomy
+     value within one scheme, or entity to entity (inheritance, §3.3) — and **no cycles**,
+     of any length. Nothing earlier in the pipeline can catch a cycle: an adapter sees one
+     source, and inheritance drawn across two of them closes a loop neither one holds.
    - `skos:notation` unique within a scheme.
    - Deprecated nodes: no incoming `skos:broader`/`sem:attributeOf` from active nodes.
    - IRI policy: subject IRIs under the instance's namespaces; local names match the
@@ -1153,7 +1236,7 @@ Each deployment adopts these rules; they are what the CI checks enforce.
 | 4 | Which adapters are bundled versus separately distributed (5.3) | Ellie and Excel bundled; all later adapters evaluated case by case |
 | 5 | ~~Default language tag(s); multilingual labels needed?~~ | **Resolved:** one `default_language` per instance, applied to every untagged label and definition; an already-tagged label keeps its tag (5.5 rule 6) |
 | 6 | Definition coverage: when the missing-definition warning becomes blocking | per instance, after pilot review |
-| 7 | Ellie API rate limits / pagination specifics | verify against Ellie API docs at build time |
+| 7 | ~~Ellie API rate limits / pagination specifics~~ | **Deferred, and no longer blocking:** the `ellie` adapter reads exported model files (5.3), so v1 makes no API call. Pagination and rate limits are questions for the adapter's later API mode, and are settled against Ellie's API documentation when that mode is built |
 | 8 | Whether `semprini init` also creates the remote repository (`gh repo create`) or stays offline | stays offline (5.7) |
 
 Per-instance decisions — base IRI, source allowlist, stewards and CODEOWNERS — are made

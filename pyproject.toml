@@ -42,7 +42,7 @@ semprini = "semprini.cli:main"
 # adapter in it would be discovered and then refused as broken.
 [project.entry-points."semprini.adapters"]
 excel-taxonomy = "semprini.adapters.excel_taxonomy:ExcelTaxonomyAdapter"
-# ellie = "semprini.adapters.ellie:EllieAdapter"
+ellie = "semprini.adapters.ellie:EllieAdapter"
 
 [tool.poetry]
 packages = [{ include = "semprini", from = "src" }]

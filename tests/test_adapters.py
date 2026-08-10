@@ -23,6 +23,13 @@ from semprini.model import InternalModel, Issue, RunContext, Severity
 
 CONTEXT = RunContext(base_iri="https://semantics.example.com/", instance_id="acme")
 
+UNINSTALLED = "no-such-adapter"
+"""A name no distribution provides, for the tests about *not* finding one.
+
+Deliberately fictional. These tests used to name ``ellie``, which stopped being an
+uninstalled adapter the moment D3 registered its entry point — and a test whose premise
+quietly becomes false does not fail loudly, it stops testing what it says it does."""
+
 
 def dummy_entry() -> AdapterEntry:
     """The one entry the dummy distribution contributes."""
@@ -94,10 +101,10 @@ def test_entries_come_back_in_a_stable_order(
 
 def test_an_unknown_name_lists_what_is_installed(installed_dummy_adapter: Path) -> None:
     with pytest.raises(AdapterLoadError) as raised:
-        adapters.load_adapter("ellie")
+        adapters.load_adapter(UNINSTALLED)
 
     message = str(raised.value)
-    assert "'ellie'" in message
+    assert f"{UNINSTALLED!r}" in message
     # The operator's next action is to install something; the message has to say what is
     # there now, or a typo and a missing package look identical.
     assert "installed: dummy" in message
@@ -221,7 +228,7 @@ def test_create_builds_the_adapter_for_a_configured_source(
 
 
 def test_creating_an_uninstalled_adapter_fails_before_anything_is_fetched() -> None:
-    source = config.SourceConfig(adapter="ellie", name="ellie-main", settings={})
+    source = config.SourceConfig(adapter=UNINSTALLED, name="whatever", settings={})
 
     with pytest.raises(AdapterLoadError):
         adapters.create(source, CONTEXT)
@@ -399,7 +406,7 @@ def test_a_configured_adapter_that_is_not_installed_exits_2(
 
     err = capsys.readouterr().err
     assert "collibra" in err
-    assert "sources[0].adapter" in err
+    assert "sources[1].adapter" in err
 
 
 def test_the_name_check_is_skipped_when_no_adapter_is_installed(instance: Path) -> None:

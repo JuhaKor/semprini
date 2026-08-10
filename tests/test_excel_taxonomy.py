@@ -136,8 +136,8 @@ def test_the_fixture_instance_loads_with_the_bundled_adapter_installed() -> None
     """
     settings = config.load(INSTANCE, known_adapters=adapters.adapter_names())
 
-    assert [source.adapter for source in settings.sources] == ["excel-taxonomy"]
-    assert "excel-taxonomy" in adapters.adapter_names()
+    assert [source.adapter for source in settings.sources] == ["ellie", "excel-taxonomy"]
+    assert {"ellie", "excel-taxonomy"} <= set(adapters.adapter_names())
 
 
 def test_the_bundled_adapter_meets_the_contract(tmp_path: Path) -> None:
@@ -533,13 +533,86 @@ def test_the_reference_entity_is_a_source_ref_not_an_iri(tmp_path: Path) -> None
         ],
     )
 
-    (scheme,) = fetch(path).schemes
-    assert str(scheme.enumerates) == "sizes:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21"
+    (scheme,) = fetch(path, enumerates_source="ellie-main").schemes
+    # Keyed under the *modelling tool's* source, not this taxonomy's: the ID map is keyed
+    # by (source name, source key), and that UUID is a row of the Ellie source (spec 5.4).
+    assert str(scheme.enumerates) == "ellie-main:7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21"
+
+
+def test_a_reference_entity_without_a_source_says_which_key_is_missing(tmp_path: Path) -> None:
+    """The workbook states a UUID; which configured source issued it is this instance's.
+
+    Without ``enumerates_source`` the reference would be looked up under the taxonomy's
+    own source name, where an entity's key can never be found — a dangling
+    ``sem:enumerates`` reported two stages later as "no run has compiled this", naming a
+    source ref nobody wrote.
+    """
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [("ont:T", '"T"@en', "", "", "", "", "", "", "")],
+        scheme=[
+            ("Property", "Value"),
+            ("Scheme Name", "Sizes"),
+            ("Reference Entity UUID", "7f3a9b12-04c1-4a8e-9d1f-2b6f8f7f3d21"),
+        ],
+    )
+
+    with pytest.raises(ConfigError, match="enumerates_source"):
+        fetch(path)
+
+
+def test_a_taxonomy_that_enumerates_nothing_needs_no_source(tmp_path: Path) -> None:
+    """The setting is required by the cell, not by the adapter.
+
+    A taxonomy that points at no entity must not be made to configure a source it does
+    not use — most taxonomies do not, and an unused required key is one more thing to get
+    wrong at bootstrap.
+    """
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [("ont:T", '"T"@en', "", "", "", "", "", "", "")],
+        scheme=[("Property", "Value"), ("Scheme Name", "Sizes")],
+    )
+
+    assert fetch(path).schemes[0].enumerates is None
+
+
+def test_a_source_name_that_is_not_a_slug_is_refused(tmp_path: Path) -> None:
+    path = workbook(tmp_path / "t.xlsx", [("ont:T", '"T"@en', "", "", "", "", "", "", "")])
+
+    adapter = ExcelTaxonomyAdapter(
+        "sizes",
+        {"path": path.name, "scheme_slug": "sizes", "enumerates_source": "Ellie Main"},
+        RunContext(base_iri=CONTEXT.base_iri, instance_id="acme", repo_root=tmp_path),
+    )
+
+    assert [issue.location for issue in adapter.validate_config()] == [
+        "sources.sizes.config.enumerates_source"
+    ]
+
+
+def test_a_source_naming_itself_is_refused(tmp_path: Path) -> None:
+    """The mistake this setting exists to undo, and the only wrong value checkable here.
+
+    ``enumerates_source`` names the source whose *model* defines the reference entity. A
+    workbook naming itself looks up its own UUID under its own keys, which can never hit —
+    the reference then fails at build, two stages later, reported against the workbook's
+    UUID rather than against the configuration line that is wrong.
+    """
+    path = workbook(tmp_path / "t.xlsx", [("ont:T", '"T"@en', "", "", "", "", "", "", "")])
+
+    adapter = ExcelTaxonomyAdapter(
+        "sizes",
+        {"path": path.name, "scheme_slug": "sizes", "enumerates_source": "sizes"},
+        RunContext(base_iri=CONTEXT.base_iri, instance_id="acme", repo_root=tmp_path),
+    )
+
+    (issue,) = adapter.validate_config()
+    assert issue.location == "sources.sizes.config.enumerates_source"
+    assert "names this source itself" in issue.message
 
 
 def test_a_blank_reference_entity_enumerates_nothing(tmp_path: Path) -> None:
-    # Which is what the fixture instance does: it configures no modelling tool, so there
-    # is nothing for the cell to point at until D3 ships the Ellie adapter.
     path = workbook(
         tmp_path / "t.xlsx",
         [("ont:T", '"T"@en', "", "", "", "", "", "", "")],
@@ -570,7 +643,7 @@ def test_enumerating_an_entity_no_source_compiled_says_what_to_do(tmp_path: Path
 
     with pytest.raises(build.BuildError, match="which no run has compiled"):
         build.build(
-            fetch(path),
+            fetch(path, enumerates_source="ellie-main"),
             registry=Registry(IdMap(), CONTEXT.base_iri, today=TODAY),
             context=CONTEXT,
             today=TODAY,
