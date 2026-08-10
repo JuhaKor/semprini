@@ -1251,6 +1251,7 @@ done and green.
   run deprecates nothing outside X; a `merges.csv` row produces `dcterms:isReplacedBy`
   and is rejected when either IRI is unknown to the ID map.
   **Depends:** C2, D2
+  **Merged — [PR #11](https://github.com/JuhaKor/semprini/pull/11).**
   **Done.** 673 tests green (51 of them E1's); ruff, ruff format and mypy (strict) clean;
   the fixture instance still recompiles byte for byte and appends no ID-map row. Thirty-six
   mutations were checked against the suite — deprecation judged per source rather than the
