@@ -9,8 +9,8 @@ committed instance reuses every IRI in its ID map and reproduces its files byte 
 which is the whole promise of spec 5.4 and 5.5 in one assertion.
 
 This is a stand-in for ``semprini run``, which arrives with **E2** and will replace it.
-It deliberately keeps E2's write order (spec 5.6): build, manifest, then the report only
-if something moved, then the files, then the registry once.
+It deliberately keeps E2's write order (spec 5.6): lifecycle, build, manifest, then the
+report only if something moved, then the files, then the registry once.
 
 Regenerate deliberately, never reflexively. A change in what this writes is a change to
 every instance's committed output, and spec 5.5 makes that a major version bump with a
@@ -22,7 +22,7 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
-from semprini import adapters, build, config, manifest, report
+from semprini import adapters, build, config, lifecycle, manifest, report
 from semprini.identity import Registry
 from semprini.model import InternalModel, merge_models
 
@@ -63,8 +63,26 @@ def compile_instance(root: Path, *, today: datetime.date = TODAY) -> tuple[build
             )
         )
 
-    previous = build.read_previous(root)
-    files = build.build(model, registry=registry, context=ctx, previous=previous, today=today)
+    # Per file for lifecycle, which keeps a retained node where it was, and unioned for
+    # dcterms:modified and the report, which ask about nodes rather than files.
+    previous_files = build.read_previous_files(root)
+    previous = build.union_of(previous_files.values())
+    plan = lifecycle.plan(
+        model,
+        registry=registry,
+        context=ctx,
+        previous=previous_files,
+        sources=[source.name for source in settings.sources],
+        merges=lifecycle.MergeRegister.load(root),
+    )
+    files = build.build(
+        model,
+        registry=registry,
+        context=ctx,
+        previous=previous,
+        today=today,
+        carried=plan.carried,
+    )
     document = manifest.Manifest.create(files, compiler=COMPILER, ontology=ONTOLOGY)
     files += (document.to_file(),)
     if not build.unchanged(files, root):

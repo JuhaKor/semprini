@@ -26,11 +26,11 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import chain
 
-from rdflib import Graph, URIRef
+from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import RDF, SKOS
 
 from semprini import compiler_version, ontology_version
-from semprini.build import OutputFile, statements_by_subject
+from semprini.build import STATUS_DEPRECATED, OutputFile, statements_by_subject
 from semprini.model import RunContext
 from semprini.serialize import SEM_NAMESPACE, is_safe_local_name
 
@@ -73,6 +73,8 @@ _WANT_DEFINITIONS = (
     URIRef(f"{SEM_NAMESPACE}Attribute"),
     SKOS.Concept,
 )
+
+_STATUS = URIRef(f"{SEM_NAMESPACE}status")
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -154,10 +156,18 @@ class RunReport:
     files: tuple[FileCount, ...] = ()
     new: tuple[NodeRef, ...] = ()
     changed: tuple[NodeRef, ...] = ()
+    """Nodes this run says something different about, **excluding** the ones it
+    deprecated. A deprecation is a change — its ``sem:status`` moved — but a reviewer
+    reading "Changed 12 · Deprecated 3" needs to know whether that is twelve or fifteen
+    nodes, so the three categories partition the nodes between them (spec 5.6)."""
+
     deprecated: tuple[NodeRef, ...] = ()
-    """Nodes this run deprecated (spec 3.5). Supplied by the caller: deprecation is
-    evaluated against the union of all configured sources, which is **E1**'s, not
-    something the emitted graphs reveal."""
+    """Nodes this run moved to ``sem:status "deprecated"`` (spec 3.5).
+
+    Read out of the graphs like everything else here, not taken from the caller: deciding
+    that an object is gone belongs to :mod:`semprini.lifecycle`, but the decision is
+    visible in the output once made, and a report derived from the files it describes
+    cannot contradict them."""
 
     missing_definitions: tuple[NodeRef, ...] = ()
     name_clashes: tuple[NameClash, ...] = ()
@@ -332,7 +342,6 @@ def create(
     context: RunContext,
     previous: Graph | None = None,
     sources: Sequence[SourceSummary] = (),
-    deprecated: Sequence[NodeRef] = (),
     compiler: str | None = None,
     ontology: str | None = None,
 ) -> RunReport:
@@ -343,9 +352,9 @@ def create(
     ``dcterms:modified`` forward, so that "changed" in the report and a refreshed date in
     the Turtle can never tell different stories.
 
-    ``sources`` and ``deprecated`` are supplied rather than derived: neither the fetch
-    summary nor deprecation is visible in the emitted graphs. ``compiler`` and ``ontology``
-    are injected only so that a test can pin them.
+    ``sources`` is supplied rather than derived: only the run knows which adapters it
+    invoked and what they said, and none of it is visible in the emitted graphs.
+    ``compiler`` and ``ontology`` are injected only so that a test can pin them.
     """
     graphs = {file.name: file.graph for file in files if file.graph is not None}
     union = Graph()
@@ -355,6 +364,7 @@ def create(
 
     labels = _labels(union)
     types = _types(union, labels)
+    deprecated = frozenset(_deprecated(union, previous))
 
     return RunReport(
         compiler_version=compiler_version() if compiler is None else compiler,
@@ -375,8 +385,12 @@ def create(
             )
         ),
         new=_nodes(_new(union, previous), labels, prefixes),
-        changed=_nodes(_changed(union, previous), labels, prefixes),
-        deprecated=tuple(sorted(deprecated)),
+        changed=_nodes(
+            (subject for subject in _changed(union, previous) if subject not in deprecated),
+            labels,
+            prefixes,
+        ),
+        deprecated=_nodes(deprecated, labels, prefixes),
         missing_definitions=_nodes(_undefined(union, types), labels, prefixes),
         name_clashes=_clashes(labels, types, prefixes),
         sources=tuple(sources),
@@ -446,6 +460,29 @@ def _changed(current: Graph, previous: Graph | None) -> Iterable[URIRef]:
         subject
         for subject, statements in statements_by_subject(current).items()
         if subject in before and before[subject] != statements
+    )
+
+
+def _deprecated(current: Graph, previous: Graph | None) -> Iterable[URIRef]:
+    """Nodes this run marked deprecated that the committed output does not (spec 3.5).
+
+    Newly deprecated, not every deprecated node: a node deprecated three runs ago is
+    carried forward unchanged, and listing it again in every report afterwards would make
+    the one section a reviewer reads to see what a run *did* grow without bound.
+    """
+    if previous is None:
+        # A first compile has nothing to have deprecated: every node it writes is new,
+        # and lifecycle can only retain what a previous run wrote.
+        return ()
+    before = frozenset(_deprecations(previous))
+    return (subject for subject in _deprecations(current) if subject not in before)
+
+
+def _deprecations(graph: Graph) -> Iterable[URIRef]:
+    return (
+        subject
+        for subject in graph.subjects(_STATUS, Literal(STATUS_DEPRECATED))
+        if isinstance(subject, URIRef)
     )
 
 

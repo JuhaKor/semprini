@@ -34,6 +34,7 @@ from sample import (
     GOLDEN,
     LATER,
     ORDER,
+    SEM,
     TODAY,
     VERSIONS,
     by_name,
@@ -73,17 +74,43 @@ def report(
     *,
     previous: Graph | None = None,
     sources: tuple[SourceSummary, ...] = SOURCES,
-    deprecated: tuple[NodeRef, ...] = (),
 ) -> RunReport:
     return create(
         compile_() if files is None else files,
         context=context(),
         previous=previous,
         sources=sources,
-        deprecated=deprecated,
         compiler=VERSIONS["compiler"],
         ontology=VERSIONS["ontology"],
     )
+
+
+SEM_STATUS = URIRef(f"{SEM}status")
+
+
+def deprecate(files: tuple[OutputFile, ...], iri: str) -> tuple[OutputFile, ...]:
+    """The same output with one node marked deprecated — what lifecycle produces (3.5).
+
+    Written out here rather than driven through :mod:`semprini.lifecycle`: what this
+    module is asked to do is read a deprecation out of the graphs it is given, and a test
+    that first had to arrange for a source to lose an object would be testing the arranging.
+    """
+    subject = URIRef(iri)
+    changed = []
+    for file in files:
+        if file.graph is None or (subject, SEM_STATUS, None) not in file.graph:
+            changed.append(file)
+            continue
+        graph = Graph()
+        for statement in file.graph:
+            s, p, _ = statement
+            graph.add(
+                (subject, SEM_STATUS, Literal("deprecated"))
+                if (s, p) == (subject, SEM_STATUS)
+                else statement
+            )
+        changed.append(OutputFile(name=file.name, text=file.text, graph=graph))
+    return tuple(changed)
 
 
 def labels(nodes: tuple[NodeRef, ...]) -> list[str]:
@@ -280,16 +307,47 @@ def test_changed_and_the_modified_dates_agree() -> None:
     assert refreshed == {URIRef(f"{BASE}concepts/{ORDER}")}
 
 
-def test_deprecations_are_reported_as_the_caller_supplies_them() -> None:
-    """Deprecation is evaluated against the union of all configured sources (spec 5.4),
-    which the emitted graphs do not reveal — **E1** supplies these."""
-    gone = NodeRef(label="Fax number", iri="c:0000")
+def test_a_node_this_run_deprecated_is_reported_as_deprecated() -> None:
+    """Deciding an object is gone belongs to lifecycle (spec 5.4), but the decision is in
+    the output once made — so the report reads it there rather than being told."""
+    before = compile_()
+    after = deprecate(before, f"{BASE}concepts/{ORDER}")
 
-    rendered = report(deprecated=(gone,)).render()
+    summary = report(after, previous=union(before))
+    rendered = summary.render()
 
+    assert [node.iri for node in summary.deprecated] == [f"c:{ORDER}"]
     assert "| Deprecated | 1 |" in rendered
     assert "### Deprecated (1)" in rendered
-    assert "Fax number" in rendered
+    assert "Order" in rendered
+
+
+def test_a_node_that_was_already_deprecated_is_not_reported_again() -> None:
+    """A deprecated node is carried forward on every later run (spec 3.5). Listing it
+    again each time would make the section that says what a run *did* grow without end."""
+    deprecated = deprecate(compile_(), f"{BASE}concepts/{ORDER}")
+
+    summary = report(deprecated, previous=union(deprecated))
+
+    assert summary.deprecated == ()
+    assert "Nothing changed" in summary.render()
+
+
+def test_a_deprecation_is_not_counted_as_a_change_as_well() -> None:
+    """The three categories partition the nodes: "Changed 1 · Deprecated 1" must mean two
+    nodes moved, or the counts add up to nothing a reviewer can act on (spec 5.6)."""
+    before = compile_()
+    after = deprecate(before, f"{BASE}concepts/{ORDER}")
+
+    summary = report(after, previous=union(before))
+
+    assert [node.iri for node in summary.deprecated] == [f"c:{ORDER}"]
+    assert summary.changed == ()
+
+
+def test_a_first_compile_deprecates_nothing() -> None:
+    """There is nothing to have deprecated: lifecycle can only retain what a run wrote."""
+    assert report(deprecate(compile_(), f"{BASE}concepts/{ORDER}"), previous=None).deprecated == ()
 
 
 # ------------------------------------------------------------------------- warnings
