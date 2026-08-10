@@ -381,6 +381,7 @@ semprini/
 │   ├── model.py                   # internal model dataclasses
 │   ├── identity.py                # ID map, minting, namespace lock
 │   ├── build.py                   # internal model → the graphs of generated/ (3.2, 3.3, 4.2)
+│   ├── lifecycle.py               # deprecation, carry-forward, merge register (3.5, 5.4)
 │   ├── manifest.py                # generated/.manifest.json — hashes and versions (4.3, 7)
 │   ├── report.py                  # generated/.report.md — the run report (5.6)
 │   ├── serialize.py               # canonical Turtle serializer (5.5)
@@ -538,12 +539,21 @@ Pipeline stages for `run`:
 fetch (per configured adapter)
   → normalize into the internal model (Entity, Attribute, Relationship,
     Scheme, TaxonomyValue)
+  → apply lifecycle rules (diff against previous generated/ state: what is gone,
+    what this run is entitled to judge, what the merge register replaces — 3.5, 5.4)
   → resolve identity (ID map lookup / minting)
-  → build rdflib Graphs (one per output file)
-  → apply lifecycle rules (diff against previous generated/ state)
+  → build rdflib Graphs (one per output file), from the model and the nodes
+    lifecycle retained
   → canonical serialization → write generated/*.ttl + .manifest.json + .report.md
   → update mappings/id-map.csv (append-only)
 ```
+
+Lifecycle runs **before** the build stage rather than over its output: a deprecated object
+is not in the model — no adapter returned it — so there is nothing for a later pass to
+edit, and the nodes it retains have to be there when files are assembled and dated. It
+reads the ID map and mints nothing; an object new to a run has no IRI yet, and every node
+in the previous output has one, which is the asymmetry that makes "absent from the
+sources" an answerable question.
 
 The compiler is **stateless between runs** except for what is in the instance
 repository (previous TTL, ID map, namespace lock). It must produce identical results
@@ -931,7 +941,33 @@ compile failure, exit 1.
 `deprecated_iri, replaced_by_iri, date, note`. When stewards merge two concepts in a
 source tool (which usually just deletes one), they add a row here; the compiler then
 emits the deprecation + `dcterms:isReplacedBy` statements instead of a bare
-deprecation. Validated: both IRIs must exist in the ID map.
+deprecation. It is written UTF-8 with LF line endings, tolerates a byte-order mark on
+read, and the compiler never writes a row into it — every row is a steward's decision.
+`date` is recorded for the reader and never acted on. Only `dcterms:isReplacedBy` is
+emitted, on the deprecated node; the `dcterms:replaces` inverse would state one fact
+twice (3.3).
+
+This is the one file in an instance where a person types an IRI, so it is validated
+strictly, and every rule below refuses rather than repairs:
+
+- **Both IRIs must exist in the ID map.** A row naming an IRI this instance never minted
+  deprecates nothing and points at nothing, with nothing in the diff to show either.
+- **One deprecated object has one successor.** Two rows for one `deprecated_iri` leave
+  "which of these survived" — the register's only question — unanswered.
+- **No row replaces an object with itself, and no chain of rows closes into a cycle.**
+  Every object in a cycle is replaced by one that is itself deprecated, so following
+  `dcterms:isReplacedBy` never arrives at a surviving object.
+- **Chains are allowed and are not followed.** If A → B was recorded and later B → C,
+  then A's successor is emitted as B: that is the statement the steward made, and
+  rewriting it to C would put a triple in a governed file that no row supports.
+- **A row for an object the sources still describe fails the run** (exit 1). The register
+  and the sources contradict each other, and the compiler settles neither: deprecating
+  anyway would override every source from a one-line CSV edit, and ignoring the row would
+  make the register silently inert. Normally the source tool has already deleted the
+  object, which is what the register exists to explain.
+
+Removing a row removes the `dcterms:isReplacedBy` triple on the next run — the register
+is read as it stands, so a steward can undo a decision and see it undone.
 
 **Deprecation detection.** Deprecation is evaluated against the **union of all
 configured sources** in the current run — never against a single source or model. An
@@ -940,9 +976,32 @@ that union is re-emitted with `sem:status "deprecated"` and all its last-known
 statements preserved. An object that merely disappeared from one model or source while
 remaining in another loses only the corresponding `skos:inScheme` (or other
 source-specific) statements. Deprecated nodes are carried forward on subsequent runs
-and are never physically removed. Consequently, a run scoped with `--source <name>`
-must not perform deprecation for objects owned by other sources; partial runs skip
-deprecation for anything outside the fetched scope.
+and are never physically removed.
+
+A retained node keeps the file it was already written in, so its deprecation is one
+changed `sem:status` line rather than a deletion in one file and an addition in another.
+Its `dcterms:modified` is decided by the ordinary rule (3.3): the status change is a
+content change, so the date moves on the run that deprecates it and never again. Only
+the block that *describes* the node — the one carrying its label — is marked; a file
+that merely mentions it, as the `sem:relatesTo` shortcut does (4.2), states no more about
+it than it did before. Deprecation is a status and not a tombstone: the ID-map row is
+untouched, so an object a source restores is active again under the IRI it always had.
+
+**Scope.** A run may only conclude that an object is gone if it fetched every source that
+owns it — that is, every `source_name` the ID map records against its IRI. Consequently a
+run scoped with `--source <name>` performs no deprecation for objects any other source
+owns, and neither does a full run for an object whose ID map names a source that is no
+longer configured (which `semprini check` reports separately, above).
+
+Out-of-scope objects are **carried forward exactly as they stand**, status included, not
+skipped: `generated/` files are rewritten whole, so a node left out of a run's output is a
+node deleted from the instance — the opposite of what "skip deprecation" is asking for.
+
+**An IRI in `generated/` that the ID map does not hold fails the run** (exit 1). It means
+a row was deleted or a file was hand-edited (4.3); the compiler cannot say which source
+the node came from, and dropping it would be the deletion this whole mechanism exists to
+prevent. This is checked without reference to git, unlike the append-only check (6.1
+check 6), so it holds for a local run as well as in CI.
 
 ### 5.5 Canonical serialization
 
@@ -1000,7 +1059,15 @@ pastes it into the PR description — it is the reviewer's summary.
 Everything in it is derived from the graphs the run produced and the state they replaced,
 never from what an adapter believed it fetched; "changed" and a refreshed
 `dcterms:modified` (3.3) are decided by one comparison, so the report and the Turtle
-beside it cannot tell different stories. It carries no timestamp and no run identifier
+beside it cannot tell different stories. Deprecation is decided by lifecycle (5.4), but
+the decision is visible in the output once made and is read from there rather than passed
+in — the same rule, applied to the one count that could most easily have been asserted
+instead of shown.
+
+New, changed and deprecated **partition** the nodes: a deprecation is a change, but a
+reviewer reading "Changed 12 · Deprecated 3" has to be able to tell whether that is twelve
+nodes or fifteen. "Deprecated" counts the nodes this run deprecated, not every deprecated
+node in the instance — the latter would grow for ever and stop describing the run. It carries no timestamp and no run identifier
 (5.5 rule 8), and each listing of nodes is capped — the counts above it are not — because
 a first compile of a large instance would otherwise bury them in a PR description.
 

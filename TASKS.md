@@ -1240,7 +1240,7 @@ done and green.
 
 ## Phase E — Compile end to end
 
-- [ ] **E1 · Lifecycle, deprecation and the merge register**
+- [x] **E1 · Lifecycle, deprecation and the merge register**
   **Spec:** §3.5, §5.4 (deprecation detection), `merges.csv`
   **Deliver:** diffing against previous generated state; deprecation evaluated against
   the union of all configured sources; carry-forward of last-known statements;
@@ -1251,6 +1251,111 @@ done and green.
   run deprecates nothing outside X; a `merges.csv` row produces `dcterms:isReplacedBy`
   and is rejected when either IRI is unknown to the ID map.
   **Depends:** C2, D2
+  **Done.** 667 tests green (45 of them E1's); ruff, ruff format and mypy (strict) clean;
+  the fixture instance still recompiles byte for byte and appends no ID-map row. Thirty-six
+  mutations were checked against the suite — deprecation judged per source rather than the
+  union, scope ignored entirely, `--source` ignored, out-of-scope nodes skipped instead of
+  carried, only the label carried, the status not changed, `dcterms:modified` carried
+  rather than recomputed on either path, a stale `dcterms:isReplacedBy` kept, the
+  replacement not emitted, the status written on every block rather than the defining one,
+  blocks that define nothing treated as nodes, an unmapped node dropped, every carried node
+  reported as newly deprecated, planning minting, nodes walked in arrival order, only the
+  first problem reported, self-replacement tolerated, a second successor tolerated, cycles
+  tolerated, either IRI unchecked against the ID map, a register row for a live object
+  tolerated, the columns unchecked, an empty file read as an empty register,
+  `replacement()` following the chain, a hand-typed IRI unstripped, CRLF, a BOM refused, a
+  bad row aborting the batch, a carried node colliding with a compiled one tolerated,
+  carried nodes never dated, the ontology copy read back as previous state, a deprecation
+  counted as a change as well, every deprecated node reported rather than the new ones, and
+  a first compile reporting its whole output as deprecated — and each fails it. **Four
+  survived the first run**, and all four were gaps in the tests: nothing checked which
+  *file* a status line lands in (the shortcut's file is the second file a node can appear
+  in); nothing exercised a subject the output states something about but does not describe;
+  and `plan.deprecated` was only ever asserted one element at a time, so its ordering was
+  unpinned — the previous state is read file by file, and a plan ordered by that would
+  reshuffle whenever a scheme was renamed.
+
+  **The shape of the whole task is one rule: a run that did not look cannot conclude.**
+  §5.4 says a `--source X` run "skips deprecation" outside its scope, and the obvious
+  reading — leave those nodes out — is wrong in the most damaging way available: files are
+  rewritten whole, so a node left out of the run's output is a node **deleted** from the
+  instance. Out-of-scope objects are therefore carried forward *verbatim*, status and all.
+  Scope is decided per object rather than per run: a node is judged only if every
+  `source_name` the ID map records against its IRI was fetched. That covers a case the
+  spec did not name — a full run whose ID map holds a source no longer in
+  `config/semprini.yaml`. Its objects are now carried rather than deprecated, so a
+  configuration typo cannot empty half the graph while `semprini check` is still the thing
+  that reports the rename (§5.4).
+
+  **Decisions taken** (all implemented and now in the spec):
+  - **Lifecycle runs *before* build, not over its output.** §5.1's pipeline listing had it
+    after; a deprecated object is not in the model, so there is nothing for a later pass to
+    edit, and retained nodes have to exist when files are assembled and dated. The seam is
+    `build.CarriedNode` — file, subject, statements, `defines` — and `build(...,
+    carried=...)` turns each into the same `_Block` the model produces, so dating,
+    partitioning and serialization are one code path for both. §5.1 now says so.
+  - **A retained node keeps its file, and only its *defining* block is marked.** The first
+    makes a deprecation one changed `sem:status` line instead of a deletion in one file and
+    an addition in another; the second stops a `sem:relatesTo` shortcut's file from
+    restating the status, which would put one changed fact in two hunks (§4.2, §5.5 rule 4).
+  - **Three statements are re-derived, everything else is carried:** `sem:status`,
+    `dcterms:isReplacedBy` and `dcterms:modified`. The date then follows the ordinary rule
+    (§3.3) with no special case — it moves on the run that deprecates and never again — and
+    `dcterms:isReplacedBy` is re-read from the register every run, so a steward can delete
+    a row and watch the triple go.
+  - **The merge register refuses rather than repairs**, and each rule is one a person can
+    trip: both IRIs must be in the ID map, one deprecated object has one successor, no row
+    replaces an object with itself, and no chain of rows closes into a cycle — a cycle
+    names no survivor, which is the register's only question. **Chains are allowed and
+    deliberately not followed**: if A → B is recorded and later B → C, A's successor is
+    emitted as B, because that is the statement the steward made.
+  - **A register row for an object the sources still describe fails the run.** The register
+    and the sources contradict each other and the compiler settles neither: deprecating
+    anyway would override every source from a one-line CSV edit, ignoring the row would
+    make the register silently inert. The cost is a real one — a steward who adds the row
+    before the source export catches up gets a failed compile — and the message names both
+    ways out. Recorded here because the alternative is defensible and should be re-decided
+    deliberately, not by accident.
+  - **An IRI in `generated/` that the ID map does not hold fails the run** (exit 1). It
+    means a row was deleted or a file was hand-edited, and the compiler cannot say which
+    source the node came from. Checked here rather than left to §6.1 check 6, which needs
+    git to compare against a base revision — this holds for a local run too.
+  - **The report now derives "deprecated" from the graphs** instead of taking it from the
+    caller, which is what C2 left open. Once lifecycle has decided, the decision is *in* the
+    output, and report.py's own rule is that everything in it is read from the files it
+    describes. `report.create()` lost its `deprecated=` argument. New/changed/deprecated
+    now **partition** the nodes — a deprecation was previously counted twice — so
+    "Changed 12 · Deprecated 3" means fifteen nodes moved. §5.6 says both.
+  - **`build.read_previous_files()` and `build.union_of()` are new and public.** Lifecycle
+    needs the previous state per file (a retained node stays where it was) and the builder
+    and report need it unioned; parsing `generated/` twice to get both would be waste that
+    only shows on the instances large enough to care. `read_previous()` is now the union of
+    the former.
+
+  **For the tasks that come next:**
+  - **E2's write order gains one step at the front:** `read_previous_files()` →
+    `lifecycle.plan(...)` → `build(..., carried=plan.carried)` → manifest → `unchanged()` →
+    report only if something moved → `write_all` → `registry.save()` once.
+    `tools/build_fixture_instance.py` already does exactly this and is imported by the
+    suite, so the sketch and the thing that verifies it stay one piece of code.
+  - **E2 still owns the partial run, and it is now half solved.** `build()` refuses
+    `--source X` as before, and the scope tests here drive `lifecycle.plan()` directly
+    rather than a whole run. What E1 supplies is the missing half: every object outside the
+    fetched scope comes back as a `CarriedNode`, which is the "merge the fetched subset with
+    the previous state" option C1 named. What is left is objects owned by *both* the fetched
+    source and another — the model holds them, rebuilt from one source's statements alone —
+    and that is the case to decide before removing the guard.
+  - **E2's stale-file deletion must not delete a file that only holds carried nodes.** A
+    scheme deleted from its source produces a `concepts-<slug>.ttl` containing nothing but
+    deprecated nodes, and that file is still output the run produced.
+  - **F2 should call `MergeRegister.load()` and `.check_against(id_map)`** rather than
+    re-deriving either, the same way B4 and C2 left their checks. A `LifecycleError` is an
+    `IssueError`, so `cli.exit_code_for` already maps it to exit 1 with no new mapping.
+  - **G1's `init` writes `mappings/merges.csv`** with its header (§5.7 step 3);
+    `MergeRegister().save(root)` is there for exactly that, and nothing else writes the
+    file. The fixture instance gained an empty one.
+  - **C2's "removed is deliberately not reported" is now moot**, as its note predicted:
+    nothing is removed, so there is no number to be wrong about.
 
 - [ ] **E2 · `semprini run` orchestration**
   **Spec:** §5.1 (pipeline and flags)
@@ -1276,6 +1381,11 @@ done and green.
      touched and refresh `dcterms:modified` on every node they co-describe. Removing that
      guard is E2's first step, and it must be replaced by a real answer: either merge the
      fetched subset with the previous state before building, or make writing per-file.
+     **E1 supplied the first option for objects one source owns**: `lifecycle.plan()`
+     returns every out-of-scope node as a `CarriedNode`, verbatim, so a partial run's
+     files can be assembled without losing them. What is undecided is an object **two**
+     sources describe when only one was fetched — the model holds it, rebuilt from half its
+     evidence — and that case has to be settled before the guard comes off.
 
   **One obligation C2 hands over:** the write order is `build()` → `manifest.create()` →
   `build.unchanged()` → *only if something moved* `report.create()` → `write_all()` →
@@ -1314,6 +1424,11 @@ done and green.
   **each** of the seven checks, each producing the documented exit code; drift is
   detected when the manifest's recorded version differs from the running one.
   **Depends:** E2, F1
+  **Call the checks, do not re-derive them.** `IdMap.check_append_only` and
+  `check_sources_are_configured` (B4), `Manifest.verify` and `check_versions` (C2), and
+  `MergeRegister.load(...).check_against(id_map)` (E1) each return `Issue`s or raise an
+  `IssueError` the CLI already maps. Getting the base revision out of git is the one part
+  of check 6 nothing implements yet.
 
 - [ ] **F3 · Additive-only enforcement for local shapes**
   **Spec:** §3.6, §6.1.5 (final bullet)
@@ -1338,6 +1453,10 @@ done and green.
   instance; re-running init where `namespace.lock` exists refuses; a socket guard
   asserts init makes **no** network calls; the generated tree matches §4.2 exactly.
   **Depends:** F2
+  **Step 3's empty `merges.csv`** is `lifecycle.MergeRegister().save(root)` — the one
+  writer of that file, since every row in it is a steward's decision (E1). A missing file
+  is a legal empty register, so this is about the tree matching §4.2, not about a run
+  failing without it.
 
 - [ ] **G2 · Workflow templates and CI portability**
   **Spec:** §6.2, §6.3
@@ -1431,10 +1550,13 @@ be deferred without stalling the build.
 - ~~**D3 next.**~~ Done, and **Phase D is complete**: both bundled adapters exist, the
   fixture instance compiles two sources whose objects reference each other, and v1 needs
   no network access or credential to compile anything. §11 #7 is resolved by scope and
-  #4 is settled for the bundled pair. **E1 next** by the dependency order (it needs D2),
-  though **E2** is the larger prize: `tools/build_fixture_instance.py` is a working
-  sketch of `semprini run` and shows the remaining work is orchestration, stale-file
-  deletion and the partial-run question, not new machinery.
+  #4 is settled for the bundled pair.
+- ~~**E1 next.**~~ Done: an object can no longer leave an instance. What a source deletes
+  is retained and marked deprecated, what a partial run did not look at is carried
+  untouched, and a steward's merge register turns a bare deprecation into one that names
+  the survivor. **E2 next**, and it is now genuinely only orchestration: the pipeline is
+  complete end to end in `tools/build_fixture_instance.py`, and what is left is the CLI
+  around it, stale-file deletion, and the one partial-run case E1 left open.
 - ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
   once an instance holds generated files, every serializer change becomes a migration
   (§7). It now is one — a change to `serialize.py`'s output is a major bump.

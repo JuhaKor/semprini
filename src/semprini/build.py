@@ -25,7 +25,7 @@ files, and nothing else.
 from __future__ import annotations
 
 import datetime
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,12 +57,17 @@ from semprini.model import (
 __all__ = [
     "GENERATED_DIR",
     "ONTOLOGY_FILE",
+    "STATUS_ACTIVE",
+    "STATUS_DEPRECATED",
     "BuildError",
+    "CarriedNode",
     "OutputFile",
     "build",
     "read_previous",
+    "read_previous_files",
     "statements_by_subject",
     "unchanged",
+    "union_of",
     "write_all",
 ]
 
@@ -92,8 +97,15 @@ SEM_ATTRIBUTE = URIRef(f"{SEM}Attribute")
 SEM_RELATIONSHIP = URIRef(f"{SEM}Relationship")
 
 STATUS_ACTIVE = "active"
-"""Every node this module emits is active. Deprecation is evaluated against the union of
-all configured sources and belongs to lifecycle, not to building (spec 3.5, 5.4)."""
+"""The status of every node this stage builds from the model: a source still reports it.
+
+Deprecation is not decided here. Whether an object is gone is a question about the *union*
+of all configured sources and about the state this run replaces (spec 3.5, 5.4), which is
+:mod:`semprini.lifecycle`'s to answer; it arrives as :class:`CarriedNode`s."""
+
+STATUS_DEPRECATED = "deprecated"
+"""The status lifecycle gives a node no source reports any more (spec 3.5). Written here
+beside its opposite so that the two values have one definition between them."""
 
 _CLASSES: Mapping[type[SemanticObject], URIRef] = {
     Entity: SEM_ENTITY,
@@ -136,6 +148,35 @@ class OutputFile:
         return GENERATED_DIR / self.name
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CarriedNode:
+    """One node's statements as the previous run wrote them, re-emitted (spec 3.5).
+
+    A node no source reports any more is **retained**, not dropped: whatever published its
+    IRI still points at it, so the compiler goes on writing its last-known statements and
+    marks it deprecated. It is not in the model — no adapter returned it — so it cannot be
+    built from one, and it arrives here already decided.
+
+    :func:`semprini.lifecycle.plan` produces these, which is where every judgement lives:
+    whether the node is really gone (a question about the union of all configured sources,
+    never one of them), whether this run is even entitled to ask (spec 5.4's partial-run
+    rule), and what the merge register says replaces it. This stage only writes them.
+    """
+
+    file: str
+    """The ``generated/`` file that held these statements. A deprecated node stays where
+    it was, so its deprecation is one changed line rather than a move between files."""
+
+    subject: URIRef
+    statements: frozenset[tuple[URIRef, Node]]
+    """Without ``dcterms:modified``: the date is recomputed like every other node's, so a
+    node whose statements did not move keeps the date it had (spec 3.3)."""
+
+    defines: bool
+    """Whether this is the block that *describes* the node — the one carrying its label,
+    and so the one dated. A node's statements can span two files (spec 4.2)."""
+
+
 def build(
     model: InternalModel,
     *,
@@ -143,6 +184,7 @@ def build(
     context: RunContext,
     previous: Graph | None = None,
     today: datetime.date | None = None,
+    carried: Sequence[CarriedNode] = (),
 ) -> tuple[OutputFile, ...]:
     """Turn a resolved model into the files ``generated/`` should hold (spec 4.2).
 
@@ -150,6 +192,11 @@ def build(
     carry ``dcterms:modified`` forward (spec 3.3); pass ``None`` on a first compile.
     ``today`` is injected so that a test pins it and so that nothing but this stage reads
     a clock.
+
+    ``carried`` are the nodes lifecycle decided to retain (spec 3.5) — deprecated objects
+    and, on a partial run, objects outside the fetched scope. They are written alongside
+    what the model produced and are dated by the same rule, so a deprecation is a changed
+    ``sem:status`` line and nothing else.
 
     A partial run is **refused**, loudly, rather than quietly building from part of a
     model. ``write_all`` rewrites each file whole, so building a ``--source X`` run this
@@ -178,31 +225,33 @@ def build(
         context=context,
         previous=_Previous(previous),
         today=datetime.date.today() if today is None else today,
+        carried=tuple(carried),
     )
     return builder.build()
 
 
-def read_previous(repo_root: Path | None = None) -> Graph:
-    """Parse the instance's current generated output into one graph (spec 3.3).
+def read_previous_files(repo_root: Path | None = None) -> Mapping[str, Graph]:
+    """Parse each of the instance's generated Turtle files into its own graph.
 
-    One graph, not one per file, because a subject's statements are deliberately spread
-    across files — a ``sem:relatesTo`` shortcut sits with the relationship that produced
-    it, not with the entity it is about — and "did this node change" is a question about
-    the node, not about a file.
+    Keyed by file name, because lifecycle needs to know *where* a statement was written:
+    a node it retains stays in the file that held it (spec 3.5), and a node that moved
+    between files would otherwise be deleted from one and added to another with nothing
+    in the diff tying the two hunks together.
 
     ``generated/ontology.ttl`` is skipped: it is the metamodel, identical in every
-    deployment, and none of its subjects is an instance's to date.
+    deployment, and none of its subjects is an instance's to date or to deprecate.
     """
     root = Path.cwd() if repo_root is None else Path(repo_root)
-    graph = Graph()
     directory = root / GENERATED_DIR
+    graphs: dict[str, Graph] = {}
     if not directory.is_dir():
         # A first compile, or an instance whose generated/ has not been created yet.
-        return graph
+        return graphs
     issues: list[Issue] = []
     for path in sorted(directory.glob("*.ttl")):
         if path.name == ONTOLOGY_FILE:
             continue
+        graph = Graph()
         try:
             graph.parse(path, format="turtle")
         except (OSError, UnicodeDecodeError, SyntaxError) as error:
@@ -213,9 +262,37 @@ def read_previous(repo_root: Path | None = None) -> Graph:
             issues.append(
                 Issue(Severity.ERROR, f"cannot read generated output: {error}", str(path))
             )
+            continue
+        graphs[path.name] = graph
     if issues:
         raise BuildError(issues)
-    return graph
+    return graphs
+
+
+def union_of(graphs: Iterable[Graph]) -> Graph:
+    """Every graph loaded together — what a consumer of the instance sees.
+
+    Public because a run needs the previous state both ways at once: per file for
+    lifecycle, and unioned for ``dcterms:modified`` and the report. Parsing the directory
+    twice to get both would be the kind of waste that only shows up on the instances big
+    enough to care.
+    """
+    union = Graph()
+    for graph in graphs:
+        union += graph
+    return union
+
+
+def read_previous(repo_root: Path | None = None) -> Graph:
+    """Parse the instance's current generated output into one graph (spec 3.3).
+
+    One graph, because a subject's statements are deliberately spread across files — a
+    ``sem:relatesTo`` shortcut sits with the relationship that produced it, not with the
+    entity it is about — and "did this node change" is a question about the node, not
+    about a file. Lifecycle asks the other question and reads
+    :func:`read_previous_files` instead.
+    """
+    return union_of(read_previous_files(repo_root).values())
 
 
 def statements_by_subject(graph: Graph) -> dict[URIRef, set[tuple[URIRef, Node]]]:
@@ -320,6 +397,7 @@ class _Builder:
     context: RunContext
     previous: _Previous
     today: datetime.date
+    carried: tuple[CarriedNode, ...] = ()
     issues: list[Issue] = field(default_factory=list)
     """Problems found so far. Collected rather than raised one at a time: these are read
     in CI, where one problem per run costs a round trip each (spec 5.2)."""
@@ -334,9 +412,10 @@ class _Builder:
         schemes = self._scheme_index()
         self._check_memberships(schemes)
         self._check_enumerated_entities()
+        self._check_carried_are_gone(resolved)
         self._raise_collected()
 
-        blocks = self._blocks(resolved, schemes)
+        blocks = self._blocks(resolved, schemes) + self._carried_blocks()
         # Cross-references are collected while blocks are built, not raised at the first
         # dangling one. Nothing is assembled or written until after this, so the
         # placeholder _reference() returns for a broken ref cannot escape into a file.
@@ -421,6 +500,23 @@ class _Builder:
             for (source, target), name in sorted(shortcuts.items())
         )
         return tuple(blocks)
+
+    def _carried_blocks(self) -> tuple[_Block, ...]:
+        """The retained nodes, as blocks of the files they were already written in.
+
+        Deliberately not re-derived from anything: these statements are what the previous
+        run wrote, and re-deciding them would mean compiling an object out of a model that
+        no longer contains it.
+        """
+        return tuple(
+            _Block(
+                name=node.file,
+                subject=node.subject,
+                statements=set(node.statements),
+                defines=node.defines,
+            )
+            for node in self.carried
+        )
 
     # ------------------------------------------------------------------ file partitioning
 
@@ -702,6 +798,27 @@ class _Builder:
                     f"scheme {scheme.slug!r} enumerates {scheme.enumerates}, which is a "
                     f"{kind}; a taxonomy provides the values of an entity (spec 3.3)",
                     scheme,
+                )
+
+    def _check_carried_are_gone(self, resolved: Mapping[SemanticObject, str]) -> None:
+        """A retained node must be one the model no longer holds (spec 3.5).
+
+        Carrying a node the run also compiled would write one subject twice — the model's
+        statements and the previous run's, unioned into one graph — so the node would wear
+        two labels and be marked both active and deprecated, and the file would be
+        internally contradictory rather than merely wrong. Lifecycle selects carried nodes
+        precisely from what the model does *not* contain, so this catches a caller that
+        assembled the two halves from different runs.
+        """
+        live = {iri: object_ for object_, iri in resolved.items()}
+        for subject in sorted({str(node.subject) for node in self.carried}):
+            object_ = live.get(subject)
+            if object_ is not None:
+                self._issue(
+                    f"{subject} is carried forward as no longer reported, but this run "
+                    f"compiled {object_.kind} {object_.refs[0]} onto the same IRI; a node "
+                    f"is either built from the model or retained from the previous output",
+                    object_,
                 )
 
     # ------------------------------------------------------------------ issue collection
