@@ -1,0 +1,8 @@
+{
+  "compiler_version": "0.1.0",
+  "files": {
+    "ontology.ttl": "sha256:c345403ac2481822a9801b46152c38b7d79581aa72e6f5e16643c0af574fae31",
+    "taxonomy-product-category.ttl": "sha256:8471beab8a0a727f69c690c7eac81531b86b9b140cb37923461f66be9b07fff6"
+  },
+  "ontology_version": "0.1.0"
+}

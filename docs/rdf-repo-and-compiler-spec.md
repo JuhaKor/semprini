@@ -196,7 +196,18 @@ tell the same story.
 **Reused standard properties:**
 
 - `skos:prefLabel` (exactly one per node, per language), `skos:altLabel` (synonyms)
+- `skos:hiddenLabel` — misspellings and retired names: matched by search, never displayed
 - `skos:definition` — definition text
+- `skos:scopeNote` — guidance on where a concept's boundaries lie
+- `skos:example` — instances that fall under the concept
+
+  `skos:hiddenLabel`, `skos:scopeNote` and `skos:example` may each appear **more than
+  once** on a node, unlike `skos:definition`: a concept has *the* definition, whereas two
+  sources each contributing an example are not in disagreement, and treating them as
+  scalars would fail a run over data that agrees. All three are reused SKOS terms and are
+  therefore **not** declared in `sem.ttl` (3.6), so adding them was not an ontology
+  version change.
+
 - `skos:inScheme`, `skos:topConceptOf`, `skos:hasTopConcept` — scheme membership
 - `skos:broader` / `skos:narrower` — taxonomy hierarchy (only inside taxonomy schemes)
 
@@ -206,7 +217,10 @@ tell the same story.
   (5.5 rule 4). A consumer that wants the inverses can entail them; a reviewer cannot
   un-see a duplicated diff.
 
-- `skos:notation` — business code of a taxonomy value (e.g. `"PT"`)
+- `skos:notation` — business code of a taxonomy value (e.g. `"PT"`), **when the source
+  states one**. Not every taxonomy format carries a code: a ragged workbook (5.3) states
+  hierarchy and labels and no notation at all, and deriving one from the row's identity
+  key would emit a code no source ever said and that stewards would then have to maintain.
 - `skos:exactMatch`, `skos:broadMatch` — cross-scheme alignment (e.g. to industry
   taxonomies, or to another instance's concepts)
 - `dcterms:isReplacedBy` — deprecated node → successor
@@ -529,12 +543,17 @@ The **build** stage refuses (exit `1`), naming the source ref of the offending o
 anything no output could honestly represent: an object in no scheme, in a scheme no
 source defined, or in the wrong *kind* of scheme — a taxonomy value in a glossary; a
 scheme slug that is malformed or that has been renamed since it was minted (3.4.2); a
-cross-reference (`sem:attributeOf`, `sem:source`, `sem:target`, `skos:broader`) to
-something the run did not resolve; and a `sem:enumerates` IRI this instance has never
-minted, or that the ID map records as something other than an entity (3.3) — both typos
-in `config/semprini.yaml` rather than data. The first four decide which *file* an object is
-written to, so they cannot be deferred to SHACL validation (6.1); the rest would otherwise
-reach a governed file as a triple pointing at nothing, or at the wrong thing.
+cross-reference (`sem:attributeOf`, `sem:source`, `sem:target`, `skos:broader`,
+`sem:enumerates`) to something the run did not resolve, or that the ID map records as the
+wrong *kind* — `sem:enumerates` runs scheme → entity (3.3). The first four decide which
+*file* an object is written to, so they cannot be deferred to SHACL validation (6.1); the
+rest would otherwise reach a governed file as a triple pointing at nothing, or at the
+wrong thing.
+
+A dangling `sem:enumerates` is the ordinary case while an instance is being brought up
+rather than an exotic one: a workbook names its reference entity by that entity's key in
+the modelling tool (5.3), so a taxonomy compiled before the modelling tool's source is
+configured has nothing to point at. The message says so.
 
 Every problem the stage can see is reported together, not one per run: these are read in
 CI, where one problem per round trip is the difference between one fix and five.
@@ -562,15 +581,13 @@ sources:
           scheme_slug: finance
           label: "Finance domain model"
 
+  # One workbook is one taxonomy is one source (5.3). A second taxonomy is a second
+  # entry here, and its objects then carry `product-hazard:...` as their sem:sourceRef.
   - adapter: excel-taxonomy
-    name: taxonomies
+    name: product-category
     config:
-      files:
-        - path: sources/taxonomies/product-category.xlsx
-          scheme_slug: product-category
-          scheme_label: "Product category taxonomy"
-          enumerates: c:55aa0c3e-...      # optional
-          codes_are_stable: true
+      path: sources/taxonomies/product-category.xlsx
+      scheme_slug: product-category
 ```
 
 Credentials are never written to configuration — an adapter names an environment
@@ -689,22 +706,86 @@ is down is the adapter that one day answers "deprecate everything" (5.4).
 
 **Excel taxonomy adapter (`excel-taxonomy`).**
 
-- Input: one workbook per taxonomy under `sources/taxonomies/`, registered in
-  `config/semprini.yaml` with file path, scheme slug, scheme label, target entity IRI (for
-  `sem:enumerates`, optional), and whether the `code` column is id-stable.
-- Expected sheet format (first sheet, header row required):
+**One workbook is one taxonomy is one configured source.** Each workbook under
+`sources/taxonomies/` gets its own entry in `config/semprini.yaml`, carrying just a
+`path` and a `scheme_slug`; everything else about the scheme comes from the workbook.
+Every object in that workbook therefore carries the source's `name` in its
+`sem:sourceRef`, which is what makes provenance say *which file* an object came from.
 
-  | Column | Required | Maps to |
-  |---|---|---|
-  | `code` | yes | `skos:notation` |
-  | `label` | yes | `skos:prefLabel` |
-  | `parent_code` | no (empty = top concept) | `skos:broader` |
-  | `description` | no | `skos:definition` |
-  | `id` | only if codes are not stable | identity key for UUIDv5 minting |
+Two consequences of that arrangement are load-bearing:
 
-- Rows with a `parent_code` that matches no row → compile error.
-- Cycles in the hierarchy → compile error.
-- Duplicate codes → compile error.
+- **A source name never names the adapter.** `source_name` is half the ID map's key
+  (5.4) and so is permanent: anything encoded in it becomes unchangeable without
+  re-minting. Naming a source `excel-product-category` would re-mint every IRI in it the
+  day the same taxonomy arrives in some other format — the coupling `sem:sourceRef` was
+  designed to avoid (3.3). Which adapter read a file is recorded in the configuration and
+  in the run report (5.6), neither of which is identity.
+- **The path is not the name either.** It lives in `config:` precisely so a workbook can
+  be moved or renamed without re-keying its contents. For the same reason the *scheme* is
+  keyed by its slug and not by its file name.
+
+`scheme_slug` stays in the configuration rather than in the workbook because it names two
+permanent things — the scheme's IRI local name and its output file (4.2) — and both are
+frozen by the ID map on the run that mints them.
+
+**Sheet 1, `Concept Scheme`** — a vertical Property/Value table. `Scheme Name` is
+required and becomes the scheme's `skos:prefLabel`; `Description` becomes its
+`skos:definition`; `Language` is a BCP 47 tag applied to every cell in the workbook that
+states none of its own; `Reference Entity UUID` is the *source key* of the entity this
+taxonomy enumerates (`sem:enumerates`), optional, and resolved against the ID map when the
+graph is built. Any other row — creator, dates, version, domain — is documentation for
+whoever maintains the workbook and is read by nobody.
+
+**Sheet 2, `Taxonomy`** — one value per row, header row required:
+
+| Column | Required | Maps to |
+|---|---|---|
+| `Concept URI` | yes | identity key for UUIDv5 minting — **not** an emitted IRI |
+| `L1..Ln - Preferred Label` | yes (at least `L1`) | `skos:prefLabel`, and the hierarchy |
+| `Definition` | no | `skos:definition` |
+| `Alternative Labels` | no (`;`-separated) | `skos:altLabel` |
+| `Hidden Labels` | no (`;`-separated) | `skos:hiddenLabel` |
+| `Scope Note` | no | `skos:scopeNote` |
+| `Example` | no | `skos:example` |
+
+Headers are matched on their **first line**, lower-cased — these sheets carry the SKOS
+mapping on a second line, which is documentation and no part of a column's name. Columns
+the adapter has no home for are tolerated and ignored: a workbook is a working document
+and gains columns for reasons of its own, unlike a configuration file, where an unknown
+key is an error (5.1). A cell may be written in Turtle's literal syntax
+(`"Power tools"@en`) to state its own language, which is honoured over the sheet's.
+
+**Hierarchy is ragged.** A row's depth is the position of its last filled `L` cell, and
+its broader concept is the row whose labels are its own first *n-1*. Two things follow
+that are not obvious:
+
+- **A cycle cannot be expressed.** A row's ancestors are a prefix of its own cells, so
+  there is nothing to close a loop with. The error conditions below replace the
+  cycle check a `parent_code` format needs.
+- **A label is structural**, so renaming an `L2` cell re-parents everything beneath it.
+  That is why identity comes from `Concept URI` and never from the labels: a taxonomy can
+  be re-worded without minting a single new IRI (5.4).
+
+Hierarchy is matched on label *values*, not raw cells, so a workbook that tags some cells
+and leaves others bare still describes one branch.
+
+Compile errors, every one of them reported together rather than one per run — a taxonomy
+is edited in bulk, so its mistakes arrive in bulk:
+
+- A row whose parent path matches no row.
+- Two rows at the same path, or sharing one `Concept URI`.
+- A row that **skips a level** (`L1` and `L3` filled, `L2` empty). Collecting the
+  non-empty cells and discarding their positions would read this as depth 2 and attach
+  the value to the wrong parent — a taxonomy that is well-formed and wrong.
+- A row with no `Concept URI`, which is refused rather than skipped: skipping it means a
+  value silently vanishing on the next compile, and being deprecated for it (3.5).
+- A missing `Concept URI` or `L1` **column**. Header matching is strict because a sheet
+  whose level columns are named something else does not read as a broken taxonomy — it
+  reads as an empty one, which compiles to a scheme with no values and deprecates
+  everything that used to be in it.
+
+A workbook that cannot be read at all is exit 3 (unreachable); every error above is a
+compile failure, exit 1.
 
 ### 5.4 Identity management
 
@@ -777,8 +858,10 @@ rules:
    than joining them with `,` — one changed fact must be one changed line. Subject
    blocks are separated by a single blank line.
 5. UTF-8, LF line endings, newline at EOF. No comments in generated files.
-6. Language tags always present on `skos:prefLabel`, `skos:altLabel` and
-   `skos:definition`. One `default_language` per instance, set in
+6. Language tags always present on the text-valued properties — `skos:prefLabel`,
+   `skos:altLabel`, `skos:hiddenLabel`, `skos:definition`, `skos:scopeNote` and
+   `skos:example`. (`skos:notation` is untagged: a notation is a code, not prose in a
+   language.) One `default_language` per instance, set in
    `config/semprini.yaml` (default `en`), is applied to every label and definition that
    arrives without a language of its own; a label that arrives **with** one keeps it and
    is never overwritten. An instance therefore has one language by default but is not

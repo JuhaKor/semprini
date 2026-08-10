@@ -23,10 +23,13 @@ from semprini.model import (
     Relationship,
     RunContext,
     Scheme,
+    SchemeMember,
     SchemeType,
+    SemanticObject,
     Severity,
     SourceRef,
     TaxonomyValue,
+    Text,
     merge_models,
 )
 
@@ -37,7 +40,7 @@ ORDER_UUID = "0d9e4c77-6b5a-4c3d-8e2f-1a9b7c5d3e4f"
 
 
 def entity(
-    *, refs: dict[str, str] | None = None, label: str = "Customer", **rest: object
+    *, refs: dict[str, str] | None = None, label: str | Text = "Customer", **rest: object
 ) -> Entity:
     return Entity(source_refs=refs or {"ellie-main": CUSTOMER_UUID}, pref_label=label, **rest)  # type: ignore[arg-type]
 
@@ -82,7 +85,7 @@ def test_sequence_fields_become_tuples() -> None:
         alt_labels=["Client", "Buyer"],  # type: ignore[arg-type]
         schemes=["sales"],  # type: ignore[arg-type]
     )
-    assert customer.alt_labels == ("Client", "Buyer")
+    assert customer.alt_labels == (Text("Client"), Text("Buyer"))
     assert customer.schemes == ("sales",)
 
 
@@ -175,7 +178,7 @@ def test_two_sources_describing_one_object_merge_to_one_identity() -> None:
     # Both memberships survive: an object in two schemes is the ordinary case, not a
     # conflict (spec 5.3).
     assert customer.schemes == ("finance", "sales")
-    assert customer.alt_labels == ("Client",)
+    assert customer.alt_labels == (Text("Client"),)
 
 
 def test_identity_is_followed_transitively() -> None:
@@ -211,7 +214,7 @@ def test_merging_is_independent_of_the_order_the_objects_arrive_in() -> None:
     # Ordered by lowest source ref, so the merged Customer leads on "collibra:BC-12".
     # Which key orders them is arbitrary; that it is a property of the objects rather
     # than of the fetch is not.
-    assert [e.pref_label for e in forwards.entities] == ["Customer", "Order"]
+    assert [str(e.pref_label) for e in forwards.entities] == ["Customer", "Order"]
     assert [e.sort_key for e in forwards.entities] == sorted(e.sort_key for e in forwards.entities)
 
 
@@ -221,7 +224,7 @@ def test_one_source_knowing_something_the_other_does_not_is_not_a_conflict() -> 
 
     merged = merge_models(InternalModel(entities=(bare, described)))
 
-    assert merged.entities[0].definition == "A buyer."
+    assert merged.entities[0].definition == Text("A buyer.")
 
 
 def test_an_empty_value_is_not_known_rather_than_a_rival_answer() -> None:
@@ -231,7 +234,7 @@ def test_an_empty_value_is_not_known_rather_than_a_rival_answer() -> None:
     blank = entity(refs={"ellie-main": CUSTOMER_UUID}, definition="")
     described = entity(refs={"ellie-main": CUSTOMER_UUID}, definition="A buyer.")
 
-    assert merge_models(InternalModel(entities=(blank, described))).entities[0].definition == (
+    assert merge_models(InternalModel(entities=(blank, described))).entities[0].definition == Text(
         "A buyer."
     )
     # And with neither saying anything, the two ways of saying nothing collapse onto one,
@@ -392,3 +395,101 @@ def test_an_issue_names_where_the_problem_is() -> None:
     issue = Issue(Severity.ERROR, "unknown adapter 'ellie2'", "sources[0].adapter")
     assert str(issue) == "error: unknown adapter 'ellie2' (sources[0].adapter)"
     assert str(Issue(Severity.WARNING, "no definition")) == "warning: no definition"
+
+
+# --- text and language ----------------------------------------------------------------
+
+
+def test_a_plain_string_becomes_a_text_that_states_no_language() -> None:
+    # None means "the source did not say", not "no language": the instance's default is
+    # applied when the graph is built, which is the only place that knows it (spec 5.5
+    # rule 6).
+    customer = entity()
+    assert customer.pref_label == Text("Customer")
+    assert customer.pref_label.language is None
+
+
+def test_a_label_that_arrives_tagged_keeps_its_language() -> None:
+    # Spec 11 #5: the instance default applies only where a source stated nothing.
+    customer = entity(label=Text("Asiakas", "fi"))
+    assert customer.pref_label == Text("Asiakas", "fi")
+
+
+def test_two_texts_are_equal_only_when_their_languages_agree() -> None:
+    assert Text("Customer", "en") != Text("Customer", "fi")
+    assert Text("Customer", "en") != Text("Customer")
+    assert Text("Customer", "en") == Text("Customer", "en")
+
+
+def test_text_refuses_a_language_that_is_not_a_tag() -> None:
+    with pytest.raises(ValueError, match="not a language tag"):
+        Text("Customer", "not a tag")
+
+
+def test_an_empty_text_cannot_be_built() -> None:
+    # An empty definition emits no triple (spec 5.3); a Text rendering as "" would emit
+    # one, which is why absent and empty are made one state before they get here.
+    with pytest.raises(ValueError, match="must not be empty"):
+        Text("")
+
+
+def test_empty_members_are_dropped_from_set_valued_text_fields() -> None:
+    # A spreadsheet cell that is blank is not a synonym.
+    assert entity(alt_labels=["Client", "", "Buyer"]).alt_labels == (Text("Client"), Text("Buyer"))
+
+
+def test_the_same_text_in_two_languages_is_a_conflict_not_a_silent_choice() -> None:
+    # Which of two labels wins would otherwise depend on the order the sources were
+    # configured in, and the diff would show a language nobody chose (spec 5.2).
+    english = entity(label=Text("Customer", "en"))
+    finnish = entity(label=Text("Customer", "fi"))
+    with pytest.raises(MergeConflictError, match="pref_label"):
+        merge_models(InternalModel(entities=(english, finnish)))
+
+
+def test_texts_of_mixed_taggedness_can_be_unioned() -> None:
+    # Sorting Text against Text by field order would compare None with str and raise,
+    # which unioning two set-valued fields does routinely.
+    left = entity(alt_labels=[Text("Client", "en")])
+    right = entity(alt_labels=[Text("Buyer")])
+    merged = merge_models(InternalModel(entities=(left, right))).entities[0]
+    assert merged.alt_labels == (Text("Buyer"), Text("Client", "en"))
+
+
+# --- the reused SKOS fields -----------------------------------------------------------
+
+
+def test_the_three_reused_skos_fields_are_set_valued_and_union_on_merge() -> None:
+    # Two sources each contributing an example are not in disagreement (spec 3.3), so
+    # these union rather than having to agree the way a definition does.
+    left = entity(hidden_labels=["Custmer"], scope_notes=["Excludes prospects."], examples=["Acme"])
+    right = entity(
+        hidden_labels=["Cstomer"], scope_notes=["Includes churned."], examples=["Globex"]
+    )
+    merged = merge_models(InternalModel(entities=(left, right))).entities[0]
+
+    assert merged.hidden_labels == (Text("Cstomer"), Text("Custmer"))
+    assert merged.scope_notes == (Text("Excludes prospects."), Text("Includes churned."))
+    assert merged.examples == (Text("Acme"), Text("Globex"))
+
+
+def test_scheme_members_union_every_set_valued_field_the_base_class_has() -> None:
+    # SchemeMember adds `schemes` to the list. Re-spelling the inherited names instead of
+    # deriving them would make a field added to the base class and forgotten here into a
+    # scalar that two sources have to agree on — losing data silently, which is exactly
+    # what UNION_FIELDS exists to prevent.
+    assert set(SemanticObject.UNION_FIELDS) <= set(SchemeMember.UNION_FIELDS)
+    assert "schemes" in SchemeMember.UNION_FIELDS
+
+
+def test_a_taxonomy_value_needs_no_code() -> None:
+    # A ragged workbook states hierarchy and labels and no notation at all (spec 5.3);
+    # inventing one from the row's identity key would emit a code no source said.
+    value = TaxonomyValue(source_refs={"product-category": "Laptops"}, pref_label="Laptops")
+    assert value.code is None
+    assert (
+        TaxonomyValue(
+            source_refs={"product-category": "Laptops"}, pref_label="Laptops", code=""
+        ).code
+        is None
+    )

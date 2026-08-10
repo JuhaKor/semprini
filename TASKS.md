@@ -905,7 +905,7 @@ done and green.
     `fetch()` that reads and returns, a `validate_config()` that reports rather than
     raises, a `summary()` line, and a source failure raised as `SourceUnreachableError`.
 
-- [ ] **D2 · Excel taxonomy adapter, and the fixture instance**
+- [x] **D2 · Excel taxonomy adapter, and the fixture instance**
   **Spec:** §5.3 (Excel adapter), §6.1 (fixture instance), §9.2 rule 5
   **Deliver:** `src/semprini/adapters/excel_taxonomy.py`, plus `tests/fixtures/acme/` — a
   complete synthetic instance (config, workbook, ID map, golden TTL). Chosen before the
@@ -916,6 +916,116 @@ done and green.
   conditions (dangling `parent_code`, hierarchy cycle, duplicate code) fails the compile
   with a message identifying the row.
   **Depends:** C2, D1
+  **Done.** 537 tests green (47 of them D2's); ruff, ruff format and mypy (strict) clean;
+  the wheel installs into a bare venv with pip and `semprini adapters` lists
+  `excel-taxonomy` from it. Thirty mutations were checked against the suite — 26 caught,
+  and the four survivors are **equivalent mutants**, recorded below rather than chased.
+
+  **The input format changed, and that is the headline.** §5.3 specified a flat sheet
+  with `code` / `label` / `parent_code`; the pilot's workbooks are the shape the old
+  prototype read — two sheets, and a **ragged** `L1..Ln` hierarchy where depth is a
+  value's position across columns. The pilot format won and the spec was rewritten to
+  match. Consequences worth knowing before reading the code:
+  - **A cycle cannot be expressed.** A row's ancestors are a prefix of its own cells, so
+    §5.3's cycle rule — and this task's own verify line — describe a check the format
+    makes impossible. It is replaced by *skipped level* (`L1` and `L3` filled, `L2`
+    empty), which is the same class of mistake and is what the prototype got wrong: it
+    collected non-empty cells and discarded their positions, reading L1+L3 as depth 2 and
+    silently attaching the value to the wrong parent.
+  - **A label is structural**, so renaming an `L2` cell re-parents everything under it.
+    Identity therefore comes from the `Concept URI` column and never from the labels.
+  - **There is no `code` column**, so `TaxonomyValue.code` is now optional and this
+    adapter emits no `skos:notation`. Deriving one from `Concept URI` would emit a code
+    no source ever said and that stewards would then maintain.
+
+  **One workbook is one taxonomy is one source.** This reverses the arrangement §5.3 and
+  the fixture config had (`name: taxonomies` holding a `files:` list) and it was a
+  requirement rather than a tidy-up: provenance has to say *which file* an object came
+  from. It also removes a hazard rather than solving one — `Concept URI` values are only
+  unique **within** a workbook, so one source spanning several would have collided in the
+  ID map on a generic `Other` or `Miscellaneous`, and B4's injectivity check would have
+  failed the pilot's second workbook. Per-workbook sources make the key unique by
+  construction. Two rules protect it:
+  - **A source name never names the adapter**, though that was asked for. `source_name`
+    is half the ID map key and so permanent; `excel-product-category` would re-mint every
+    IRI in that taxonomy the day the same content arrives as CSV. Which adapter read a
+    file lives in the config and the run report, neither of which is identity.
+  - **The path is not the name either**, and the *scheme* is keyed by its slug rather
+    than its file name, so a workbook can be moved or renamed freely.
+
+  **Decisions taken** (all implemented and now in the spec):
+  - **`skos:hiddenLabel`, `skos:scopeNote` and `skos:example` are in**, all set-valued and
+    on `SemanticObject` rather than on `TaxonomyValue` — everything here is a
+    `skos:Concept`, and D3 will supply examples for entities. They are **reused SKOS
+    terms**, so `sem.ttl` did not change and there is no ontology version bump: the A2/G5
+    frozen-version gap stays closed. Set-valued because two sources each contributing an
+    example are not in disagreement; making them scalars would fail runs over data that
+    agrees. `Notes` and the four provenance columns are tolerated and ignored — they would
+    be real `sem:` additions, and a hand-typed extraction date does not belong in a graph
+    the compiler regenerates.
+  - **The model now carries language, and D2 inherited that job from D3.** The workbook
+    writes `"Power tools"@en`, so this is the first adapter to produce a tagged label and
+    §5.5 rule 6's "a label that arrives with a tag keeps it" branch is reachable at last.
+    `model.Text` is a value type of `(value, language | None)`; a plain `str` normalizes
+    to it, so every existing construction site was untouched. **Two texts with the same
+    characters and different languages are not equal**, which makes them a merge conflict
+    instead of an order-dependent silent choice — a real limitation (§3.3 allows one
+    `prefLabel` per language and a scalar field cannot hold two), but the honest way to
+    meet it. Three levels of language, narrowest first: the cell's own tag, the
+    workbook's `Language` row, then the instance's `default_language`.
+  - **`Scheme.enumerates` is now a `SourceRef`, not an IRI.** The workbook names the
+    entity by its key in the modelling tool, and an adapter has no IRIs to point with.
+    This **removed the one exception** in `testing.py`'s no-minting check, so that rule
+    now reads the same for every field. Note the consequence for H1: a workbook with
+    `Reference Entity UUID` filled in will not compile until the Ellie source is
+    configured and compiled, and the build error says exactly that. The fixture leaves
+    the cell blank.
+  - **Header matching is strict.** A missing `Concept URI` or `L1` column is refused,
+    naming the headers it did find. Lenient matching is what makes this format fail
+    quietly: a sheet whose level columns are called `Level 1` reads as an *empty*
+    taxonomy, which compiles to a scheme with no values and deprecates everything that
+    was in it.
+  - **Every problem in a workbook is reported at once**, which is a deliberate departure
+    from `AdapterError`'s single-cause shape (D1). A taxonomy is edited in bulk, so its
+    mistakes arrive in bulk, and one per CI run costs a steward a round trip each.
+
+  **One defect found by its own test and worth not re-introducing.** The hierarchy was
+  first matched on **raw cell text**, so `"Tools"@en` in one row and a bare `Tools` in
+  another were two branches — and every row under the second spelling was reported as an
+  orphan pointing at a parent the reviewer could plainly see in the sheet. The fixture's
+  own workbook mixes both spellings. Matching is on parsed label *values* now
+  (`test_a_branch_spelled_two_ways_is_still_one_branch`). The general lesson is the same
+  one C1 recorded about scheme slugs: **a value that is parsed for one purpose must be
+  parsed before it is used for another.**
+
+  **The four surviving mutants, so nobody re-litigates them:** depth-by-count instead of
+  depth-by-position is equivalent *because* the skipped-level guard runs first, leaving
+  `filled` always contiguous; the two spellings of the empty-member filter agree on every
+  reachable input, since `Text("")` cannot be constructed; and judging only the local path
+  flavour is equivalent on Windows but **is** caught on CI, which runs `ubuntu-latest`,
+  by the `C:\keys\...` case.
+
+  **For the tasks that come next:**
+  - **`tools/build_fixture_instance.py` is a stand-in for `semprini run` and E2 replaces
+    it.** It already keeps E2's write order (build → manifest → `unchanged()` → report
+    only if something moved → `write_all` → `registry.save()` once) and is imported by the
+    suite, so the code that regenerates the committed fixture and the code that verifies
+    it are the same code. `pythonpath = ["."]` in `pyproject.toml` is what lets tests
+    import it; `tools/` gained an `__init__.py` so mypy sees one module, not two.
+  - **The fixture instance is now complete and is the thing to compile.** `semprini run`
+    against `tests/fixtures/acme/` should reproduce `generated/` byte for byte and append
+    no ID-map row; both are asserted today through the stand-in.
+  - **`tests/sample.py` was deliberately left alone.** Its `EXCEL = "taxonomies"` source
+    and `product-category.xlsx` scheme key model the *old* arrangement, and it is a
+    hand-built model exercising all five kinds rather than adapter output — no adapter
+    produces entities until D3. Updating it would churn three golden files for no
+    behavioural gain, but a reader should not mistake it for what the adapter emits.
+  - **F1's shapes** should cover the three new properties with a language-tag constraint
+    and nothing more; specifically **do not** extend §6.1's missing-definition warning to
+    missing scope notes.
+  - **D3 inherits nothing from the language work** — it is done. What it does inherit is
+    `sem:enumerates`: Ellie entities are what a taxonomy's `Reference Entity UUID` points
+    at, so the fixture can gain a populated one once that adapter lands.
 
 - [ ] **D3 · Ellie adapter**
   **Spec:** §5.3 (Ellie adapter)
@@ -1110,11 +1220,15 @@ be deferred without stalling the build.
   practice rather than by convention: C2's manifest hashes every file the compiler writes
   and refuses to be written by an uninstalled one. Phase C is complete.
 - ~~**D1 next.**~~ Done: the plane now has a plugin interface, discovery that imports
-  nothing, and a contract an outside author can run against their own adapter. **D2
-  next** — it is the first real source, and the first to close the loop end to end, since
-  it needs no network. It also flips two switches D1 deliberately left off: registering
-  `excel-taxonomy` as an entry point turns the unknown-adapter check on for real, and
-  fills in the fixture instance the whole suite compiles against.
+  nothing, and a contract an outside author can run against their own adapter.
+- ~~**D2 next.**~~ Done, and the loop is closed: a committed synthetic instance compiles
+  from a workbook to Turtle and recompiles to the same bytes, minting nothing. Both
+  switches D1 left off are on — `excel-taxonomy` is a registered entry point, so the
+  unknown-adapter check judges real names, and `tests/fixtures/acme/` is a complete
+  instance. **E1 next** by the dependency order (it needs D2), though **E2** is the
+  larger prize: `tools/build_fixture_instance.py` is a working sketch of `semprini run`
+  and shows the remaining work is orchestration, stale-file deletion and the partial-run
+  question, not new machinery.
 - ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
   once an instance holds generated files, every serializer change becomes a migration
   (§7). It now is one — a change to `serialize.py`'s output is a major bump.

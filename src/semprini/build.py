@@ -51,6 +51,7 @@ from semprini.model import (
     Severity,
     SourceRef,
     TaxonomyValue,
+    Text,
 )
 
 __all__ = [
@@ -471,6 +472,9 @@ class _Builder:
         }
         statements.update((SEM_SOURCE_REF, Literal(str(ref))) for ref in object_.refs)
         statements.update((SKOS.altLabel, self._text(label)) for label in object_.alt_labels)
+        statements.update((SKOS.hiddenLabel, self._text(label)) for label in object_.hidden_labels)
+        statements.update((SKOS.scopeNote, self._text(note)) for note in object_.scope_notes)
+        statements.update((SKOS.example, self._text(example)) for example in object_.examples)
         if object_.definition is not None:
             statements.add((SKOS.definition, self._text(object_.definition)))
 
@@ -493,7 +497,11 @@ class _Builder:
     def _scheme_statements(self, scheme: Scheme) -> Iterator[tuple[URIRef, Node]]:
         yield (SEM_SCHEME_TYPE, Literal(str(scheme.scheme_type)))
         if scheme.enumerates is not None:
-            yield (SEM_ENUMERATES, URIRef(scheme.enumerates))
+            # Resolvable by now: _check_enumerated_entities ran in the earlier batch and
+            # build() raised if it did not resolve, so this cannot emit a placeholder.
+            iri = self.registry.iri(scheme.enumerates)
+            assert iri is not None
+            yield (SEM_ENUMERATES, URIRef(iri))
 
     def _taxonomy_statements(
         self,
@@ -501,7 +509,9 @@ class _Builder:
         resolved: Mapping[SemanticObject, str],
         schemes: Mapping[str, _SchemeEntry],
     ) -> Iterator[tuple[URIRef, Node]]:
-        yield (SKOS.notation, Literal(value.code))
+        if value.code is not None:
+            # Untagged and plain: a notation is a code, not prose in a language.
+            yield (SKOS.notation, Literal(value.code))
         if value.parent is not None:
             yield (SKOS.broader, self._reference(value, value.parent, "parent"))
         else:
@@ -521,16 +531,17 @@ class _Builder:
 
     # ------------------------------------------------------------------ resolution
 
-    def _text(self, value: str) -> Literal:
-        """A label or definition as a literal, with a language tag (spec 5.5 rule 6).
+    def _text(self, value: str | Text) -> Literal:
+        """A label, definition or note as a literal, tagged (spec 5.5 rule 6).
 
         The instance's ``default_language`` is applied per value rather than to all of
         them, so that a source which already knows its languages does not have to discard
-        them. No v1 adapter produces a tagged label — the internal model carries plain
-        strings — so today every value takes the default; the seam is here because rule 6
-        is a promise about what happens when one does.
+        them: a value that arrived carrying a tag keeps it, and only an untagged one takes
+        the default. The Excel taxonomy adapter states tags per cell (spec 5.3), so both
+        branches are reachable.
         """
-        return Literal(value, lang=self.context.default_language)
+        text = value if isinstance(value, Text) else Text(value)
+        return Literal(text.value, lang=text.language or self.context.default_language)
 
     def _reference(self, object_: SemanticObject, ref: SourceRef, role: str) -> URIRef:
         """The IRI of another object this one points at.
@@ -647,24 +658,30 @@ class _Builder:
                     )
 
     def _check_enumerated_entities(self) -> None:
-        """``sem:enumerates`` is configured by hand, so its target is checked (spec 5.3).
+        """``sem:enumerates`` names another source's object, so its target is checked.
 
-        A taxonomy pointing at an IRI no run ever minted is a typo in
-        ``config/semprini.yaml``, and it would otherwise reach the output as a triple
-        pointing into empty space. The *kind* is checked too, from the ID map's own
-        column: ``sem:enumerates`` runs scheme → **entity** (spec 3.3), and an IRI pasted
-        from the wrong file is a plausible mistake that would otherwise produce a
-        well-formed, wrong statement.
+        A taxonomy pointing at something no run ever compiled would otherwise reach the
+        output as a triple pointing into empty space. This is the ordinary case while an
+        instance is being brought up rather than an exotic one: a workbook names the
+        entity by its key in the modelling tool (spec 5.3), so a taxonomy compiled before
+        that tool's source is configured has nothing to point at yet, and the message has
+        to be plain enough to say so.
+
+        The *kind* is checked too, from the ID map's own column: ``sem:enumerates`` runs
+        scheme → **entity** (spec 3.3), and a key copied from the wrong place is a
+        plausible mistake that would otherwise produce a well-formed, wrong statement.
         """
         known = {row.iri: row.kind for row in self.registry.id_map}
         for scheme in self.model.schemes:
             if scheme.enumerates is None:
                 continue
-            kind = known.get(scheme.enumerates)
+            iri = self.registry.iri(scheme.enumerates)
+            kind = known.get(iri) if iri is not None else None
             if kind is None:
                 self._issue(
-                    f"scheme {scheme.slug!r} enumerates {scheme.enumerates}, which is not "
-                    f"an IRI this instance has minted; check the 'enumerates' setting",
+                    f"scheme {scheme.slug!r} enumerates {scheme.enumerates}, which no run "
+                    f"has compiled; the source that defines that entity must be "
+                    f"configured and compiled first",
                     scheme,
                 )
             elif kind is not Kind.ENTITY:

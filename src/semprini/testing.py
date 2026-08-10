@@ -55,7 +55,6 @@ from semprini.model import (
     Issue,
     IssueError,
     RunContext,
-    Scheme,
     SemanticObject,
     Severity,
 )
@@ -197,14 +196,13 @@ def _check_source_refs(model: InternalModel, source_name: str, issues: list[Issu
 def _check_nothing_is_minted(model: InternalModel, ctx: RunContext, issues: list[Issue]) -> None:
     """No adapter-supplied value is an IRI in the instance's or the metamodel's space.
 
-    ``Scheme.enumerates`` is the one exception, and it is not really one: that IRI is
-    configured by hand in the instance and passed through (spec 5.3), so the adapter is
-    relaying a decision rather than making one.
+    There is no exception. ``Scheme.enumerates`` used to be one — it held an IRI the
+    instance configured by hand — and is now a ``SourceRef`` like every other
+    cross-reference (spec 5.3), so an adapter has nothing left that is allowed to look
+    like an IRI and the rule reads the same for every field.
     """
     for object_ in model.objects:
         for name, value in _strings(object_):
-            if isinstance(object_, Scheme) and name == "enumerates":
-                continue
             if ctx.base_iri in value:
                 _fail(
                     issues,

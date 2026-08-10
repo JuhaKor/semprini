@@ -40,9 +40,9 @@ semprini = "semprini.cli:main"
 # group. Each line is uncommented by the task that writes its adapter class — D2 for
 # excel-taxonomy, D3 for ellie — since an entry point pointing at a module with no
 # adapter in it would be discovered and then refused as broken.
-# [project.entry-points."semprini.adapters"]
+[project.entry-points."semprini.adapters"]
+excel-taxonomy = "semprini.adapters.excel_taxonomy:ExcelTaxonomyAdapter"
 # ellie = "semprini.adapters.ellie:EllieAdapter"
-# excel-taxonomy = "semprini.adapters.excel_taxonomy:ExcelTaxonomyAdapter"
 
 [tool.poetry]
 packages = [{ include = "semprini", from = "src" }]
@@ -53,6 +53,7 @@ ruff = ">=0.6"
 mypy = ">=1.11"
 types-requests = ">=2.32"
 types-pyyaml = ">=6.0"
+types-openpyxl = "^3.1.5.20260807"
 
 [tool.ruff]
 line-length = 100
@@ -68,6 +69,10 @@ files = ["src", "tests", "tools"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# So that tests can import this repository's own tooling. `tools/build_fixture_instance.py`
+# both regenerates the committed fixture instance and is what the suite recompiles it
+# with, and the two must be the same code or the golden files prove nothing.
+pythonpath = ["."]
 
 [build-system]
 requires = ["poetry-core>=2.0"]

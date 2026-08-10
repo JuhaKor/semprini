@@ -1,18 +1,19 @@
 # The synthetic instance the plane's own test suite compiles (spec 6.1). Every value
 # here is invented: no adopting organization's content ever enters this repository
-# (spec 9.2 rule 5). Filled out further by task D2, which adds the workbook, the ID map
-# and the golden TTL this configuration describes.
+# (spec 9.2 rule 5).
 semprini:
   base_iri: https://semantics.example.com/
   instance_id: acme
   default_language: en
 
+# One workbook is one taxonomy is one source (spec 5.3). The source's `name` is what
+# every object in that workbook carries as sem:sourceRef and what the ID map is keyed by,
+# so it says which file an object came from — and it deliberately does *not* name the
+# adapter, which would freeze "read by excel-taxonomy" into identity and re-mint every
+# IRI the day the same taxonomy arrives in another format.
 sources:
   - adapter: excel-taxonomy
-    name: taxonomies
+    name: product-category
     config:
-      files:
-        - path: sources/taxonomies/product-category.xlsx
-          scheme_slug: product-category
-          scheme_label: "Product category taxonomy"
-          codes_are_stable: true
+      path: sources/taxonomies/product-category.xlsx
+      scheme_slug: product-category

@@ -20,7 +20,7 @@ from semprini.cli import ExitCode, main
 STUB_INVOCATIONS = [
     ["init", "--base-iri", "https://semantics.example.com/", "--org", "example"],
     ["run"],
-    ["run", "--source", "taxonomies", "--dry-run"],
+    ["run", "--source", "product-category", "--dry-run"],
     ["check"],
     ["migrate", "--to", "0.2.0"],
 ]
