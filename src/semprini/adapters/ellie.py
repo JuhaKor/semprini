@@ -81,8 +81,13 @@ _DESCRIPTION = "Description"
 _SYNONYMS = "Synonyms"
 _EXAMPLES = "Examples"
 
-_TARGET = "target"
-"""The label direction that reads source → target — "Order *has one or more* Order line"."""
+_SOURCE = "source"
+"""The one label direction that reads *backwards*, target → source — "Order line *is part
+of* Order". Everything else, ``"target"`` included and an absent direction with it, reads
+source → target. Stated as the exception rather than as a list of accepted values on
+purpose: a relationship carrying a single label often omits `direction` altogether, and
+holding out for the literal string ``"target"`` would discard the only verb the modeller
+wrote and then fail the run for having no label."""
 
 
 class EllieContentError(AdapterError):
@@ -167,7 +172,16 @@ class EllieAdapter(BaseAdapter):
         parts: list[InternalModel] = []
         read: list[_ModelRead] = []
         for entry in self._entries():
-            document = self._document(entry)
+            try:
+                document = self._document(entry)
+            except EllieContentError as error:
+                # Batched with the rest rather than raised here: a file that will not parse
+                # is exactly as much a content problem as a file that parses and says the
+                # wrong thing, and stopping on the first would hand the operator one
+                # problem per CI round trip. `SourceUnreachableError` is deliberately not
+                # caught — that is exit 3, a retry rather than an edit (spec 5.1).
+                problems.extend(error.issues)
+                continue
             part = _read_model(document, source=self.source_name, entry=entry, issues=problems)
             if part is not None:
                 parts.append(part.model)
@@ -447,6 +461,21 @@ def _read_model(
         issues.append(Issue(Severity.ERROR, f"model {entry.model_id} has no name", where))
         return None
 
+    if "entities" not in document:
+        # An empty `entities` list is a model that genuinely holds nothing and is read as
+        # such; an *absent* one is a truncated file. The two are worth separating because
+        # reading the second as the first deprecates every object the model holds (spec
+        # 5.4) — the same failure `_unwrap` refuses a wrapper-shaped document for.
+        issues.append(
+            Issue(
+                Severity.ERROR,
+                f"model {entry.model_id} states no 'entities' at all; an export of an "
+                f"empty model states an empty list, so this file looks truncated",
+                where,
+            )
+        )
+        return None
+
     scheme = Scheme(
         # Keyed by Ellie's model id, not by the slug: the slug is this instance's name for
         # the scheme and the id is the source's, and the ID map is keyed by the source's
@@ -527,7 +556,7 @@ def _read_relationships(
             continue
 
         labels = _labels(raw)
-        forward = [label for label, direction in labels if direction == _TARGET]
+        forward = [label for label, direction in labels if direction.casefold() != _SOURCE]
         # Ellie's own `name` first, when a modeller filled it in; the reading verb
         # otherwise. A name appearing later re-labels the node without re-minting it, so
         # preferring it costs no identity (spec 5.4).
@@ -566,6 +595,7 @@ def _read_entities(
 ) -> tuple[tuple[Entity, ...], tuple[Attribute, ...]]:
     entities: list[Entity] = []
     attributes: list[Attribute] = []
+    held: set[str] = set()
     for index, raw in enumerate(_items(document, "entities", entry, issues)):
         where = f"{entry.path}#entities[{index}]"
         key = _plain(raw.get("id"))
@@ -574,6 +604,7 @@ def _read_entities(
             issues.append(Issue(Severity.ERROR, "an entity needs an 'id' and a 'name'", where))
             continue
         metadata = _mapping(raw.get("metadata"))
+        held.add(key)
         entities.append(
             Entity(
                 source_refs={source: key},
@@ -590,6 +621,19 @@ def _read_entities(
         )
         attributes.extend(
             _read_attributes(raw, source=source, entry=entry, owner=key, issues=issues)
+        )
+    # Inheritance lands *on* the narrower entity, so a supertype relationship pointing at
+    # an entity this model does not hold has nowhere to go — and, unlike every other
+    # cross-reference, nothing downstream would notice: the build stage checks the refs an
+    # object carries, and this one was never carried. Reported here or not at all.
+    for orphan in sorted(set(broader) - held):
+        issues.append(
+            Issue(
+                Severity.ERROR,
+                f"a supertype relationship makes {orphan} a specialization, but the model "
+                f"holds no such entity",
+                entry.path,
+            )
         )
     return tuple(entities), tuple(attributes)
 

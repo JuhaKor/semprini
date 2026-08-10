@@ -128,7 +128,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   model becomes a glossary scheme. **Supertype relationships become `skos:broader`
   between the two entities** rather than reified relationships — Ellie gives those rows
   no name or verb, so reifying one would mean inventing a label no modeller wrote.
-  Entity synonyms become `skos:altLabel` and the examples field one `skos:example`.
+  A relationship's verb label reads source → target unless its `direction` says
+  `"source"` — an absent direction included, which is what a single-label relationship
+  usually exports. Two more exports are refused rather than compiled: one whose supertype
+  relationship names a narrower entity the model does not hold (the inheritance would
+  otherwise vanish silently, since it is carried *by* that entity), and one stating no
+  `entities` key at all, which is a truncated download rather than an empty model and
+  would deprecate every object the model holds. Problems in several exports are reported
+  together, a file that will not parse included, so two broken models cost one CI round
+  trip rather than two. Entity synonyms become `skos:altLabel` and the examples field one `skos:example`.
   `progressStatus`, source-system and ownership fields, relationship cardinality and
   every attribute metadata field but `Description` are deliberately **not** carried yet:
   each needs a metamodel term that does not exist, and adding one is a version bump.
@@ -141,7 +149,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   issued that key, as `enumerates_source`. It is required exactly when the workbook's
   `Reference Entity UUID` cell is filled: the ID map is keyed by `(source name, source
   key)`, so `sem:enumerates` could not previously resolve to an entity another source
-  defined.
+  defined. Naming the taxonomy's own source there is refused as a configuration error —
+  it is the mistake the setting exists to undo, and it would otherwise surface two stages
+  later as an unresolvable reference pointing at the workbook rather than at the config.
 
 ### Ontology 0.1.0
 

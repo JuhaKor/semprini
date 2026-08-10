@@ -1083,9 +1083,9 @@ done and green.
   **Depends:** D1
   **~~Gated by:~~ §11 #7 is resolved by the scope change below** — v1 makes no API call,
   so pagination and rate limits belong to the later API mode.
-  **Done.** 612 tests green (65 of them D3's); ruff, ruff format and mypy (strict) clean;
+  **Done.** 619 tests green (72 of them D3's); ruff, ruff format and mypy (strict) clean;
   the wheel installs into a bare venv with pip and `semprini adapters` lists both `ellie`
-  and `excel-taxonomy` from it. Forty-four mutations were checked against the suite — the
+  and `excel-taxonomy` from it. Fifty mutations were checked against the suite — the
   model never unwrapped, an unrecognized document read as a model, `modelId` unchecked or
   compared raw rather than as text, inheritance detected from one end only, inheritance
   also reified, an entity its own supertype, only the first supertype kept, `broader` not
@@ -1107,6 +1107,34 @@ done and green.
   whichever label comes first" passed it; nothing covered a malformed *member* of a
   well-formed array; and the `base_url` test asserted only the issue's location, which
   both the missing and the malformed branch produce.
+
+  **A code review of the branch then changed five behaviours** (all of them refusals or
+  leniency, none of them the graph the fixture compiles — it recompiles byte-for-byte):
+  - **A verb label with no `direction` now reads source → target**, as Ellie's own rule
+    has it: `"source"` is the exception and everything else, absent included, is forward.
+    Requiring the literal `"target"` discarded the only label a single-label relationship
+    carries and then refused the relationship for having none — a legitimate model made
+    uncompilable. The comparison is case-folded too.
+  - **A supertype relationship naming a narrower entity the model does not hold is
+    refused.** Inheritance lands *on* that entity, so with no entity to carry the
+    reference the build stage has nothing to fail on: this was the one cross-reference
+    that could vanish without a diff line.
+  - **An export stating no `entities` key at all is refused as truncated.** An export of
+    an empty model states `"entities": []`, so the two are now separated — reading the
+    first as the second compiles an empty scheme and deprecates a whole domain.
+  - **A file that will not parse joins the batch** instead of raising on the spot, so two
+    broken models cost one CI round trip rather than two. `SourceUnreachableError` still
+    raises immediately: exit 3 is a retry, not an edit.
+  - **`enumerates_source` naming the taxonomy's own source is refused** (exit 2) — the
+    exact mistake the setting was added to undo. A *misspelt* source name is still only
+    caught at build: an adapter is given its own settings and not the roster of configured
+    sources, and the comment claiming otherwise was corrected rather than the code.
+
+  Two further review findings were left alone deliberately. `skos:broader` cycles of
+  length ≥ 2 are real and uncaught — **F1 owns them**, see the note there. And §6.1.5 had
+  said `skos:broader` was "only between concepts in the same taxonomy scheme", which D3's
+  entity inheritance contradicts; the spec line was corrected in this change, since a
+  shape written to it would have rejected the fixture.
 
   **The scope changed before the work started, and that is the headline.** §5.3 specified
   the Ellie REST API; the requirement is to ingest a JSON file already exported from
@@ -1269,6 +1297,12 @@ done and green.
   **Verify:** each constraint has a conforming and a violating fixture; the fixture
   instance conforms; warnings do not fail the run.
   **Depends:** D2
+  **F1 owns the `skos:broader` cycle rule, and nothing before it can.** D3 refuses an
+  entity that is its own supertype, which is a cycle of one; a cycle of two or more is
+  currently emitted into `generated/` unnoticed. An adapter cannot catch it — it sees one
+  source, and inheritance drawn across two of them closes a loop neither one holds — so
+  the check has to run on the merged graph. Cover both hierarchies: taxonomy values and
+  entities, which §6.1.5 now says may both carry `skos:broader`.
 
 - [ ] **F2 · `semprini check` pipeline**
   **Spec:** §6.1 items 1–7

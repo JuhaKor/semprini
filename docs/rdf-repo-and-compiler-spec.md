@@ -710,7 +710,9 @@ Ellie instances are two sources, since their UUID spaces are unrelated.
 Both file shapes are accepted: some exports wrap the model in a `model` object and some do
 not. The document is recognized by structure, and one that is neither is refused by name
 rather than read as a model with no entities — an empty model compiles to an empty scheme,
-which deprecates everything the model used to hold (5.4).
+which deprecates everything the model used to hold (5.4). For the same reason a document
+that states no `entities` key **at all** is refused as truncated: an export of an empty
+model states an empty list, and the two must not be read alike.
 
 - **Model allowlist.** Ellie contains many models; only explicitly registered, validated
   domain models are ingested, keyed by Ellie's model ID — nothing is read that is not
@@ -745,10 +747,15 @@ which deprecates everything the model used to hold (5.4).
   and the reused SKOS term states the fact once and costs the metamodel no new vocabulary
   (3.3). Only that direction is emitted — `skos:narrower` would state the same fact a
   second time, in the other entity's block (5.5 rule 4). An entity may have several
-  broader entities; multiple inheritance is a thing the source can express.
+  broader entities; multiple inheritance is a thing the source can express. A supertype
+  relationship whose narrower end is not among the model's own entities is refused: the
+  fact lands *on* that entity, so with no entity to carry it there is no cross-reference
+  for a later stage to fail on, and the inheritance would vanish without a diff line.
 - **A relationship's `skos:prefLabel` is Ellie's `name` when a modeller filled one in**,
   and otherwise the verb label whose direction reads source → target ("Order *has one or
-  more* Order line"). Every other verb label becomes a `skos:altLabel`. A name appearing
+  more* Order line"). A label reads source → target unless its `direction` is `"source"` —
+  `"target"` and an **absent** direction alike, since a relationship carrying a single
+  label often omits the field. Every other verb label becomes a `skos:altLabel`. A name appearing
   later re-labels the node without re-minting it, so preferring it costs no identity
   (5.4); a relationship with neither is refused, since a node has to have a label and
   inventing one is not an adapter's to do.
@@ -804,7 +811,9 @@ rather than the workbook because it is this instance's to choose (5.1): the work
 states a UUID, and which configured source issued that UUID is not a fact about the
 workbook. Without it the reference would be looked up under the taxonomy's *own* source
 name, where an entity's key can never be found, since the ID map is keyed by
-`(source name, source key)` (5.4). Any other row — creator, dates, version, domain — is documentation for
+`(source name, source key)` (5.4) — which is also why `enumerates_source` naming the
+taxonomy's own source is refused as configuration (exit `2`) rather than left to fail as
+an unresolvable reference much later. Any other row — creator, dates, version, domain — is documentation for
 whoever maintains the workbook and is read by nobody.
 
 **Sheet 2, `Taxonomy`** — one value per row, header row required:
@@ -1046,7 +1055,10 @@ Steps, all blocking unless noted:
      to blocking per instance when steward workflows are ready.
    - `sem:Attribute` has exactly one `sem:attributeOf`; `sem:Relationship` has exactly
      one `sem:source` and one `sem:target`, both `sem:Entity`.
-   - `skos:broader` only between concepts in the same taxonomy scheme; no cycles.
+   - `skos:broader` only between two nodes of the same class — taxonomy value to taxonomy
+     value within one scheme, or entity to entity (inheritance, §3.3) — and **no cycles**,
+     of any length. Nothing earlier in the pipeline can catch a cycle: an adapter sees one
+     source, and inheritance drawn across two of them closes a loop neither one holds.
    - `skos:notation` unique within a scheme.
    - Deprecated nodes: no incoming `skos:broader`/`sem:attributeOf` from active nodes.
    - IRI policy: subject IRIs under the instance's namespaces; local names match the

@@ -591,9 +591,28 @@ def test_a_source_name_that_is_not_a_slug_is_refused(tmp_path: Path) -> None:
     ]
 
 
+def test_a_source_naming_itself_is_refused(tmp_path: Path) -> None:
+    """The mistake this setting exists to undo, and the only wrong value checkable here.
+
+    ``enumerates_source`` names the source whose *model* defines the reference entity. A
+    workbook naming itself looks up its own UUID under its own keys, which can never hit —
+    the reference then fails at build, two stages later, reported against the workbook's
+    UUID rather than against the configuration line that is wrong.
+    """
+    path = workbook(tmp_path / "t.xlsx", [("ont:T", '"T"@en', "", "", "", "", "", "", "")])
+
+    adapter = ExcelTaxonomyAdapter(
+        "sizes",
+        {"path": path.name, "scheme_slug": "sizes", "enumerates_source": "sizes"},
+        RunContext(base_iri=CONTEXT.base_iri, instance_id="acme", repo_root=tmp_path),
+    )
+
+    (issue,) = adapter.validate_config()
+    assert issue.location == "sources.sizes.config.enumerates_source"
+    assert "names this source itself" in issue.message
+
+
 def test_a_blank_reference_entity_enumerates_nothing(tmp_path: Path) -> None:
-    # Which is what the fixture instance does: it configures no modelling tool, so there
-    # is nothing for the cell to point at until D3 ships the Ellie adapter.
     path = workbook(
         tmp_path / "t.xlsx",
         [("ont:T", '"T"@en', "", "", "", "", "", "", "")],

@@ -271,6 +271,32 @@ def test_a_file_that_is_not_json_is_a_compile_failure(tmp_path: Path) -> None:
         fetch(tmp_path, one_model(tmp_path, path))
 
 
+def test_a_file_that_will_not_parse_does_not_hide_another_models_problems(
+    tmp_path: Path,
+) -> None:
+    """One unreadable file must not cost the operator a CI round trip per problem.
+
+    A file that will not parse is as much a content problem as one that parses and says
+    the wrong thing, so it joins the batch rather than stopping the read. Getting this
+    wrong is invisible until the day two models are broken at once, which is exactly the
+    day the batching was supposed to help.
+    """
+    broken = tmp_path / "broken.json"
+    broken.write_text("{", encoding="utf-8")
+    nameless = export(tmp_path / "nameless.json", model_id=2, name="", entities=[])
+
+    with pytest.raises(EllieContentError) as raised:
+        fetch(
+            tmp_path,
+            one_model(tmp_path, broken, model_id=1, slug="broken"),
+            one_model(tmp_path, nameless, model_id=2, slug="nameless"),
+        )
+
+    message = str(raised.value)
+    assert "not readable JSON" in message
+    assert "has no name" in message
+
+
 # ------------------------------------------------------------------ the allowlist
 
 
@@ -461,6 +487,26 @@ def test_an_entity_that_is_its_own_supertype_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(EllieContentError, match="its own supertype"):
         fetch(tmp_path, one_model(tmp_path, path))
+
+
+def test_a_supertype_of_an_entity_the_model_does_not_hold_is_refused(tmp_path: Path) -> None:
+    """The one cross-reference that could vanish without a diff line, so it is caught here.
+
+    Inheritance lands *on* the narrower entity. Name an entity the model does not hold and
+    there is no object to carry the reference, so the build stage — which checks the refs
+    an object carries — has nothing to fail on: the specialization would silently not be
+    there. Every other dangling end is a loud compile failure, and so is this one.
+    """
+    path = export(
+        tmp_path / "m.json",
+        entities=[entity("a", "A")],
+        relationships=[inheritance("r1", "a", "ghost")],
+    )
+
+    with pytest.raises(EllieContentError) as raised:
+        fetch(tmp_path, one_model(tmp_path, path))
+
+    assert "ghost" in str(raised.value)
 
 
 def test_inheritance_stated_in_one_model_and_not_another_unions(tmp_path: Path) -> None:
@@ -655,6 +701,44 @@ def test_the_reading_direction_decides_and_not_the_export_order(tmp_path: Path) 
 
     assert str(found.pref_label) == "has one or more"
     assert [str(label) for label in found.alt_labels] == ["is part of"]
+
+
+def test_a_single_label_with_no_direction_reads_forwards(tmp_path: Path) -> None:
+    """An absent ``direction`` is the common shape, not a malformed one.
+
+    A relationship carrying one verb often omits the field, and Ellie's own rule is that
+    anything other than ``"source"`` reads source → target. Holding out for the literal
+    string ``"target"`` would discard the only verb the modeller wrote and then refuse the
+    relationship for having no label — a legitimate model made uncompilable.
+    """
+    path = export(
+        tmp_path / "m.json",
+        entities=[entity("a", "Order"), entity("b", "Customer")],
+        relationships=[relationship("r1", "a", "b", labels=[{"name": "is placed by"}])],
+    )
+
+    (found,) = fetch(tmp_path, one_model(tmp_path, path)).relationships
+
+    assert str(found.pref_label) == "is placed by"
+    assert found.alt_labels == ()
+
+
+def test_a_backward_label_is_never_the_preferred_one(tmp_path: Path) -> None:
+    """``"source"`` is the one direction that reads backwards, and it is matched on case.
+
+    With only a backward verb there is no forward reading to state, and the adapter refuses
+    rather than labelling the node with a phrase that reads the wrong way round.
+    """
+    path = export(
+        tmp_path / "m.json",
+        entities=[entity("a", "Order"), entity("b", "Order line")],
+        relationships=[
+            relationship("r1", "a", "b", labels=[{"name": "is part of", "direction": "Source"}])
+        ],
+    )
+
+    with pytest.raises(EllieContentError, match="no preferred label"):
+        fetch(tmp_path, one_model(tmp_path, path))
 
 
 def test_a_relationship_with_no_label_at_all_is_refused(tmp_path: Path) -> None:
@@ -862,6 +946,30 @@ def test_a_model_with_no_relationships_is_fine(tmp_path: Path) -> None:
     model = fetch(tmp_path, one_model(tmp_path, path))
 
     assert model.relationships == ()
+
+
+def test_an_export_stating_no_entities_key_at_all_is_refused(tmp_path: Path) -> None:
+    """Unlike ``relationships``, whose absence is benign — because the stakes differ.
+
+    An export of an empty model states ``"entities": []``, so a file with no such key is
+    truncated rather than empty. Read as empty it compiles to a scheme with no members,
+    and the next run deprecates every object the model holds (spec 5.4) — a whole domain
+    lost to a half-written download, arriving in the diff as ordinary change.
+    """
+    path = export(tmp_path / "m.json", relationships=[])
+
+    with pytest.raises(EllieContentError, match="truncated"):
+        fetch(tmp_path, one_model(tmp_path, path))
+
+
+def test_a_genuinely_empty_model_is_read(tmp_path: Path) -> None:
+    """The stated empty list is accepted, so the refusal above turns on the key alone."""
+    path = export(tmp_path / "m.json", entities=[])
+
+    model = fetch(tmp_path, one_model(tmp_path, path))
+
+    assert model.entities == ()
+    assert len(model.schemes) == 1
 
 
 def test_labels_arrive_untagged_and_take_the_instance_language(tmp_path: Path) -> None:

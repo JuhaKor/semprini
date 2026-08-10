@@ -221,13 +221,26 @@ class ExcelTaxonomyAdapter(BaseAdapter):
 
         owner = self.config.get("enumerates_source")
         if owner is not None and not is_slug(str(owner)):
-            # A source name, held to the definition config.py holds every source name to,
-            # so that a typo is caught here rather than as an unresolvable reference two
-            # stages later (spec 5.1).
+            # Held to the definition config.py holds every source name to. Only the shape
+            # is checkable here — an adapter is given its own settings and not the roster
+            # of configured sources, so a *misspelt* name still reaches the build stage and
+            # is reported there as an unresolvable reference (spec 5.1).
             issues.append(
                 Issue(
                     Severity.ERROR,
                     f"not a source name: {owner!r} (lower-case letters, digits, '-' and '_')",
+                    f"{where}.enumerates_source",
+                )
+            )
+        elif owner is not None and str(owner) == self.source_name:
+            # The one wrong value that is checkable, and the mistake this setting exists to
+            # undo: the reference entity is defined by a *modelling* source, so a workbook
+            # naming itself resolves against its own keys and can never hit (spec 5.4).
+            issues.append(
+                Issue(
+                    Severity.ERROR,
+                    "'enumerates_source' names this source itself; it names the source "
+                    "whose model defines the reference entity, not the taxonomy",
                     f"{where}.enumerates_source",
                 )
             )
