@@ -416,6 +416,7 @@ class _Builder:
         self._raise_collected()
 
         blocks = self._blocks(resolved, schemes) + self._carried_blocks()
+        self._check_nothing_is_written_twice(blocks)
         # Cross-references are collected while blocks are built, not raised at the first
         # dangling one. Nothing is assembled or written until after this, so the
         # placeholder _reference() returns for a broken ref cannot escape into a file.
@@ -801,7 +802,7 @@ class _Builder:
                 )
 
     def _check_carried_are_gone(self, resolved: Mapping[SemanticObject, str]) -> None:
-        """A retained node must be one the model no longer holds (spec 3.5).
+        """A retained node must be one the model no longer *describes* (spec 3.5).
 
         Carrying a node the run also compiled would write one subject twice — the model's
         statements and the previous run's, unioned into one graph — so the node would wear
@@ -809,9 +810,15 @@ class _Builder:
         internally contradictory rather than merely wrong. Lifecycle selects carried nodes
         precisely from what the model does *not* contain, so this catches a caller that
         assembled the two halves from different runs.
+
+        Only *defining* blocks are checked. A block that merely states something about a
+        live node is the ``sem:relatesTo`` shortcut, whose subject is an entity the run
+        compiled while the relationship it derives from was retained (spec 4.2) — that is
+        a legitimate pairing, and :meth:`_check_nothing_is_written_twice` is what keeps it
+        from producing the same triple twice.
         """
         live = {iri: object_ for object_, iri in resolved.items()}
-        for subject in sorted({str(node.subject) for node in self.carried}):
+        for subject in sorted({str(node.subject) for node in self.carried if node.defines}):
             object_ = live.get(subject)
             if object_ is not None:
                 self._issue(
@@ -820,6 +827,34 @@ class _Builder:
                     f"is either built from the model or retained from the previous output",
                     object_,
                 )
+
+    def _check_nothing_is_written_twice(self, blocks: Sequence[_Block]) -> None:
+        """No statement may be written into two files (spec 4.2, 5.5 rule 4).
+
+        The invariant the whole partitioning scheme rests on: one changed fact is one
+        changed line, which it stops being the moment a triple lives in two places. It is
+        checked rather than assumed because the model and the retained nodes are assembled
+        from different evidence — a shortcut the previous run wrote and this one also
+        derives would otherwise appear in both files, and the second copy would only show
+        up as a diff hunk nobody could explain.
+        """
+        seen: dict[tuple[URIRef, URIRef, Node], str] = {}
+        for block in sorted(blocks, key=lambda item: item.name):
+            for predicate, object_ in sorted(block.statements, key=lambda item: str(item)):
+                statement = (block.subject, predicate, object_)
+                first = seen.setdefault(statement, block.name)
+                if first != block.name:
+                    raise BuildError(
+                        [
+                            Issue(
+                                Severity.ERROR,
+                                f"{block.subject} {predicate} {object_} is written in both "
+                                f"{first} and {block.name}; a statement belongs to exactly "
+                                f"one file (spec 4.2)",
+                                block.name,
+                            )
+                        ]
+                    )
 
     # ------------------------------------------------------------------ issue collection
 

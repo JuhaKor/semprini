@@ -39,7 +39,15 @@ from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, SKOS
 from rdflib.term import Node
 
-from semprini.build import SEM_STATUS, STATUS_ACTIVE, STATUS_DEPRECATED, CarriedNode
+from semprini.build import (
+    SEM_RELATES_TO,
+    SEM_SOURCE,
+    SEM_STATUS,
+    SEM_TARGET,
+    STATUS_ACTIVE,
+    STATUS_DEPRECATED,
+    CarriedNode,
+)
 from semprini.identity import IdMap, Registry
 from semprini.model import InternalModel, Issue, IssueError, RunContext, Severity
 
@@ -433,13 +441,14 @@ def plan(
     index = _index(previous)
     carried: list[CarriedNode] = []
     deprecated: list[str] = []
+    handled: set[URIRef] = set()
+    frozen_pairs: set[tuple[URIRef, URIRef]] = set()
     for subject in sorted(index, key=str):
         blocks = index[subject]
         if not any(block.defines for block in blocks):
             # Something stated *about* a node rather than a description of it — the
-            # sem:relatesTo shortcut (spec 4.2). It is derived from a relationship this
-            # run either compiled or did not, so it is never carried on its own; it comes
-            # along only when the node it is about is.
+            # sem:relatesTo shortcut (spec 4.2). Its fate follows the relationship it was
+            # derived from, not its own, so it is dealt with in the second pass below.
             continue
         iri = str(subject)
         if iri in live:
@@ -463,6 +472,7 @@ def plan(
             )
             continue
 
+        handled.add(subject)
         if all(row.source_name in fetched for row in owners):
             replacement = register.replacement(iri)
             carried.extend(_deprecate(subject, blocks, replacement))
@@ -474,10 +484,81 @@ def plan(
             # skipped — build rewrites each file whole, so a node left out of the plan is
             # a node deleted from the instance (spec 5.4).
             carried.extend(_verbatim(subject, blocks))
+            frozen_pairs.update(_ends(blocks))
+
+    carried.extend(_retained_shortcuts(index, handled, frozen_pairs, _derivable(model, registry)))
 
     if issues:
         raise LifecycleError(issues)
     return LifecyclePlan(carried=tuple(carried), deprecated=tuple(deprecated))
+
+
+def _derivable(model: InternalModel, registry: Registry) -> set[tuple[URIRef, URIRef]]:
+    """The entity pairs this run's own relationships will produce a shortcut for."""
+    pairs = set()
+    for relationship in model.relationships:
+        source = registry.iri(relationship.source)
+        target = registry.iri(relationship.target)
+        if source is not None and target is not None:
+            pairs.add((URIRef(source), URIRef(target)))
+    return pairs
+
+
+def _ends(blocks: Sequence[_PreviousBlock]) -> set[tuple[URIRef, URIRef]]:
+    """The ``(sem:source, sem:target)`` pair of a relationship node, if it is one."""
+    statements = {(p, o) for block in blocks for p, o in block.statements}
+    sources = [o for p, o in statements if p == SEM_SOURCE and isinstance(o, URIRef)]
+    targets = [o for p, o in statements if p == SEM_TARGET and isinstance(o, URIRef)]
+    return {(source, target) for source in sources for target in targets}
+
+
+def _retained_shortcuts(
+    index: Mapping[URIRef, tuple[_PreviousBlock, ...]],
+    handled: Collection[URIRef],
+    frozen_pairs: Collection[tuple[URIRef, URIRef]],
+    derivable: Collection[tuple[URIRef, URIRef]],
+) -> Iterator[CarriedNode]:
+    """Keep a ``sem:relatesTo`` shortcut whose relationship this run did not judge.
+
+    The shortcut is the one statement written away from the node it is about (spec 4.2):
+    its subject is the source entity, but it lives in the relationship's file. So when the
+    entity is still reported and the *relationship* is out of scope, neither of the rules
+    above reaches it — the entity is rebuilt from the model, which no longer contains the
+    relationship, and the shortcut would be quietly dropped while the relationship it
+    derives from was carried forward as active. That is a governed triple deleted by a run
+    that explicitly concluded nothing.
+
+    Two cases are deliberately **not** retained. A pair the model still has a relationship
+    for is re-derived by the build stage, and writing it here as well would put one triple
+    in two files. And a pair whose only relationship was *deprecated* is gone on purpose:
+    ``sem:relatesTo`` carries no status of its own, so leaving it would assert a live
+    relation between two entities on the strength of a retired one.
+    """
+    for subject in sorted(index, key=str):
+        if subject in handled:
+            # Its blocks were carried whole, shortcuts included.
+            continue
+        for block in index[subject]:
+            if block.defines:
+                continue
+            targets = sorted(
+                (
+                    object_
+                    for predicate, object_ in block.statements
+                    if predicate == SEM_RELATES_TO
+                    and isinstance(object_, URIRef)
+                    and (subject, object_) in frozen_pairs
+                    and (subject, object_) not in derivable
+                ),
+                key=str,
+            )
+            if targets:
+                yield CarriedNode(
+                    file=block.file,
+                    subject=subject,
+                    statements=frozenset((SEM_RELATES_TO, target) for target in targets),
+                    defines=False,
+                )
 
 
 def _check_merges_are_gone(register: MergeRegister, live: Collection[str]) -> list[Issue]:

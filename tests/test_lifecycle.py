@@ -475,6 +475,105 @@ def test_an_object_two_sources_share_is_out_of_scope_unless_both_were_fetched(
     assert (SEM_STATUS, ACTIVE) in carried(plan, customer)
 
 
+def relationship(key: str, source: str, target: str, *, scheme: str = "sales") -> Relationship:
+    return Relationship(
+        source_refs={EXCEL: key},
+        pref_label="places",
+        source=SourceRef(ELLIE, source),
+        target=SourceRef(ELLIE, target),
+        schemes=(scheme,),
+    )
+
+
+def test_a_shortcut_survives_when_its_relationship_is_out_of_scope(tmp_path: Path) -> None:
+    """The one statement written away from the node it is about (spec 4.2), and so the one
+    neither rule reaches on its own: the entity is live and gets rebuilt from a model that
+    no longer holds the relationship, while the relationship itself is carried as active.
+    Dropping the shortcut would delete a governed triple on a run that concluded nothing."""
+    ends = (entity("e1", "Customer"), entity("e2", "Order"))
+    before = run(tmp_path, model(*ends, relationship("r1", "e1", "e2")))[0]
+    customer, order = iri_of(tmp_path, "e1"), iri_of(tmp_path, "e2")
+    shortcut = (URIRef(f"{SEM}relatesTo"), URIRef(order))
+    assert shortcut in statements(before, customer)
+
+    after = run(tmp_path, model(*ends), today=LATER, sources=(ELLIE,))[0]
+
+    assert shortcut in statements(after, customer)
+    # Nothing moved at all: the run had no evidence about any of it.
+    assert [(f.name, f.text) for f in after] == [(f.name, f.text) for f in before]
+
+
+def test_a_shortcut_goes_when_its_relationship_is_deprecated(tmp_path: Path) -> None:
+    """Deliberately not retained, and the opposite of the case above. ``sem:relatesTo``
+    carries no status of its own, so keeping it would assert a live relation between two
+    entities on the strength of a retired one."""
+    ends = (entity("e1", "Customer"), entity("e2", "Order"))
+    run(tmp_path, model(*ends, relationship("r1", "e1", "e2")))
+    customer, order = iri_of(tmp_path, "e1"), iri_of(tmp_path, "e2")
+
+    after, plan = run(tmp_path, model(*ends), today=LATER)
+
+    assert plan.deprecated == (iri_of(tmp_path, "r1", EXCEL),)
+    assert (URIRef(f"{SEM}relatesTo"), URIRef(order)) not in statements(after, customer)
+
+
+def test_a_shortcut_the_run_still_derives_is_not_also_carried(tmp_path: Path) -> None:
+    """Two relationships between one pair derive the identical triple (spec 4.2). With one
+    live and one frozen, retaining the frozen one's shortcut as well would write that
+    triple into two files — the defect C1 fixed, reached from the other direction."""
+    ends = (
+        entity("e1", "Customer", schemes=("sales", "finance")),
+        entity("e2", "Order", schemes=("sales", "finance")),
+    )
+    live = Relationship(
+        source_refs={ELLIE: "r-live"},
+        pref_label="places",
+        source=SourceRef(ELLIE, "e1"),
+        target=SourceRef(ELLIE, "e2"),
+        schemes=("sales",),
+    )
+    frozen = relationship("r-frozen", "e1", "e2", scheme="finance")
+    run(tmp_path, model(*ends, live, frozen, schemes=(SALES, FINANCE)))
+    customer, order = iri_of(tmp_path, "e1"), iri_of(tmp_path, "e2")
+
+    after = run(
+        tmp_path, model(*ends, live, schemes=(SALES, FINANCE)), today=LATER, sources=(ELLIE,)
+    )[0]
+
+    holders = [
+        name
+        for name, graph in by_file(after).items()
+        if (URIRef(customer), URIRef(f"{SEM}relatesTo"), URIRef(order)) in graph
+    ]
+    assert holders == ["relationships-sales.ttl"]
+
+
+def test_one_statement_may_not_be_written_into_two_files(tmp_path: Path) -> None:
+    """The invariant the whole partitioning scheme rests on (spec 4.2). Checked at build
+    time because the model and the retained nodes are assembled from different evidence,
+    and a duplicate would surface only as a diff hunk nobody could explain."""
+    files = run(tmp_path, model(entity("e1", "Customer")))[0]
+    customer = URIRef(iri_of(tmp_path, "e1"))
+    registry = Registry(IdMap.load(tmp_path), BASE, repo_root=tmp_path, today=LATER)
+
+    with pytest.raises(BuildError, match="written in both"):
+        build.build(
+            model(entity("e1", "Customer")),
+            registry=registry,
+            context=context(),
+            previous=union(files),
+            today=LATER,
+            carried=(
+                CarriedNode(
+                    file="relationships-sales.ttl",
+                    subject=customer,
+                    statements=frozenset({(SKOS.prefLabel, Literal("Customer", lang="en"))}),
+                    defines=False,
+                ),
+            ),
+        )
+
+
 def test_a_full_run_deprecates_an_object_all_of_whose_sources_it_fetched(
     tmp_path: Path,
 ) -> None:
@@ -597,6 +696,48 @@ def test_a_register_row_whose_deprecated_iri_is_unknown_is_refused(tmp_path: Pat
             model(entity("e1", "Customer")),
             merges=merged(f"{BASE}concepts/nothing-like-this", survivor),
         )
+
+
+def test_a_register_row_for_an_object_outside_the_scope_does_nothing_this_run(
+    tmp_path: Path,
+) -> None:
+    """The register is a lifecycle decision and takes the scope rule with it: acting on it
+    would mean deprecating a node this run has no evidence about, which is the one thing
+    ``--source`` promises not to do. The next full run applies it. On a full run this state
+    means the ID map names an unconfigured source, which `semprini check` reports (5.4)."""
+    run(tmp_path, model(entity("e1", "Customer"), entity("e2", "Client")))
+    survivor, out_of_scope = iri_of(tmp_path, "e1"), iri_of(tmp_path, "e2")
+
+    plan = lifecycle.plan(
+        model(entity("e1", "Customer")),
+        registry=Registry(IdMap.load(tmp_path), BASE, repo_root=tmp_path, today=LATER),
+        context=RunContext(base_iri=BASE, instance_id="acme", repo_root=tmp_path),
+        previous=build.read_previous_files(tmp_path),
+        sources=("some-other-source",),
+        merges=merged(out_of_scope, survivor),
+    )
+
+    assert plan.deprecated == ()
+    assert (DCTERMS.isReplacedBy, URIRef(survivor)) not in carried(plan, out_of_scope)
+    assert (SEM_STATUS, ACTIVE) in carried(plan, out_of_scope)
+
+
+def test_a_successor_that_is_itself_deprecated_is_allowed(tmp_path: Path) -> None:
+    """Ordinary history rather than a broken register: A was merged into B, and B was
+    later retired by its own source. Refusing it would have the compiler retroactively
+    invalidate a decision a steward correctly recorded at the time."""
+    run(
+        tmp_path,
+        model(entity("e1", "Customer"), entity("e2", "Client"), entity("e3", "Buyer")),
+    )
+    survivor, gone = iri_of(tmp_path, "e2"), iri_of(tmp_path, "e3")
+
+    files = run(
+        tmp_path, model(entity("e1", "Customer")), today=LATER, merges=merged(gone, survivor)
+    )[0]
+
+    assert (SEM_STATUS, DEPRECATED) in statements(files, survivor)
+    assert (DCTERMS.isReplacedBy, URIRef(survivor)) in statements(files, gone)
 
 
 def test_a_register_row_for_an_object_the_sources_still_describe_is_refused(

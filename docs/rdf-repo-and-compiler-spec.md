@@ -467,6 +467,13 @@ between one pair sat in different schemes — and deleting either one would show
 A file with no content is **not written**: a glossary with no relationships produces no
 `relationships-<scheme>.ttl` at all, rather than one holding only a prefix block.
 
+**No statement is written into two files**, and the build stage checks it rather than
+assuming it. One changed fact must be one changed line, which it stops being the moment a
+triple lives in two places; and the check is worth its cost because a run assembles its
+files from two kinds of evidence — the model, and the nodes lifecycle retained (3.5) — so
+a shortcut the previous run wrote and this one also derives would otherwise reach an
+instance as a diff hunk nobody could account for.
+
 ### 4.3 Rules
 
 - Everything under `generated/` is overwritten wholesale on every compiler run. CI
@@ -960,6 +967,13 @@ strictly, and every rule below refuses rather than repairs:
 - **Chains are allowed and are not followed.** If A → B was recorded and later B → C,
   then A's successor is emitted as B: that is the statement the steward made, and
   rewriting it to C would put a triple in a governed file that no row supports.
+- **A successor may itself be deprecated later, and that is not an error.** A was merged
+  into B and B was afterwards retired by its own source: ordinary history, recorded
+  correctly at the time. Only a *cycle* is refused, because a cycle never had a survivor.
+- **The register is applied within the run's scope**, like every other lifecycle decision
+  below. A row naming an object this run was not entitled to judge does nothing until a
+  run that fetched its sources reaches it; acting on it anyway would deprecate a node on
+  no evidence, which is the one thing `--source` promises not to do.
 - **A row for an object the sources still describe fails the run** (exit 1). The register
   and the sources contradict each other, and the compiler settles neither: deprecating
   anyway would override every source from a one-line CSV edit, and ignoring the row would
@@ -996,6 +1010,16 @@ longer configured (which `semprini check` reports separately, above).
 Out-of-scope objects are **carried forward exactly as they stand**, status included, not
 skipped: `generated/` files are rewritten whole, so a node left out of a run's output is a
 node deleted from the instance — the opposite of what "skip deprecation" is asking for.
+
+The `sem:relatesTo` shortcut needs saying separately, because it is the one statement
+written away from the node it is about (4.2): its subject is the source entity, but it
+lives in the relationship's file. When the entity is still reported and the *relationship*
+is out of scope, neither rule above reaches the shortcut — the entity is rebuilt from a
+model that no longer holds the relationship — so it is **retained with the relationship**,
+which was itself carried forward as active. A shortcut whose pair the run still derives is
+not retained, since the build stage writes it (one triple, one file); nor is one whose only
+relationship was *deprecated*, since `sem:relatesTo` carries no status of its own and
+leaving it would assert a live relation on the strength of a retired one.
 
 **An IRI in `generated/` that the ID map does not hold fails the run** (exit 1). It means
 a row was deleted or a file was hand-edited (4.3); the compiler cannot say which source

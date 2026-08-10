@@ -1251,7 +1251,7 @@ done and green.
   run deprecates nothing outside X; a `merges.csv` row produces `dcterms:isReplacedBy`
   and is rejected when either IRI is unknown to the ID map.
   **Depends:** C2, D2
-  **Done.** 667 tests green (45 of them E1's); ruff, ruff format and mypy (strict) clean;
+  **Done.** 673 tests green (51 of them E1's); ruff, ruff format and mypy (strict) clean;
   the fixture instance still recompiles byte for byte and appends no ID-map row. Thirty-six
   mutations were checked against the suite — deprecation judged per source rather than the
   union, scope ignored entirely, `--source` ignored, out-of-scope nodes skipped instead of
@@ -1331,6 +1331,42 @@ done and green.
     and report need it unioned; parsing `generated/` twice to get both would be waste that
     only shows on the instances large enough to care. `read_previous()` is now the union of
     the former.
+
+  **A code review found three issues; one was a real defect and is fixed, and the other
+  two were decisions rather than bugs — recorded here so nobody re-litigates them.**
+  - **The `sem:relatesTo` shortcut was silently deleted when its relationship was out of
+    scope**, which is the exact failure this module exists to prevent, reached through the
+    module itself. The shortcut is the one statement written away from the node it is
+    about (§4.2): its subject is the source *entity*, but it lives in the relationship's
+    file. So when the entity is still reported and the relationship is not, neither rule
+    reached it — the entity was rebuilt from a model that no longer held the relationship,
+    while the relationship itself was carried forward as active, and the derived triple
+    just vanished. Reproduced against the committed code before fixing. Retention is now
+    decided per *block* rather than per subject, and two cases are deliberately not
+    retained: a pair the run still derives (the build stage writes it, and writing it here
+    as well would put one triple in two files), and a pair whose only relationship was
+    *deprecated* — `sem:relatesTo` carries no status of its own, so leaving it would
+    assert a live relation on the strength of a retired one. **§4.2 gained a rule and
+    `build` gained the check that enforces it**: no statement may be written into two
+    files. That was previously an invariant C1 tested for and nothing verified at run time,
+    and it stops being safe by construction the moment a run assembles its files from two
+    kinds of evidence.
+  - **A merge register row for an out-of-scope object does nothing that run** — reported as
+    "silently inert". It is the scope rule applied to the register, and the alternative is
+    worse: acting on the row means deprecating a node the run has no evidence about, which
+    is the one thing `--source` promises not to do. The next full run applies it. On a
+    *full* run this state means the ID map names an unconfigured source, which is already
+    an error §6.1 check 6 reports. Pinned by a test and written into §5.4.
+  - **A successor that is later deprecated by its own source is not an error.** Reported as
+    a gap in the cycle check; it is ordinary history — A was merged into B, and B was
+    afterwards retired — and refusing it would have the compiler retroactively invalidate a
+    decision a steward recorded correctly at the time. A cycle is refused because a cycle
+    never had a survivor; a chain that ends in a deprecated node did. §5.4 now says so.
+
+  Seven more mutations cover the fix (43 total, 42 caught). The survivor is an **equivalent
+  mutant**: dropping the `handled` guard in the second pass re-yields triples the first
+  pass already carried, into the same file, so the union is unchanged — the guard saves
+  work and states intent rather than deciding anything.
 
   **For the tasks that come next:**
   - **E2's write order gains one step at the front:** `read_previous_files()` →
