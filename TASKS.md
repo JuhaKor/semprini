@@ -916,6 +916,7 @@ done and green.
   conditions (dangling `parent_code`, hierarchy cycle, duplicate code) fails the compile
   with a message identifying the row.
   **Depends:** C2, D1
+  **Merged — [PR #9](https://github.com/JuhaKor/semprini/pull/9).**
   **Done.** 537 tests green (47 of them D2's); ruff, ruff format and mypy (strict) clean;
   the wheel installs into a bare venv with pip and `semprini adapters` lists
   `excel-taxonomy` from it. Thirty mutations were checked against the suite — 26 caught,
@@ -1083,6 +1084,7 @@ done and green.
   **Depends:** D1
   **~~Gated by:~~ §11 #7 is resolved by the scope change below** — v1 makes no API call,
   so pagination and rate limits belong to the later API mode.
+  **Merged — [PR #10](https://github.com/JuhaKor/semprini/pull/10).**
   **Done.** 619 tests green (72 of them D3's); ruff, ruff format and mypy (strict) clean;
   the wheel installs into a bare venv with pip and `semprini adapters` lists both `ellie`
   and `excel-taxonomy` from it. Fifty mutations were checked against the suite — the
