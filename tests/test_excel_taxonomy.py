@@ -27,6 +27,7 @@ from tools.build_fixture_instance import INSTANCE, TODAY, compile_instance
 from semprini import adapters, build, config
 from semprini.adapters.base import SourceUnreachableError
 from semprini.adapters.excel_taxonomy import ExcelTaxonomyAdapter, TaxonomyContentError
+from semprini.config import ConfigError
 from semprini.model import RunContext, Text
 from semprini.testing import check_contract
 
@@ -695,3 +696,125 @@ def test_every_hierarchy_problem_is_reported_at_once(tmp_path: Path) -> None:
 
     assert len(raised.value.issues) == 2
     assert "'A'" in str(raised.value) and "'B'" in str(raised.value)
+
+
+# ------------------------------------------------------------------ review findings
+
+
+def test_level_columns_must_start_at_l1(tmp_path: Path) -> None:
+    """A sheet whose levels start at L2 is not a shallower taxonomy — it is a wrong one.
+
+    Depth is read from a cell's position among the level columns, so if the reader
+    tolerated this, every value would come out one level too shallow: the run would
+    succeed, every `skos:broader` would move, and the diff would read as a deliberate
+    re-levelling nobody performed.
+    """
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [
+            ("ont:A", "Tools", "", "", "", "", "", ""),
+            ("ont:B", "Tools", "Power", "", "", "", "", ""),
+        ],
+        header=(
+            "Concept URI",
+            "L2 - Preferred Label",
+            "L3 - Preferred Label",
+            "Definition",
+            "Alternative Labels",
+            "Hidden Labels",
+            "Scope Note",
+            "Example",
+        ),
+    )
+
+    with pytest.raises(TaxonomyContentError, match=r"must run L1\.\.L2"):
+        fetch(path)
+
+
+def test_a_missing_middle_level_column_is_refused(tmp_path: Path) -> None:
+    # The same shift, arriving the way it really would: a re-export that dropped L2. The
+    # rows are individually well-formed, so only the header can catch it.
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [("ont:A", "Tools", "Drills", "", "", "", "", "")],
+        header=(
+            "Concept URI",
+            "L1 - Preferred Label",
+            "L3 - Preferred Label",
+            "Definition",
+            "Alternative Labels",
+            "Hidden Labels",
+            "Scope Note",
+            "Example",
+        ),
+    )
+
+    with pytest.raises(TaxonomyContentError, match="L1, L3"):
+        fetch(path)
+
+
+def test_a_semicolon_inside_a_quoted_label_does_not_split_it(tmp_path: Path) -> None:
+    """Splitting before parsing looks equivalent and is not.
+
+    A naive split cuts ``"A; B"@fi`` in half, leaving two fragments that still carry
+    stray quotation marks and lose the language the cell stated — wrong RDF rather than
+    an error, which is the worst outcome available for a governed file.
+    """
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [("ont:T", '"T"@en', "", "", "", '"A; B"@fi; "C"@fi', "", "", "")],
+    )
+
+    assert value(fetch(path), "T").alt_labels == (Text("A; B", "fi"), Text("C", "fi"))
+
+
+def test_prose_that_merely_begins_and_ends_with_a_quote_is_left_alone(tmp_path: Path) -> None:
+    # A greedy match would take the outer characters off and write the rest into a
+    # governed file, having silently edited a steward's sentence.
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [("ont:T", '"T"@en', "", "", '"Smart" tools "here"', "", "", "", "")],
+    )
+
+    assert value(fetch(path), "T").definition == Text('"Smart" tools "here"', "en")
+
+
+def test_a_half_finished_row_is_refused_rather_than_dropped(tmp_path: Path) -> None:
+    """A row with content but no identity yet is work in progress, not punctuation.
+
+    Dropping it silently is how a value a steward believes they added never appears —
+    and on a later run, when they fix it, arrives as brand new.
+    """
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [
+            ("ont:Tools", '"Tools"@en', "", "", "", "", "", "", ""),
+            ("", "", "", "", "A definition somebody wrote.", "", "", "", ""),
+        ],
+    )
+
+    with pytest.raises(TaxonomyContentError, match="no 'Concept URI'"):
+        fetch(path)
+
+
+def test_fetch_validates_its_own_configuration_first(tmp_path: Path) -> None:
+    """`validate_config()` is on no compile path, so `fetch()` runs it itself.
+
+    Otherwise a run that skipped `semprini check` reaches the workbook with a setting
+    nobody validated — and an absolute path silently wins over the repository root.
+    """
+    ctx = RunContext(base_iri=CONTEXT.base_iri, instance_id="acme", repo_root=tmp_path)
+    adapter = ExcelTaxonomyAdapter("sizes", {"path": "/etc/passwd", "scheme_slug": "sizes"}, ctx)
+
+    with pytest.raises(ConfigError) as raised:
+        adapter.fetch()
+
+    assert "inside the instance repository" in str(raised.value)
+    assert any(issue.location == "sources.sizes.config.path" for issue in raised.value.issues)
+
+
+def test_a_missing_setting_is_an_issue_rather_than_a_traceback(tmp_path: Path) -> None:
+    adapter = ExcelTaxonomyAdapter("sizes", {"path": "t.xlsx"}, CONTEXT)
+
+    with pytest.raises(ConfigError, match="needs a 'scheme_slug'"):
+        adapter.fetch()

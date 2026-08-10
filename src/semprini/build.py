@@ -498,9 +498,14 @@ class _Builder:
         yield (SEM_SCHEME_TYPE, Literal(str(scheme.scheme_type)))
         if scheme.enumerates is not None:
             # Resolvable by now: _check_enumerated_entities ran in the earlier batch and
-            # build() raised if it did not resolve, so this cannot emit a placeholder.
+            # build() raised if it did not resolve. Re-checked rather than asserted, since
+            # `python -O` strips an assert and the fallthrough would be URIRef(None) — a
+            # TypeError from inside rdflib instead of a build error naming the scheme.
             iri = self.registry.iri(scheme.enumerates)
-            assert iri is not None
+            if iri is None:  # pragma: no cover - guarded by _check_enumerated_entities
+                raise BuildError(
+                    [Issue(Severity.ERROR, f"scheme {scheme.slug!r} enumerates an unresolved ref")]
+                )
             yield (SEM_ENUMERATES, URIRef(iri))
 
     def _taxonomy_statements(

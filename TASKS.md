@@ -998,12 +998,44 @@ done and green.
   one C1 recorded about scheme slugs: **a value that is parsed for one purpose must be
   parsed before it is used for another.**
 
-  **The four surviving mutants, so nobody re-litigates them:** depth-by-count instead of
+  **The five surviving mutants, so nobody re-litigates them:** depth-by-count instead of
   depth-by-position is equivalent *because* the skipped-level guard runs first, leaving
   `filled` always contiguous; the two spellings of the empty-member filter agree on every
-  reachable input, since `Text("")` cannot be constructed; and judging only the local path
-  flavour is equivalent on Windows but **is** caught on CI, which runs `ubuntu-latest`,
-  by the `C:\keys\...` case.
+  reachable input, since `Text("")` cannot be constructed; the `enumerates` re-check in
+  `build.py` is unreachable by construction (hence its `pragma: no cover`) and exists only
+  so that `python -O` cannot turn it into a `TypeError` from inside rdflib; and judging
+  only the local path flavour is equivalent on Windows but **is** caught on CI, which runs
+  `ubuntu-latest`, by the `C:\keys\...` case.
+
+  **Review found six issues; all are fixed**, with a test and a mutation each (6 more
+  mutations, all caught) and **no golden file moved** — none of them changed what a
+  correct workbook produces. Three shared one shape, and it is the shape this format
+  invites: *a reader that is too permissive does not fail, it produces a different
+  taxonomy.*
+  - **Level columns were never checked to run `L1..Ln`.** The guard was "at least one
+    level column exists" while its message claimed to be about `L1`. A sheet starting at
+    `L2` — or one that lost its `L2` in a re-export — compiled as a complete hierarchy
+    with every value one level too shallow: every `skos:broader` moved, the run
+    succeeded, and the diff read as a deliberate re-levelling. This is the header-level
+    twin of the skipped-level rule, and only the header can catch it.
+  - **Semicolon splitting ran before literal parsing.** `"A; B"@fi; "C"@fi` came apart
+    into fragments that kept stray quotation marks *and* lost the `@fi` the cell stated —
+    wrong RDF rather than an error. Splitting now respects quotes.
+  - **The literal pattern was greedy**, so a definition reading `"Smart" tools "here"` had
+    its outer characters silently deleted on the way into a governed file. Only a cell
+    whose quoted part holds no further quotation mark counts as literal syntax now.
+  - **A half-finished row vanished.** "Blank row" was judged on the identity and level
+    cells alone, so a row carrying a definition but no `Concept URI` yet was dropped as
+    punctuation — the same silent disappearance the no-identity rule exists to prevent,
+    one condition earlier.
+  - **`validate_config()` is on no compile path.** It is called by `semprini check` and by
+    the contract suite and by nothing else, so a run that skipped `check` reached the
+    workbook with settings nobody had validated — where an absolute `path` silently wins
+    over `repo_root` and a missing key is a bare `KeyError`. `fetch()` now validates its
+    own configuration first and raises `ConfigError` (exit 2). **E2 should not need to
+    remember this**, which is why it lives in the adapter rather than in the run loop.
+  - An `assert` guarding the resolved `sem:enumerates` IRI would have been stripped under
+    `python -O`, leaving `URIRef(None)`.
 
   **For the tasks that come next:**
   - **`tools/build_fixture_instance.py` is a stand-in for `semprini run` and E2 replaces
@@ -1023,9 +1055,21 @@ done and green.
   - **F1's shapes** should cover the three new properties with a language-tag constraint
     and nothing more; specifically **do not** extend §6.1's missing-definition warning to
     missing scope notes.
-  - **D3 inherits nothing from the language work** — it is done. What it does inherit is
-    `sem:enumerates`: Ellie entities are what a taxonomy's `Reference Entity UUID` points
-    at, so the fixture can gain a populated one once that adapter lands.
+  - **D3 inherits one open question from the language work, and it is a decision, not a
+    bug.** `Text` makes "same characters, different language" a merge conflict, and the
+    docstring's mitigation — "no v1 adapter produces a tagged label" — expired the moment
+    this adapter started tagging every label with the workbook's `Language`. So as soon as
+    a second source describes an object the workbook also describes and states no language
+    of its own, `merge_models` raises on `pref_label` even though both sources say
+    `"Customer"`. It cannot happen before D3, since nothing else produces objects yet.
+    **Decide it deliberately:** either an untagged value defers to a tagged one (they are
+    the same statement, one of them better informed), or the conflict stands and the
+    instance's `default_language` is expected to match. Left raising for now, because
+    loosening it later is easy and tightening it once instances hold files built under the
+    loose rule is not.
+  - The other thing D3 inherits is `sem:enumerates`: Ellie entities are what a taxonomy's
+    `Reference Entity UUID` points at, so the fixture can gain a populated one once that
+    adapter lands.
 
 - [ ] **D3 · Ellie adapter**
   **Spec:** §5.3 (Ellie adapter)

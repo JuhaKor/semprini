@@ -24,7 +24,7 @@ single new IRI.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -32,7 +32,7 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from semprini.adapters.base import AdapterError, BaseAdapter, SourceUnreachableError
-from semprini.config import is_slug
+from semprini.config import ConfigError, is_slug
 from semprini.model import (
     InternalModel,
     Issue,
@@ -82,7 +82,7 @@ _LEVEL_HEADER = re.compile(r"^l(\d+)\s*-\s*preferred label")
 # languages per cell, so both branches of spec 5.5 rule 6 are reachable through this
 # adapter — a tagged cell keeps its tag, and a bare one takes the scheme's language or,
 # failing that, the instance's.
-_LITERAL = re.compile(r'^\s*"(.*)"(?:@([A-Za-z0-9-]+))?\s*$', re.DOTALL)
+_LITERAL = re.compile(r'^\s*"([^"]*)"(?:@([A-Za-z0-9-]+))?\s*$', re.DOTALL)
 
 
 class TaxonomyContentError(AdapterError):
@@ -131,6 +131,16 @@ class ExcelTaxonomyAdapter(BaseAdapter):
     # --------------------------------------------------------------------- the contract
 
     def fetch(self) -> InternalModel:
+        # Its own configuration, checked before it is used. `validate_config()` is called
+        # by `semprini check` (spec 6.1) and by the contract suite, and by nothing on the
+        # compile path — so without this a run that skipped `check` would reach `_path()`
+        # with a setting no one validated, where an absolute path silently wins over the
+        # repository root and a missing key is a bare KeyError traceback rather than an
+        # issue naming it. Exit 2, the same as any other configuration error.
+        issues = [issue for issue in self.validate_config() if issue.severity is Severity.ERROR]
+        if issues:
+            raise ConfigError(issues)
+
         path = self._path()
         workbook = self._open(path)
         try:
@@ -384,6 +394,28 @@ def _read_taxonomy_sheet(sheet: Worksheet, path: Path, language: str | None) -> 
                 )
             ],
         )
+    declared = [number for number, _ in levels]
+    if declared != list(range(1, len(declared) + 1)):
+        # Depth is read from a cell's position among the level columns, so the columns
+        # themselves must be L1..Ln with nothing missing. A sheet starting at L2, or one
+        # that lost its L3 in a re-export, is otherwise read as a *complete* hierarchy
+        # with every value one level too shallow: the run succeeds, every skos:broader
+        # moves, and the diff reads as a deliberate re-levelling nobody performed. This
+        # is the same silent shift the skipped-level rule catches within a row, and the
+        # two are only distinguishable here, at the header.
+        raise TaxonomyContentError(
+            path,
+            [
+                Issue(
+                    Severity.ERROR,
+                    f"the {TAXONOMY_SHEET!r} sheet's level columns are "
+                    f"{', '.join(f'L{number}' for number in declared)}; they must run "
+                    f"L1..L{len(declared)} with none missing, or every value's depth is "
+                    f"read one level out",
+                    f"{TAXONOMY_SHEET}!1",
+                )
+            ],
+        )
 
     issues: list[Issue] = []
     rows: list[_Row] = []
@@ -411,8 +443,11 @@ def _read_row(
 
     cells = [_cell(raw[index]) if index < len(raw) else "" for index in level_columns]
     key = _local_name(value(_CONCEPT_URI))
-    if not key and not any(cells):
-        # A wholly blank row is spreadsheet punctuation, not a value.
+    if not any(_cell(cell) for cell in raw):
+        # A wholly blank row is spreadsheet punctuation, not a value. Judged across the
+        # *whole* row rather than the identity and level cells alone: a row carrying a
+        # definition but no identity yet is half-finished work, and dropping it silently
+        # is how a value a steward believes they added never appears.
         return None
     where = f"{TAXONOMY_SHEET}!{number}"
     if not key:
@@ -536,7 +571,29 @@ def _texts(raw: str, language: str | None) -> tuple[Text, ...]:
     workbooks write ``Laptop, iPad, Desktop PC`` in one cell — and cutting it up on a
     punctuation mark would invent several statements where the source made one.
     """
-    return tuple(_text(part.strip(), language) for part in raw.split(";") if part.strip())
+    return tuple(_text(part, language) for part in _split(raw) if part)
+
+
+def _split(raw: str) -> Iterator[str]:
+    """Split on semicolons that are **outside** a quoted literal.
+
+    Splitting first and parsing afterwards looks equivalent and is not: a workbook may
+    write both ``"A; B"@fi; "C"@fi`` and mean two labels, and a naive split cuts the first
+    one in half, leaving two fragments that still carry stray quotes and lose the ``@fi``
+    the cell stated. The result is wrong RDF rather than an error, which is the worst
+    available outcome for a governed file.
+    """
+    depth = 0
+    current: list[str] = []
+    for character in raw:
+        if character == '"':
+            depth = 1 - depth
+        if character == ";" and depth == 0:
+            yield "".join(current).strip()
+            current = []
+        else:
+            current.append(character)
+    yield "".join(current).strip()
 
 
 def _text(raw: str, language: str | None) -> Text:
@@ -545,6 +602,13 @@ def _text(raw: str, language: str | None) -> Text:
     Three levels, narrowest first: a tag written into the cell, then the language the
     workbook declares for the whole scheme, then — by leaving it unstated here — the
     instance's ``default_language``, applied when the graph is built.
+
+    A cell counts as literal syntax only when the quoted part holds no further quotation
+    mark. Prose that merely opens and closes with one — ``"Smart" tools "here"`` — is a
+    definition somebody wrote, not a literal, and a greedy match would silently delete its
+    outer characters on the way into a governed file. The cost of the narrow rule is that
+    a label genuinely containing a quotation mark keeps its outer quotes rather than
+    losing them; taking a cell too literally is recoverable, and quietly editing it is not.
     """
     match = _LITERAL.match(raw)
     if match is None:

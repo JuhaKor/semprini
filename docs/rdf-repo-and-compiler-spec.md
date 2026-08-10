@@ -752,8 +752,22 @@ Headers are matched on their **first line**, lower-cased — these sheets carry 
 mapping on a second line, which is documentation and no part of a column's name. Columns
 the adapter has no home for are tolerated and ignored: a workbook is a working document
 and gains columns for reasons of its own, unlike a configuration file, where an unknown
-key is an error (5.1). A cell may be written in Turtle's literal syntax
-(`"Power tools"@en`) to state its own language, which is honoured over the sheet's.
+key is an error (5.1). The level columns are the exception: they must run `L1..Ln` with
+none missing, because depth is read from a cell's position among them.
+
+A cell may be written in Turtle's literal syntax (`"Power tools"@en`) to state its own
+language, which is honoured over the sheet's. Two rules keep that from quietly corrupting
+text, and both matter because the failure is silent:
+
+- Semicolon separation is applied **outside** quoted literals only. A cell reading
+  `"A; B"@fi; "C"@fi` is two labels, and splitting before parsing would cut the first in
+  half, leaving fragments carrying stray quotation marks and losing the language stated.
+- A cell counts as literal syntax only when the quoted part contains no further quotation
+  mark. Prose that merely opens and closes with one — `"Smart" tools "here"` — is a
+  sentence somebody wrote, and a greedy match would delete its outer characters on the way
+  into a governed file. The cost is that a label genuinely containing a quotation mark
+  keeps its outer quotes; taking a cell too literally is recoverable, quietly editing it
+  is not.
 
 **Hierarchy is ragged.** A row's depth is the position of its last filled `L` cell, and
 its broader concept is the row whose labels are its own first *n-1*. Two things follow
@@ -778,11 +792,21 @@ is edited in bulk, so its mistakes arrive in bulk:
   non-empty cells and discarding their positions would read this as depth 2 and attach
   the value to the wrong parent — a taxonomy that is well-formed and wrong.
 - A row with no `Concept URI`, which is refused rather than skipped: skipping it means a
-  value silently vanishing on the next compile, and being deprecated for it (3.5).
-- A missing `Concept URI` or `L1` **column**. Header matching is strict because a sheet
-  whose level columns are named something else does not read as a broken taxonomy — it
-  reads as an empty one, which compiles to a scheme with no values and deprecates
-  everything that used to be in it.
+  value silently vanishing on the next compile, and being deprecated for it (3.5). Only a
+  row that is blank **across every column** is treated as spreadsheet punctuation; a row
+  carrying a definition but no identity yet is half-finished work, and dropping it is how
+  a value a steward believes they added never appears.
+- A missing `Concept URI` or `L1` **column**, or level columns that do not run `L1..Ln`.
+  Header matching is strict because a sheet whose level columns are named something else
+  does not read as a broken taxonomy — it reads as an empty one, which compiles to a
+  scheme with no values and deprecates everything that used to be in it. A sheet whose
+  levels start at `L2`, or that lost its `L2` in a re-export, is worse still: it reads as
+  a *complete* hierarchy with every value one level too shallow, the run succeeds, and the
+  diff looks like a re-levelling nobody performed.
+
+An adapter validates **its own configuration before it reads anything**, so a run that
+never invoked `semprini check` still fails with the offending key rather than with a
+traceback or, worse, an absolute `path` silently overriding the repository root.
 
 A workbook that cannot be read at all is exit 3 (unreachable); every error above is a
 compile failure, exit 1.
