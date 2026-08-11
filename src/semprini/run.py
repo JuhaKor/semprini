@@ -33,10 +33,30 @@ from semprini import adapters, build, identity, lifecycle, manifest, ontology_ve
 from semprini.build import OutputFile
 from semprini.config import InstanceConfig
 from semprini.identity import NamespaceLock, NamespaceLockError, Registry
-from semprini.model import InternalModel, Issue, RunContext, Severity, merge_models
+from semprini.model import (
+    InternalModel,
+    Issue,
+    IssueError,
+    MergeConflictError,
+    RunContext,
+    Severity,
+    merge_models,
+)
 from semprini.report import RunReport, SourceSummary
 
-__all__ = ["RunResult", "run"]
+__all__ = ["RunResult", "SourceConflictError", "run"]
+
+
+class SourceConflictError(IssueError):
+    """Two configured sources describe one object and disagree — exit code 1 (spec 5.1).
+
+    A compile failure and a stewardship question: the sources say different things about
+    an object the ID map records as one, and the compiler settles neither (spec 5.2). Its
+    own class rather than a bare ``ValueError`` so that it reaches an operator as a message
+    naming the source it arrived with, like every other refusal in this project.
+    """
+
+    noun = "source conflict"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -147,9 +167,10 @@ def run(
         )
 
     previous_files = build.read_previous_files(root)
+    merges = lifecycle.MergeRegister.load(root)
     if force_namespace_change:
-        lock, previous_files, registry = _move_namespace(
-            settings, previous_files, today=today, ontology=ontology
+        lock, previous_files, merges, registry = _move_namespace(
+            settings, previous_files, merges, today=today, ontology=ontology
         )
     else:
         lock, registry = None, Registry.load(settings, today=today)
@@ -165,7 +186,7 @@ def run(
         context=context,
         previous=previous_files,
         sources=[source.name for source in settings.sources],
-        merges=lifecycle.MergeRegister.load(root),
+        merges=merges,
     )
     files = build.build(
         model,
@@ -196,14 +217,18 @@ def run(
 
     if not dry_run:
         build.write_all(files, root)
-        _remove(stale, root)
-        # Identity last, and once: rows accumulate in memory precisely so that a failure
-        # anywhere above leaves the map as it was (spec 5.4). The lock after the map it
-        # describes, so an interrupted namespace move leaves the instance saying it still
-        # lives in the old namespace — the state a re-run recovers from (spec 3.4.4).
+        # Identity immediately after the files it describes, and once: rows accumulate in
+        # memory precisely so that a failure anywhere above leaves the map as it was (spec
+        # 5.4). Nothing may come between the two — `generated/` holding IRIs the map does
+        # not is a state the next run refuses and only deleting `generated/` recovers from,
+        # so removing stale output waits until identity is safe. The lock follows the map
+        # it describes, so an interrupted namespace move leaves the instance saying it
+        # still lives in the old namespace, which a re-run recovers from (spec 3.4.4).
         registry.save(root)
         if lock is not None:
+            merges.save(root)
             lock.save(root)
+        _remove(stale, root)
 
     return RunResult(
         files=files,
@@ -224,6 +249,12 @@ def _fetch(
     describe what it read for the report, and it is done. A failure to reach a source
     propagates as :class:`~semprini.adapters.SourceUnreachableError` — exit 3, the one
     failure CI retries rather than investigates.
+
+    Two sources describing one object and disagreeing about it is a stewardship question,
+    not the compiler's (spec 5.2), and ``merge_models`` refuses to pick a side. It raises a
+    plain ``ValueError``, though, which the CLI would print as a traceback — so it is
+    turned into an issue here, where the source being merged in is known and can be named.
+    The Ellie adapter does the same at its own boundary, for exports of one source.
     """
     model = InternalModel()
     summaries: list[SourceSummary] = []
@@ -232,7 +263,19 @@ def _fetch(
             continue
         adapter = adapters.create(source, context)
         fetched = adapter.fetch()
-        model = merge_models(model, fetched)
+        try:
+            model = merge_models(model, fetched)
+        except MergeConflictError as error:
+            raise SourceConflictError(
+                [
+                    Issue(
+                        Severity.ERROR,
+                        f"source {source.name!r} describes an object another configured "
+                        f"source also describes, and they disagree: {error}",
+                        source.name,
+                    )
+                ]
+            ) from error
         summaries.append(
             SourceSummary(
                 name=source.name,
@@ -247,10 +290,11 @@ def _fetch(
 def _move_namespace(
     settings: InstanceConfig,
     previous_files: Mapping[str, Graph],
+    merges: lifecycle.MergeRegister,
     *,
     today: datetime.date | None,
     ontology: str | None,
-) -> tuple[NamespaceLock, Mapping[str, Graph], Registry]:
+) -> tuple[NamespaceLock, Mapping[str, Graph], lifecycle.MergeRegister, Registry]:
     """``--force-namespace-change``: the whole instance, in a new namespace (spec 3.4.4).
 
     The move is computed in memory and written with the run's other output, so a compile
@@ -260,6 +304,14 @@ def _move_namespace(
     nodes they are. Without the rebase every one of them would look like an IRI the ID map
     has never heard of, which is a refusal (spec 5.4) — and if it were not, every
     deprecated node in the instance would silently be dropped.
+
+    The **merge register moves with them**, and is the one thing a compile ever writes to
+    `mappings/merges.csv`. Its rows are the one place in an instance where a person typed
+    an IRI, and every one of them names the old base; left behind, each would name an IRI
+    the moved map has never heard of and the run would refuse itself — so the migration
+    could not be performed at all on an instance that had ever recorded a merge. Rebasing
+    changes no decision: a row says the same two objects are one, in the namespace they now
+    live in.
 
     Rebasing rather than starting fresh is also what keeps `dcterms:modified` honest: the
     move changes which namespace an object lives in and nothing it says, so the run's diff
@@ -280,7 +332,7 @@ def _move_namespace(
         name: _rebased(graph, old_base, settings.base_iri) for name, graph in previous_files.items()
     }
     registry = Registry(moved, settings.base_iri, repo_root=settings.repo_root, today=today)
-    return lock, rebased, registry
+    return lock, rebased, merges.rebased(old_base, settings.base_iri), registry
 
 
 def _rebased(graph: Graph, old_base: str, new_base: str) -> Graph:

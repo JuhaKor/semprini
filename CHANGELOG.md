@@ -162,12 +162,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   including a nested one, which the manifest check would fail on the next PR. `.report.md`
   is the exception, since it is written only when something moved; removing a stale file
   counts as something moving, so that run rewrites the report.
-- `--force-namespace-change` now performs the move (§3.4.4): the ID map, the namespace
-  lock and every generated file are rewritten in one commit, with local names unchanged.
+- `--force-namespace-change` now performs the move (§3.4.4): the ID map, the merge
+  register, the namespace lock and every generated file are rewritten in one commit, with
+  local names unchanged.
   The move is computed with the run and written with its output, so a compile that fails
   afterwards leaves nothing half-moved; the previous generated state is rebased before the
   lifecycle rules read it, so deprecated nodes travel with everything else and no
   `dcterms:modified` moves. It cannot be combined with `--source`.
+- Two configured sources that describe one object and disagree about it now fail with a
+  message naming the source, not a traceback: which side wins is a stewardship decision
+  and the compiler settles neither (§5.2). Reachable through third-party adapters, since
+  neither bundled one stamps another source's key onto its objects.
 - A cross-reference must now point at a node the run actually **writes**, not merely at an
   IRI the ID map has heard of. A row outlives its node — an object whose source was
   reconfigured away leaves one behind — and the triple would otherwise reach a governed

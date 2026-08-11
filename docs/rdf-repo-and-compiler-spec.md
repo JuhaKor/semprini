@@ -296,8 +296,15 @@ tell the same story.
    claims at once — that every IRI moved, and that some content changed — and a reviewer
    cannot check the first through the second.
 
-   The move is **computed with the run and written with its output**, map and lock
-   included, and the map is written before the lock. A move performed up front would leave
+   The **merge register moves with the map**, and that is the only circumstance in which a
+   compile writes `mappings/merges.csv` (5.4). Its rows are the one place in an instance
+   where a person typed an IRI; left behind, every one of them would name an IRI the moved
+   map has never heard of, the run would refuse itself, and the migration could not be
+   performed at all on an instance that had ever recorded a merge. Rebasing changes no
+   decision — a row says the same two objects are one, in the namespace they now live in.
+
+   The move is **computed with the run and written with its output**, map, register and
+   lock included, and the map is written before the lock. A move performed up front would leave
    an instance whose map says it has moved and whose `generated/` says it has not the
    moment the compile that follows fails, and that state has no way out: a second
    `--force-namespace-change` is refused as a move to the base IRI already locked, and a

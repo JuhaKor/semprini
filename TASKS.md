@@ -1402,8 +1402,8 @@ done and green.
   `--dry-run` writes nothing (assert via filesystem snapshot); a mid-pipeline failure
   leaves `generated/` untouched rather than half-written.
   **Depends:** E1
-  **Done.** 704 tests green (31 of them E2's, in `tests/test_run.py`); ruff, ruff format
-  and mypy (strict) clean. Twenty-seven mutations were checked against the suite — stale
+  **Done.** 709 tests green (36 of them E2's, in `tests/test_run.py`); ruff, ruff format
+  and mypy (strict) clean. Thirty-two mutations were checked against the suite — stale
   files never found, only the top level of `generated/` scanned, the report treated as
   stale, removing a stale file not counted as a change, the report written on every run,
   the manifest left out of the `unchanged()` comparison, a dry run saving the registry /
@@ -1414,8 +1414,9 @@ done and green.
   written, `plan_namespace_change` rebasing nothing, the run reporting no sources, what was
   deprecated not reported, the merge register not read, the previous state not carried into
   the build, the run reading a clock of its own, everything rebased rather than only the
-  old base, lifecycle judged against the fetched source alone, and a partial run judged as
-  a full one — and 26 of the 27 fail it.
+  old base, lifecycle judged against the fetched source alone, a partial run judged as a
+  full one, plus the five the review's fixes brought with them (below) — and 31 of the 32
+  fail it.
 
   **The survivor is recorded rather than covered**, because covering it would mean
   asserting about a corrupt instance. `_check_references_are_written` counts only the
@@ -1492,6 +1493,37 @@ done and green.
     `ManifestError` all map to 1 with no new mapping — B4 and C2 both left "whoever wires
     the first command that reaches one owns this", and the answer is that `IssueError`
     already covered it. `SourceUnreachableError` is exit 3, asserted end to end.
+
+  **A code review found four issues; all are fixed**, with a test and a mutation each. The
+  first was a real defect that would have made the migration this task wired up impossible
+  to perform, and it is worth remembering why nothing caught it:
+  - **The namespace move left `mappings/merges.csv` behind.** The ID map and the previous
+    generated state were rebased; the merge register was not, so every row still named the
+    old base, `MergeRegister.check_against()` found none of those IRIs in the moved map,
+    and the run refused itself. Nothing was corrupted — the refusal happens before any
+    write — but the once-ever migration could not be performed at all on an instance that
+    had ever recorded a merge, which is any instance old enough to need one. The fixture's
+    register is *empty*, which is exactly why six passing move tests said nothing about it:
+    **an empty file is not a fixture, it is an absent one**. `MergeRegister.rebased()` now
+    exists and the move writes the register back — the only circumstance in which a compile
+    writes that file, and `test_an_ordinary_run_never_writes_the_merge_register` pins the
+    other half.
+  - **`MergeConflictError` escaped as a traceback.** It subclasses plain `ValueError`, not
+    `IssueError`, so the CLI's handler did not catch it and two sources disagreeing about
+    an object would have printed a stack trace instead of exit 1 with a message. Only a
+    third-party adapter can reach it today (neither bundled one stamps another source's ref
+    onto its objects), which is precisely why it would have been found by an adopter rather
+    than by us. `SourceConflictError` now wraps it at the fetch loop, naming the source
+    being merged in — the same thing the Ellie adapter already does at its own boundary.
+  - **One broken cross-reference was reported twice.** A relationship's ends are resolved
+    on two paths — once for the statement, once to key the `sem:relatesTo` shortcut by
+    entity pair — and both recorded a reference. Deduplicated; the issue list is read in CI,
+    where one problem shown as two costs someone a search for the second.
+  - **Stale removal sat between `write_all()` and `registry.save()`.** A failure while
+    deleting — a locked file, a read-only directory — would have left `generated/` holding
+    IRIs the ID map did not, which the next run refuses and only deleting `generated/`
+    recovers from. Identity is now saved immediately after the files it describes, and the
+    deletion, which has nothing to do with identity, goes last.
 
   **Notes for later sessions:**
   - **`.report.md` is not a function of the instance's inputs**, and `tests/test_run.py`

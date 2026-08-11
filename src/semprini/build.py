@@ -883,7 +883,10 @@ class _Builder:
         # shortcut (spec 4.2) — is not a description of it, and a reference resolving onto
         # one would point at a subject with no label, type or status.
         described = {block.subject for block in blocks if block.defines}
-        for reference in sorted(self.references, key=lambda item: (str(item.iri), item.role)):
+        # Deduplicated: a relationship's source and target are each resolved twice, once
+        # for the statement and once to key the shortcut by entity pair, and one broken
+        # reference reported twice is one problem an operator reads as two.
+        for reference in sorted(set(self.references), key=lambda item: (str(item.iri), item.role)):
             if reference.iri in described:
                 continue
             self._issue(

@@ -30,10 +30,10 @@ from rdflib import Graph, URIRef
 from rdflib.namespace import DCTERMS
 from tools.build_fixture_instance import COMPILER, INSTANCE, ONTOLOGY, TODAY
 
-from semprini import build, config, identity, lifecycle, run
+from semprini import adapters, build, config, identity, lifecycle, run
 from semprini.cli import ExitCode, main
 from semprini.identity import ID_MAP_PATH, NAMESPACE_LOCK_PATH, IdMap, IdMapRow, NamespaceLock
-from semprini.model import Kind
+from semprini.model import Entity, InternalModel, Kind, Scheme, SchemeType, merge_models
 from semprini.report import REPORT_FILE
 
 BASE = "https://semantics.example.com/"
@@ -41,6 +41,9 @@ ELLIE = "ellie-main"
 EXCEL = "product-category"
 WAREHOUSE = "33ef202c-aa23-11ee-9167-0242ac1e0003"
 """An entity of the fixture's Ellie export, removed below to make a deprecation happen."""
+
+DELIVERY = "07666880-aa23-11ee-94e1-0242ac1e0003"
+"""Another, kept — the surviving object when a merge is recorded."""
 
 
 def snapshot(root: Path) -> dict[str, bytes]:
@@ -100,6 +103,16 @@ def drop_entity(root: Path, entity_id: str) -> None:
         if entity_id not in (item["sourceEntity"]["id"], item["targetEntity"]["id"])
     ]
     path.write_text(json.dumps(document), encoding="utf-8", newline="\n")
+
+
+def record_merge(root: Path, deprecated: str, replaced_by: str) -> None:
+    """Write the one row a steward writes by hand (spec 5.4)."""
+    (root / lifecycle.MERGES_PATH).write_text(
+        "deprecated_iri,replaced_by_iri,date,note\n"
+        f"{deprecated},{replaced_by},2026-08-06,merged into the survivor\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 # ------------------------------------------------------------------ the committed instance
@@ -229,6 +242,19 @@ def test_a_dry_run_carries_the_bytes_a_real_run_would_commit(instance: Path) -> 
     }
 
 
+def test_a_dry_run_deletes_nothing_either(instance: Path) -> None:
+    """Removing stale output is a write like any other (spec 4.3), and the whole point of
+    a dry run is to find out what one would do to a directory without doing it."""
+    (instance / build.GENERATED_DIR / "leftover.txt").write_text("stale", encoding="utf-8")
+    before = snapshot(instance)
+
+    result = compile_(instance, dry_run=True)
+
+    assert result.stale == ("leftover.txt",)
+    assert "would remove 1 file no longer produced" in result.summary()
+    assert snapshot(instance) == before
+
+
 def test_a_dry_run_says_it_wrote_nothing(instance: Path) -> None:
     shutil.rmtree(instance / build.GENERATED_DIR)
 
@@ -285,6 +311,59 @@ def test_a_mid_pipeline_failure_leaves_the_instance_untouched(
 
     assert snapshot(instance) == before
     assert "not in the ID map" in capsys.readouterr().err
+
+
+def test_two_sources_that_disagree_fail_with_a_message(
+    instance: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Which side wins is a stewardship decision, not the compiler's (spec 5.2).
+
+    ``merge_models`` refuses to pick one and raises a plain ``ValueError``, which the CLI
+    would print as a traceback — the run names the source it was merging in instead. Only a
+    third-party adapter can reach this today, since neither bundled one stamps another
+    source's ref onto its objects, so the adapters here are stubs of exactly that shape.
+    """
+
+    class Conflicting:
+        """Two sources claiming one Ellie UUID, and disagreeing about its label."""
+
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def fetch(self) -> InternalModel:
+            return merge_models(
+                InternalModel(
+                    schemes=(
+                        Scheme(
+                            source_refs={ELLIE: "1234"},
+                            pref_label="Storefront",
+                            slug="storefront",
+                            scheme_type=SchemeType.GLOSSARY,
+                        ),
+                    ),
+                    entities=(
+                        Entity(
+                            source_refs={ELLIE: WAREHOUSE},
+                            pref_label=self.label,
+                            schemes=("storefront",),
+                        ),
+                    ),
+                )
+            )
+
+        def summary(self) -> str:
+            return ""
+
+    labels = iter(["Warehouse", "Depot"])
+    monkeypatch.setattr(adapters, "create", lambda source, ctx: Conflicting(next(labels)))
+    before = snapshot(instance)
+
+    assert main(["run"]) == ExitCode.FAILURE
+
+    err = capsys.readouterr().err
+    assert "product-category" in err and "disagree" in err
+    assert "Traceback" not in err
+    assert snapshot(instance) == before
 
 
 def test_generated_output_the_id_map_does_not_know_stops_the_run(instance: Path) -> None:
@@ -435,6 +514,36 @@ def test_removing_stale_output_is_a_change_the_report_describes(instance: Path) 
     assert result.changed
     assert result.report is not None
     assert "removed 1 file no longer produced" in result.summary()
+
+
+def test_the_id_map_is_saved_before_stale_output_is_removed(
+    instance: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing may come between the files and the map that names their IRIs.
+
+    Deleting a stale file can fail — a locked file, a directory somebody made read-only —
+    and if it did so between the two, ``generated/`` would hold IRIs the ID map does not.
+    That is a state the next run refuses (spec 5.4) and only deleting ``generated/``
+    recovers from, in exchange for a step that has nothing to do with identity.
+    """
+    order: list[str] = []
+    original_save, original_remove = IdMap.save, run._remove
+
+    def save(self: IdMap, repo_root: Path | None = None) -> Path:
+        order.append("map")
+        return original_save(self, repo_root)
+
+    def remove(stale: Any, root: Path) -> None:
+        order.append("remove")
+        original_remove(stale, root)
+
+    monkeypatch.setattr(IdMap, "save", save)
+    monkeypatch.setattr(run, "_remove", remove)
+    (instance / build.GENERATED_DIR / "leftover.txt").write_text("stale", encoding="utf-8")
+
+    compile_(instance)
+
+    assert order == ["map", "remove"]
 
 
 def test_the_report_is_never_stale(instance: Path) -> None:
@@ -600,6 +709,51 @@ def test_the_move_writes_the_map_before_the_lock(
     compile_(instance, force_namespace_change=True)
 
     assert written == ["map", "lock"]
+
+
+def test_a_namespace_move_takes_the_merge_register_with_it(instance: Path) -> None:
+    """The register is the one file holding IRIs a person typed (spec 5.4).
+
+    Left behind, every row would name an IRI the moved map has never heard of and the run
+    would refuse itself — so this migration could not be performed at all on an instance
+    that had ever recorded a merge, which is every instance old enough to need one.
+    """
+    drop_entity(instance, WAREHOUSE)
+    record_merge(instance, f"{BASE}concepts/{WAREHOUSE}", f"{BASE}concepts/{DELIVERY}")
+    compile_(instance)
+    move_to(instance, MOVED)
+
+    compile_(instance, force_namespace_change=True)
+
+    register = lifecycle.MergeRegister.load(instance)
+    assert [(row.deprecated_iri, row.replaced_by_iri) for row in register] == [
+        (f"{MOVED}concepts/{WAREHOUSE}", f"{MOVED}concepts/{DELIVERY}")
+    ]
+    assert register.rows[0].note == "merged into the survivor"
+    assert (
+        URIRef(f"{MOVED}concepts/{WAREHOUSE}"),
+        DCTERMS.isReplacedBy,
+        URIRef(f"{MOVED}concepts/{DELIVERY}"),
+    ) in graph_of(instance, "concepts-storefront.ttl")
+
+
+def test_an_ordinary_run_never_writes_the_merge_register(instance: Path) -> None:
+    """Every row in it is a steward's decision; only the namespace move rewrites one.
+
+    Written with spacing a person would leave and the compiler would normalize away, so
+    "unchanged" means untouched rather than merely re-rendered the same.
+    """
+    (instance / lifecycle.MERGES_PATH).write_text(
+        "deprecated_iri,replaced_by_iri,date,note\n", encoding="utf-8", newline="\n"
+    )
+    (instance / lifecycle.MERGES_PATH).write_bytes(
+        (instance / lifecycle.MERGES_PATH).read_bytes() + b"\n"
+    )
+    before = (instance / lifecycle.MERGES_PATH).read_bytes()
+
+    compile_(instance)
+
+    assert (instance / lifecycle.MERGES_PATH).read_bytes() == before
 
 
 def test_planning_a_move_is_what_the_run_calls(instance: Path) -> None:

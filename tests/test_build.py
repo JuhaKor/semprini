@@ -695,8 +695,15 @@ def test_a_reference_to_a_node_the_run_does_not_write_is_refused() -> None:
         )
     )
 
-    with pytest.raises(BuildError, match="nothing in this run's output describes that node"):
+    with pytest.raises(
+        BuildError, match="nothing in this run's output describes that node"
+    ) as raised:
         compile_(model, registry=Registry(known, BASE, today=TODAY))
+
+    # Once, not twice. A relationship's ends are resolved on two paths — for the statement
+    # and to key the sem:relatesTo shortcut by entity pair — and one problem reported twice
+    # is one an operator reads as two, in a file read in CI (spec 5.2).
+    assert len(raised.value.issues) == 1
 
 
 # ------------------------------------------------------------------ the scheme slug
