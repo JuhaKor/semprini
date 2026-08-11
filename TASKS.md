@@ -1394,7 +1394,7 @@ done and green.
   - **C2's "removed is deliberately not reported" is now moot**, as its note predicted:
     nothing is removed, so there is no number to be wrong about.
 
-- [ ] **E2 · `semprini run` orchestration**
+- [x] **E2 · `semprini run` orchestration**
   **Spec:** §5.1 (pipeline and flags)
   **Deliver:** the full fetch → normalize → resolve → build → lifecycle → serialize →
   write sequence, with `--source` and `--dry-run`.
@@ -1402,38 +1402,115 @@ done and green.
   `--dry-run` writes nothing (assert via filesystem snapshot); a mid-pipeline failure
   leaves `generated/` untouched rather than half-written.
   **Depends:** E1
-  **Two obligations C1 hands over, both found in its review:**
-  1. **Stale files are never removed.** `build.write_all()` writes the files a run
-     produces and touches nothing else, so a scheme that disappears from its source leaves
-     `concepts-<slug>.ttl` in the instance for ever — its objects stay in the committed
-     output, `read_previous()` unions them back in, and C2's manifest check will find a
-     file it did not write. §4.3 says `generated/` is "overwritten wholesale", so the spec
-     is right and the implementation is short. Deleting correctly needs the run's scope,
-     which is why it is here and not in C1: a `--source X` run must **not** delete the
-     files it did not regenerate, and E1 decides whether a vanished scheme's objects are
-     deprecated (and so still emitted) rather than dropped.
-  2. **`build()` refuses a partial run outright** — `BuildError` when
-     `context.only_source` is set. `write_all` rewrites each file whole, so building from
-     one source's objects would delete every other source's statements from the files it
-     touched and refresh `dcterms:modified` on every node they co-describe. Removing that
-     guard is E2's first step, and it must be replaced by a real answer: either merge the
-     fetched subset with the previous state before building, or make writing per-file.
-     **E1 supplied the first option for objects one source owns**: `lifecycle.plan()`
-     returns every out-of-scope node as a `CarriedNode`, verbatim, so a partial run's
-     files can be assembled without losing them. What is undecided is an object **two**
-     sources describe when only one was fetched — the model holds it, rebuilt from half its
-     evidence — and that case has to be settled before the guard comes off.
+  **Done.** 704 tests green (31 of them E2's, in `tests/test_run.py`); ruff, ruff format
+  and mypy (strict) clean. Twenty-seven mutations were checked against the suite — stale
+  files never found, only the top level of `generated/` scanned, the report treated as
+  stale, removing a stale file not counted as a change, the report written on every run,
+  the manifest left out of the `unchanged()` comparison, a dry run saving the registry /
+  writing the files / removing stale output, a partial run fetching every source, empty
+  directories left behind, the previous state not rebased for a namespace move, the move
+  writing the lock before the map, the move written before the run, a move combined with
+  `--source`, a partial run rebuilding a shared object, a reference not required to be
+  written, `plan_namespace_change` rebasing nothing, the run reporting no sources, what was
+  deprecated not reported, the merge register not read, the previous state not carried into
+  the build, the run reading a clock of its own, everything rebased rather than only the
+  old base, lifecycle judged against the fetched source alone, and a partial run judged as
+  a full one — and 26 of the 27 fail it.
 
-  **One obligation C2 hands over:** the write order is `build()` → `manifest.create()` →
-  `build.unchanged()` → *only if something moved* `report.create()` → `write_all()` →
-  `registry.save()`. Writing the report unconditionally makes every no-op compile open a
-  PR whose only content is a report saying nothing changed (§5.6). **The manifest's own
-  file goes into the `unchanged()` comparison**, not just the Turtle: it carries the two
-  versions, so a recompile after a plane upgrade produces identical Turtle and a changed
-  manifest, and that run's report has to be rewritten or the instance commits a manifest
-  saying 0.2.0 produced these files beside a report whose header says 0.1.0 did.
-  `--dry-run` writes none of it; `OutputFile` carries the exact bytes, so the report and
-  the manifest can be printed without a filesystem in the way.
+  **The survivor is recorded rather than covered**, because covering it would mean
+  asserting about a corrupt instance. `_check_references_are_written` counts only the
+  blocks that *describe* a node; loosening it to every block a node appears in changes the
+  answer solely when the previous output held a `sem:relatesTo` shortcut whose subject has
+  no defining block anywhere — and lifecycle carries forward every node the previous run
+  described, so that state can only be reached by hand-editing `generated/`, which §6.1
+  check 2 catches on its own. The narrower rule is what the error message claims, so it
+  stays.
+
+  **A note on running such a battery on Windows**, since it cost a false result before it
+  cost a real one: the harness restored each file from text it re-read at the top of every
+  iteration, so one restore that silently did not take became the next iteration's
+  "original" and baked itself in — after which every later mutation was being tested
+  against the wrong code, and reported 27/27. Read the pristine sources once, restore all
+  of them after every iteration, assert the restore took, and check the working tree is
+  clean at the end.
+
+  **The three obligations C1 and C2 handed over are all closed.**
+  - **Stale output is removed** (§4.3). Anything under `generated/` the run did not
+    produce is deleted, nested files included, and `.report.md` is the one exemption —
+    it is written only when something moved, so a run that produced no report has not
+    stopped producing the committed one. **Deletion is safe on a partial run too**, which
+    is what C1 could not assume: every out-of-scope object comes back from lifecycle as a
+    carried node and so *is* produced, meaning a file that is not produced holds nothing
+    the run kept. The case it actually catches is output whose partitioning changed —
+    a scheme that became a taxonomy moves `concepts-x.ttl` to `taxonomy-x.ttl` — plus
+    anything a person put there by hand.
+  - **`build()`'s partial-run guard is gone**, replaced by the narrow refusal decided
+    before the task started: an object the ID map records against **two** sources when
+    only one was fetched. Everything else is assembled from the fetched model plus
+    lifecycle's carried nodes. Nothing in v1 produces a cross-source object, so this costs
+    an instance nothing today; the message says to run in full.
+  - **Removing a stale file counts as a change**, which the handover note did not
+    anticipate: a run can produce byte-identical files and still have deleted output, and
+    comparing only what was produced would leave the committed report describing a
+    directory that no longer exists. `unchanged()`'s docstring said "E2 owns it" and now
+    says whose question it is and why the caller folds the answer in.
+
+  **Decisions taken** (all implemented and now in the spec):
+  - **Nothing is written until every stage has succeeded.** The whole pipeline —
+    fetch, lifecycle, build, manifest, report — completes in memory, and the last four
+    lines write. That is what makes `--dry-run` the same run minus its writes rather than
+    a rehearsal, and it is why a failing compile leaves no state in which `generated/`
+    describes one run and `mappings/` another. §5.1 says so now.
+  - **`identity.force_namespace_change()` became `plan_namespace_change()` and no longer
+    writes.** It wrote the map and lock immediately, which for a once-ever migration is
+    the worst possible moment: a compile that then failed left an instance whose map had
+    moved and whose output had not, and that state has **no way out** — a second
+    `--force-namespace-change` is refused as a move to the base IRI already locked, and a
+    plain run refuses the old IRIs still in the output. The run now saves both with its
+    files, map before lock. B4 said the flag was "declared but not wired"; it is wired.
+  - **A namespace move rebases the previous generated state** before lifecycle reads it.
+    Without that every node already written is an IRI the ID map has never heard of, which
+    §5.4 refuses — and if it did not, every deprecated node in the instance would be
+    dropped, since a deprecated node exists nowhere else. Rebasing also keeps
+    `dcterms:modified` still, so the commit is every IRI and no dates and the report shows
+    nothing new and nothing changed: exactly the claim a reviewer of that commit has to be
+    able to check. **The move cannot be combined with `--source`** — the commit would make
+    two claims at once and the first could not be checked through the second.
+  - **A cross-reference must point at a node the run writes**, not merely at an IRI the ID
+    map holds. This is the "known limitation, deliberately left" C1 recorded, and the
+    partial-run case it was waiting on turns out to *want* the strict rule: what makes it
+    answerable is that both legitimate sources of a node are in hand once the blocks
+    exist — the model, and the nodes lifecycle retained — so a reference to a deprecated
+    object or to an out-of-scope one passes, while a row that outlived its node does not.
+  - **`tools/build_fixture_instance.py` is now a thin caller of `run.run()`** with the
+    date and both versions pinned. The stand-in and the command cannot drift, which
+    matters because every other fixture-based test in the suite is evidence about whatever
+    that tool executes. `test_the_fixture_instance_is_what_a_run_produces` pins both at
+    once.
+  - **`RunResult` is the return value, and the CLI only prints it.** Exit codes still come
+    from `cli.exit_code_for` alone, so `IdentityError`/`BuildError`/`LifecycleError`/
+    `ManifestError` all map to 1 with no new mapping — B4 and C2 both left "whoever wires
+    the first command that reaches one owns this", and the answer is that `IssueError`
+    already covered it. `SourceUnreachableError` is exit 3, asserted end to end.
+
+  **Notes for later sessions:**
+  - **`.report.md` is not a function of the instance's inputs**, and `tests/test_run.py`
+    has a `governed()` helper that excludes it from whole-instance comparisons for that
+    reason. An instance compiled from scratch and the same instance compiled incrementally
+    hold identical Turtle, manifest and ID map, and different prose — the report describes
+    a *run*, and the committed one describes the run that last changed the fixture.
+  - **A stale `.ttl` file is read as previous state before it is judged stale.** If it
+    holds subjects the ID map knows, lifecycle carries them forward and the file is
+    reproduced rather than deleted; if it holds subjects the map does not, the run is
+    refused (§5.4). So deletion reaches exactly the files that carry nothing — which is
+    correct, and worth knowing before someone "fixes" the order.
+  - **F2 gets its exit-1 mapping for free** and should still call `Manifest.verify()`,
+    `check_versions()`, `IdMap.check_append_only()` and `MergeRegister.check_against()`
+    rather than re-deriving them.
+  - **G2's workflow templates now have a command to call**: `semprini run` for the compile
+    workflow, and its report is `generated/.report.md` (§6.2). The compile job needs the
+    package installed — a manifest is refused from a source tree — and nothing in the YAML
+    needs to know any of the above (§6.3).
 
 ---
 

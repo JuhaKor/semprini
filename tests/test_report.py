@@ -567,7 +567,7 @@ def test_a_source_note_carrying_a_pipe_does_not_break_the_table() -> None:
 
 
 def test_a_run_with_no_source_summary_says_so() -> None:
-    """Until **E2** supplies them, an empty table would read as "no sources configured"."""
+    """An empty table would otherwise read as "no sources configured"."""
     assert "No per-source summary was recorded." in report(sources=()).render()
 
 
@@ -582,9 +582,9 @@ def test_the_versions_are_the_running_ones_by_default() -> None:
 
 
 def test_a_no_op_run_leaves_the_whole_instance_untouched(tmp_path: Path) -> None:
-    """The composition **E2** performs: build, hash, and write the report only if
-    something moved. Asserted end to end here, because the guarantee is worth nothing if
-    the pieces are individually correct and wired up wrongly.
+    """The composition ``semprini run`` performs: build, hash, and write the report only
+    if something moved. Asserted end to end here too, because the guarantee is worth
+    nothing if the pieces are individually correct and wired up wrongly.
     """
     files = compile_()
     recorded = Manifest.create(files, compiler=VERSIONS["compiler"], ontology=VERSIONS["ontology"])

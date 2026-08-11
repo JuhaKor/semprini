@@ -60,8 +60,8 @@ __all__ = [
     "NamespaceLock",
     "NamespaceLockError",
     "Registry",
-    "force_namespace_change",
     "mint_local_name",
+    "plan_namespace_change",
     "verify_namespace_lock",
 ]
 
@@ -889,7 +889,7 @@ def verify_namespace_lock(config: InstanceConfig) -> NamespaceLock:
     return lock
 
 
-def force_namespace_change(
+def plan_namespace_change(
     config: InstanceConfig,
     *,
     ontology_version: str,
@@ -900,12 +900,20 @@ def force_namespace_change(
     Expected to be a once-ever event, and a migration rather than a configuration edit.
     Every IRI in the ID map is rewritten from the old base to the new one, keeping its
     local name, so identity survives the move: the same object keeps the same UUID, in a
-    new namespace. The lock is rewritten in the same call, because a map and a lock that
-    disagree are precisely what the lock exists to make impossible.
+    new namespace.
 
-    Generated files are **not** rewritten here — they are machine-owned and the run that
-    follows regenerates them wholesale (spec 4.3), which is what puts the whole move into
-    one reviewable commit.
+    **Nothing is written.** The moved lock and map are returned for the run to save
+    alongside the regenerated files (spec 5.1), which is what puts the whole move into one
+    reviewable commit — and what keeps a compile that fails afterwards from leaving an
+    instance whose map says it has moved and whose ``generated/`` says it has not. That
+    state has no way out: a second ``--force-namespace-change`` is refused as a move to
+    the base IRI already locked, and a plain run refuses the old IRIs still in the output.
+    The caller writes the map first and the lock second, so an interrupted write leaves
+    the instance saying it still lives in the old namespace, which a re-run recovers from.
+
+    Generated files are not rewritten here either: they are machine-owned and the run
+    regenerates them wholesale (spec 4.3), rebasing the previous state it carries forward
+    so that deprecated nodes move with everything else.
 
     The flag moves the **base IRI and nothing else** (spec 3.4.4). An instance id that has
     also drifted is refused rather than re-frozen: this is the one invocation that
@@ -967,8 +975,4 @@ def force_namespace_change(
         ontology_version=ontology_version,
         date=datetime.date.today() if today is None else today,
     )
-    # The lock last: if writing the map fails, the instance is left saying it still lives
-    # in the old namespace, which is the state a re-run can recover from.
-    moved.save(config.repo_root)
-    changed.save(config.repo_root)
     return changed, moved

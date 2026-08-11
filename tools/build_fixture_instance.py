@@ -8,9 +8,9 @@ would hold them. That is what lets the suite assert the interesting thing — re
 committed instance reuses every IRI in its ID map and reproduces its files byte for byte,
 which is the whole promise of spec 5.4 and 5.5 in one assertion.
 
-This is a stand-in for ``semprini run``, which arrives with **E2** and will replace it.
-It deliberately keeps E2's write order (spec 5.6): lifecycle, build, manifest, then the
-report only if something moved, then the files, then the registry once.
+It is ``semprini run`` (spec 5.1) with two things pinned — the date and the two version
+numbers — so that the committed output describes one run and does not move when the plane
+is released. Nothing else here differs from what an adopting organization's CI executes.
 
 Regenerate deliberately, never reflexively. A change in what this writes is a change to
 every instance's committed output, and spec 5.5 makes that a major version bump with a
@@ -22,9 +22,7 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
-from semprini import adapters, build, config, lifecycle, manifest, report
-from semprini.identity import Registry
-from semprini.model import InternalModel, merge_models
+from semprini import adapters, build, config, run
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTANCE = REPO_ROOT / "tests/fixtures/acme"
@@ -43,62 +41,10 @@ plane. A production run passes neither and records the versions it is actually r
 
 
 def compile_instance(root: Path, *, today: datetime.date = TODAY) -> tuple[build.OutputFile, ...]:
-    """Fetch every configured source and build the instance's output files."""
+    """Compile the instance at ``root``, exactly as ``semprini run`` would."""
     settings = config.load(root, known_adapters=adapters.adapter_names() or None)
-    ctx = settings.run_context()
-    registry = Registry.load(settings, today=today)
-
-    model = InternalModel()
-    summaries = []
-    for source in settings.sources:
-        adapter = adapters.create(source, ctx)
-        fetched = adapter.fetch()
-        model = merge_models(model, fetched)
-        summaries.append(
-            report.SourceSummary(
-                name=source.name,
-                adapter=source.adapter,
-                objects=len(fetched),
-                note=adapter.summary(),
-            )
-        )
-
-    # Per file for lifecycle, which keeps a retained node where it was, and unioned for
-    # dcterms:modified and the report, which ask about nodes rather than files.
-    previous_files = build.read_previous_files(root)
-    previous = build.union_of(previous_files.values())
-    plan = lifecycle.plan(
-        model,
-        registry=registry,
-        context=ctx,
-        previous=previous_files,
-        sources=[source.name for source in settings.sources],
-        merges=lifecycle.MergeRegister.load(root),
-    )
-    files = build.build(
-        model,
-        registry=registry,
-        context=ctx,
-        previous=previous,
-        today=today,
-        carried=plan.carried,
-    )
-    document = manifest.Manifest.create(files, compiler=COMPILER, ontology=ONTOLOGY)
-    files += (document.to_file(),)
-    if not build.unchanged(files, root):
-        files += (
-            report.create(
-                files,
-                context=ctx,
-                previous=previous,
-                sources=summaries,
-                compiler=COMPILER,
-                ontology=ONTOLOGY,
-            ).to_file(),
-        )
-    build.write_all(files, root)
-    registry.save(root)
-    return files
+    result = run.run(settings, today=today, compiler=COMPILER, ontology=ONTOLOGY)
+    return result.files
 
 
 if __name__ == "__main__":

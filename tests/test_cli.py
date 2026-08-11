@@ -16,11 +16,9 @@ from semprini import cli, compiler_version, ontology_version
 from semprini.cli import ExitCode, main
 
 # Stub subcommands, with the arguments each requires, until its own task lands.
-# `adapters` left this list in D1; `version` was never in it.
+# `adapters` left this list in D1, `run` in E2; `version` was never in it.
 STUB_INVOCATIONS = [
     ["init", "--base-iri", "https://semantics.example.com/", "--org", "example"],
-    ["run"],
-    ["run", "--source", "product-category", "--dry-run"],
     ["check"],
     ["migrate", "--to", "0.2.0"],
 ]
