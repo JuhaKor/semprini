@@ -198,27 +198,13 @@ def build(
     what the model produced and are dated by the same rule, so a deprecation is a changed
     ``sem:status`` line and nothing else.
 
-    A partial run is **refused**, loudly, rather than quietly building from part of a
-    model. ``write_all`` rewrites each file whole, so building a ``--source X`` run this
-    way would drop every other source's statements from the files it touched and refresh
-    ``dcterms:modified`` on every node they co-describe — silent deletion of governed
-    content. Making a partial run work is **E2's** (spec 5.4): it has to decide whether
-    the fetched subset is merged with the previous state before building, or whether
-    writing becomes per-file.
+    A partial run (``--source X``) builds from the fetched model **plus** those carried
+    nodes, which is what makes it safe: files are rewritten whole, so every object the run
+    did not fetch has to arrive from somewhere, and lifecycle supplies it verbatim. The one
+    case that cannot be assembled this way is refused — an object *two* sources describe
+    when only one was fetched, which the model holds rebuilt from half its evidence
+    (:meth:`_Builder._check_partial_scope`).
     """
-    if context.only_source is not None:
-        raise BuildError(
-            [
-                Issue(
-                    Severity.ERROR,
-                    f"this compiler cannot build a partial run (--source "
-                    f"{context.only_source!r}): generated files are written whole, so a "
-                    f"model holding one source's objects would delete the others' "
-                    f"statements from every file it rewrote",
-                    "--source",
-                )
-            ]
-        )
     builder = _Builder(
         model=model,
         registry=registry,
@@ -332,9 +318,11 @@ def unchanged(files: Sequence[OutputFile], repo_root: Path | None = None) -> boo
     these files beside a report whose header says 0.1.0 did, which is exactly the
     disagreement the report is supposed to be incapable of.
 
-    A file the run did *not* produce is not consulted: removing stale output is a
-    different question, and one that needs the run's scope to answer (spec 4.3) — a
-    ``--source X`` run legitimately regenerates part of the directory. **E2 owns it.**
+    A file the run did *not* produce is not consulted here: whether such a file is stale
+    output to be removed or the report, which is written on different terms, is
+    :mod:`semprini.run`'s question (spec 4.3). A run that removes one has changed the
+    instance even though every file it produced was already on disk, so the caller folds
+    that answer in rather than this function guessing at it.
     """
     root = Path.cwd() if repo_root is None else Path(repo_root)
     for file in files:
@@ -402,6 +390,11 @@ class _Builder:
     """Problems found so far. Collected rather than raised one at a time: these are read
     in CI, where one problem per run costs a round trip each (spec 5.2)."""
 
+    references: list[_Reference] = field(default_factory=list)
+    """Every cross-reference that resolved, kept until the blocks are assembled — whether
+    the run actually *writes* the node pointed at is a question about the whole output and
+    cannot be answered one statement at a time (:meth:`_check_references_are_written`)."""
+
     def build(self) -> tuple[OutputFile, ...]:
         resolved = self.registry.resolve(self.model)
 
@@ -413,6 +406,7 @@ class _Builder:
         self._check_memberships(schemes)
         self._check_enumerated_entities()
         self._check_carried_are_gone(resolved)
+        self._check_partial_scope(resolved)
         self._raise_collected()
 
         blocks = self._blocks(resolved, schemes) + self._carried_blocks()
@@ -420,6 +414,7 @@ class _Builder:
         # Cross-references are collected while blocks are built, not raised at the first
         # dangling one. Nothing is assembled or written until after this, so the
         # placeholder _reference() returns for a broken ref cannot escape into a file.
+        self._check_references_are_written(blocks)
         self._raise_collected()
 
         # What this run says about each subject, gathered across every file it is written
@@ -611,6 +606,9 @@ class _Builder:
                 raise BuildError(
                     [Issue(Severity.ERROR, f"scheme {scheme.slug!r} enumerates an unresolved ref")]
                 )
+            self.references.append(
+                _Reference(about=scheme, ref=scheme.enumerates, role="enumerates", iri=URIRef(iri))
+            )
             yield (SEM_ENUMERATES, URIRef(iri))
 
     def _taxonomy_statements(
@@ -661,12 +659,12 @@ class _Builder:
         pointing at nothing.
 
         Resolution goes through the registry, which also knows IRIs minted on *previous*
-        runs — so what is actually refused is "an IRI this instance has never minted",
-        not the stricter "an object this run compiled" the message describes. The gap is
-        deliberate and not this task's to close: a ``--source X`` partial run (spec 5.4)
-        legitimately references objects outside the fetched scope, so tightening this
-        needs the partial-run case in view. **E2 owns it**, together with the guard in
-        :func:`build` that refuses such a run outright today.
+        runs, so this answers only "has this instance ever minted an IRI for that ref".
+        The stricter question — is the node this points at in the output the run is about
+        to write — is :meth:`_check_references_are_written`'s, and has to wait until the
+        blocks exist: a reference to an object no source reports any more is legitimate
+        precisely because lifecycle retains it (spec 3.5), and on a partial run most of
+        the output arrives that way.
 
         A dangling ref is recorded and a placeholder returned rather than raised on the
         spot, so that a model with several of them reports them all in one run. The
@@ -681,6 +679,7 @@ class _Builder:
                 object_,
             )
             return URIRef(f"urn:semprini:unresolved:{ref}")
+        self.references.append(_Reference(about=object_, ref=ref, role=role, iri=URIRef(iri)))
         return URIRef(iri)
 
     def _scheme_index(self) -> Mapping[str, _SchemeEntry]:
@@ -828,6 +827,76 @@ class _Builder:
                     object_,
                 )
 
+    def _check_partial_scope(self, resolved: Mapping[SemanticObject, str]) -> None:
+        """A partial run may not rebuild an object another source also describes (spec 5.4).
+
+        ``--source X`` fetched one source, and every object it did not fetch is carried
+        forward verbatim by lifecycle — which works precisely because those objects belong
+        to nobody else in this run. An object the ID map records against **two** sources is
+        the case that breaks: the model holds it rebuilt from one source's statements
+        alone, so writing it would delete the other source's contribution to it, and
+        carrying it forward would discard the update the run was invoked for. Neither is
+        recoverable from what a partial run knows, so it is refused and the operator is
+        told to run in full.
+
+        Nothing in v1 produces cross-source objects — both bundled adapters own what they
+        report — so this costs an instance nothing today. It is refused rather than guessed
+        for the reason merging refuses to guess (spec 5.2): loosening the rule later is
+        easy, and tightening it once instances hold files built under a guess is not.
+
+        The ID map alone answers the question, because ``resolve()`` has already run: every
+        ref of every object in the model has a row by now, minted on this run or found from
+        an earlier one, so "which sources describe this IRI" is complete.
+        """
+        if self.context.only_source is None:
+            return
+        for object_, iri in sorted(resolved.items(), key=lambda item: item[1]):
+            described_by = {row.source_name for row in self.registry.id_map.owners(iri)}
+            others = sorted(described_by - {self.context.only_source})
+            if others:
+                self._issue(
+                    f"{object_.kind} {object_.refs[0]} is described by "
+                    f"{', '.join(repr(name) for name in others)}, which this "
+                    f"--source {self.context.only_source} run did not fetch; an object "
+                    f"several sources describe can only be rebuilt from all of them, so "
+                    f"compile it with a full run",
+                    object_,
+                )
+
+    def _check_references_are_written(self, blocks: Sequence[_Block]) -> None:
+        """Every cross-reference must point at a node this run actually writes.
+
+        The ID map answers a weaker question — whether the instance has *ever* minted that
+        IRI — and a row can outlive the node: an object whose source was reconfigured away,
+        or one minted by a run that never got as far as writing its files. Emitting the
+        triple anyway would put a `sem:target` in a governed file pointing into space, and
+        nothing downstream would catch it; a SHACL shape sees only what is in the graph, so
+        the dangling half is invisible there too.
+
+        Asked over the whole output rather than per statement, because the legitimate
+        answers arrive from two places: the model, and the nodes lifecycle retained (spec
+        3.5) — a relationship may point at an entity no source reports any more, which is
+        exactly what deprecation-not-deletion is for, and on a ``--source X`` run most of
+        what a reference points at is carried rather than compiled.
+        """
+        # Defining blocks only. A file that merely *mentions* a node — the ``sem:relatesTo``
+        # shortcut (spec 4.2) — is not a description of it, and a reference resolving onto
+        # one would point at a subject with no label, type or status.
+        described = {block.subject for block in blocks if block.defines}
+        # Deduplicated: a relationship's source and target are each resolved twice, once
+        # for the statement and once to key the shortcut by entity pair, and one broken
+        # reference reported twice is one problem an operator reads as two.
+        for reference in sorted(set(self.references), key=lambda item: (str(item.iri), item.role)):
+            if reference.iri in described:
+                continue
+            self._issue(
+                f"{reference.about.kind} {reference.about.refs[0]} names {reference.ref} as "
+                f"its {reference.role}, which the ID map maps to {reference.iri} — but "
+                f"nothing in this run's output describes that node; a reference must point "
+                f"at an object the run wrote",
+                reference.about,
+            )
+
     def _check_nothing_is_written_twice(self, blocks: Sequence[_Block]) -> None:
         """No statement may be written into two files (spec 4.2, 5.5 rule 4).
 
@@ -890,6 +959,18 @@ class _Block:
     """Whether this block *describes* its subject, as opposed to merely stating something
     about it. Only a defining block carries ``dcterms:modified``: a node is dated once, in
     the file that introduces it, however many files mention it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Reference:
+    """One resolved cross-reference, kept so the output can be asked about it later."""
+
+    about: SemanticObject
+    """The object that points, so a failure names the source ref an operator can find."""
+
+    ref: SourceRef
+    role: str
+    iri: URIRef
 
 
 @dataclass(frozen=True, slots=True)

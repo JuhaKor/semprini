@@ -145,6 +145,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   access, and an adapter's configured path may not lead outside the repository. A direct
   Ellie API mode is a later mode of the same adapter, and will re-use every IRI, since
   identity is keyed by the Ellie UUID either way.
+- **`semprini run` compiles an instance end to end** (§5.1): fetch every configured
+  source, apply the lifecycle rules, resolve identity, build, serialize, write
+  `generated/` and append to `mappings/id-map.csv`. Nothing is written until every stage
+  has succeeded, so a source that is down or a register that contradicts itself leaves the
+  instance exactly as it was rather than half-written. Two runs of unchanged sources
+  produce zero diff — no rewritten dates, and no report saying nothing happened.
+- `--dry-run` performs the whole compile and writes nothing at all, the ID map included,
+  and reports the same bytes a real run would have committed.
+- `--source <name>` fetches one source and compiles it against the previous state: every
+  object outside that scope is carried forward exactly as it stands, so a partial run
+  still writes the whole directory and deprecates nothing it did not look at. An object
+  two sources describe is refused (exit `1`) rather than rebuilt from half its evidence.
+- **Output the run did not produce is removed** (§4.3). `generated/` is machine-owned, and
+  a file left behind is read as current by anything loading the directory from Git —
+  including a nested one, which the manifest check would fail on the next PR. `.report.md`
+  is the exception, since it is written only when something moved; removing a stale file
+  counts as something moving, so that run rewrites the report.
+- `--force-namespace-change` now performs the move (§3.4.4): the ID map, the merge
+  register, the namespace lock and every generated file are rewritten in one commit, with
+  local names unchanged.
+  The move is computed with the run and written with its output, so a compile that fails
+  afterwards leaves nothing half-moved; the previous generated state is rebased before the
+  lifecycle rules read it, so deprecated nodes travel with everything else and no
+  `dcterms:modified` moves. It cannot be combined with `--source`.
+- Two configured sources that describe one object and disagree about it now fail with a
+  message naming the source, not a traceback: which side wins is a stewardship decision
+  and the compiler settles neither (§5.2). Reachable through third-party adapters, since
+  neither bundled one stamps another source's key onto its objects.
+- A cross-reference must now point at a node the run actually **writes**, not merely at an
+  IRI the ID map has heard of. A row outlives its node — an object whose source was
+  reconfigured away leaves one behind — and the triple would otherwise reach a governed
+  file pointing at nothing, where no SHACL shape can see it.
 - A taxonomy workbook that names a reference entity now states which configured source
   issued that key, as `enumerates_source`. It is required exactly when the workbook's
   `Reference Entity UUID` cell is filled: the ID map is keyed by `(source name, source

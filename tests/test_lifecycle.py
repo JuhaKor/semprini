@@ -373,10 +373,9 @@ def test_a_node_the_id_map_has_never_heard_of_is_refused(tmp_path: Path) -> None
 
 # ------------------------------------------------------------------------- run scope
 #
-# A partial run is planned here but not built: `build()` still refuses one outright, and
-# removing that guard is **E2's** first step — it has to answer what a `--source X` run
-# writes to the files it did not regenerate. What E1 owns, and what these pin, is the
-# rule that makes such a run safe at all: a run that did not look cannot conclude.
+# A partial run is planned here, not built: what these pin is the rule that makes such a
+# run safe at all — a run that did not look cannot conclude. `test_run.py` asserts the
+# other half, that a `--source X` run therefore writes the whole directory.
 
 
 def plan_only(

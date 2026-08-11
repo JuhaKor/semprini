@@ -14,7 +14,7 @@ import sys
 from collections.abc import Sequence
 from enum import IntEnum
 
-from semprini import adapters, compiler_version, config, identity, ontology_version
+from semprini import adapters, compiler_version, config, identity, ontology_version, run
 from semprini.adapters import AdapterError, AdapterLoadError, BaseAdapter, SourceUnreachableError
 from semprini.model import IssueError
 
@@ -41,7 +41,6 @@ class ExitCode(IntEnum):
 # fills each one so that a stub is never mistaken for a missing feature.
 _UNIMPLEMENTED = {
     "init": "task G1",
-    "run": "task E2",
     "check": "task F2",
     "migrate": "task G3",
 }
@@ -164,6 +163,24 @@ def _summary(adapter: type[BaseAdapter]) -> str:
     return lines[0].strip() if lines else ""
 
 
+def _run(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
+    """``semprini run`` — fetch, compile, write (spec 5.1).
+
+    Every decision belongs to :func:`semprini.run.run`; this reports what it did. The
+    split is the one spec 6.3 requires between the compiler and the surface an operator
+    sees, and it is why a run behaves identically on a laptop and in CI.
+    """
+    result = run.run(
+        settings,
+        only_source=arguments.source,
+        dry_run=arguments.dry_run,
+        force_namespace_change=arguments.force_namespace_change,
+    )
+    for line in result.summary():
+        print(line)
+    return ExitCode.OK
+
+
 def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig:
     """Load the instance's configuration and check its namespace lock (exit code 2).
 
@@ -241,7 +258,9 @@ def _dispatch(arguments: argparse.Namespace) -> int:
         # Deliberately ahead of the "not implemented" message below: a command that will
         # read the instance owes the operator the configuration error now, with the key
         # that caused it, rather than after the feature lands.
-        _load_config(arguments)
+        settings = _load_config(arguments)
+        if arguments.command == "run":
+            return _run(arguments, settings)
 
     task = _UNIMPLEMENTED[arguments.command]
     print(

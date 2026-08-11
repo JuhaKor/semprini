@@ -32,7 +32,7 @@ import csv
 import datetime
 import io
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from rdflib import Graph, Literal, URIRef
@@ -319,6 +319,35 @@ class MergeRegister:
             )
         return issues
 
+    # ------------------------------------------------------------------ rebasing
+
+    def rebased(self, old_base: str, new_base: str) -> MergeRegister:
+        """The same decisions, with every IRI under ``old_base`` moved (spec 3.4.4).
+
+        The register travels with the ID map through a namespace move, and it is the one
+        file in an instance where a person typed those IRIs. Left behind, every row would
+        name an IRI the moved map has never heard of, and the next run would refuse it —
+        so the migration ``--force-namespace-change`` exists to perform could not be
+        performed at all on an instance that had ever recorded a merge.
+
+        This is the only circumstance in which a compile writes this file, and it changes
+        no decision: a row still says the same two objects are one, in the namespace they
+        now live in. An IRI outside the old base is left exactly as it is, so a row that
+        was already wrong stays wrong and is reported by :meth:`check_against` rather than
+        quietly acquiring a new namespace.
+        """
+        return MergeRegister(
+            (
+                replace(
+                    row,
+                    deprecated_iri=_rebased_iri(row.deprecated_iri, old_base, new_base),
+                    replaced_by_iri=_rebased_iri(row.replaced_by_iri, old_base, new_base),
+                )
+                for row in self._rows
+            ),
+            origin=self.origin,
+        )
+
     # ------------------------------------------------------------------ writing
 
     def dumps(self) -> str:
@@ -332,13 +361,19 @@ class MergeRegister:
     def save(self, repo_root: Path | None = None) -> Path:
         """Write the register to ``<repo_root>/mappings/merges.csv``.
 
-        Here for ``semprini init``, which creates the file with its headers (spec 5.7): no
-        compile writes this file, since every row in it is a steward's decision.
+        Here for ``semprini init``, which creates the file with its headers (spec 5.7).
+        Every row in it is a steward's decision, so the only compile that writes it is a
+        namespace move, which rewrites the IRIs in those rows without touching what they
+        say (spec 3.4.4, :meth:`rebased`).
         """
         path = (Path.cwd() if repo_root is None else Path(repo_root)) / MERGES_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.dumps(), encoding="utf-8", newline="\n")
         return path
+
+
+def _rebased_iri(iri: str, old_base: str, new_base: str) -> str:
+    return new_base + iri[len(old_base) :] if iri.startswith(old_base) else iri
 
 
 def _row_from_csv(values: Sequence[str], location: str, issues: list[Issue]) -> MergeRow | None:

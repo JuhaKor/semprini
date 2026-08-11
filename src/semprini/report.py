@@ -133,7 +133,7 @@ class SourceSummary:
     """What one configured source contributed (spec 5.6).
 
     Supplied by the caller rather than derived here: only the run knows which adapters it
-    invoked and what they said. **E2** fills these in as it fetches.
+    invoked and what they said. :func:`semprini.run.run` fills these in as it fetches.
     """
 
     name: str

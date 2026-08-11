@@ -292,7 +292,29 @@ tell the same story.
    else**: it is the one invocation that suspends the lock's checks, so an instance id
    that has also drifted is refused rather than re-frozen, and a "move" to the base IRI
    already locked is refused too — it would only discard the record of when the namespace
-   was frozen.
+   was frozen. It cannot be combined with `--source`: the commit would then make two
+   claims at once — that every IRI moved, and that some content changed — and a reviewer
+   cannot check the first through the second.
+
+   The **merge register moves with the map**, and that is the only circumstance in which a
+   compile writes `mappings/merges.csv` (5.4). Its rows are the one place in an instance
+   where a person typed an IRI; left behind, every one of them would name an IRI the moved
+   map has never heard of, the run would refuse itself, and the migration could not be
+   performed at all on an instance that had ever recorded a merge. Rebasing changes no
+   decision — a row says the same two objects are one, in the namespace they now live in.
+
+   The move is **computed with the run and written with its output**, map, register and
+   lock included, and the map is written before the lock. A move performed up front would leave
+   an instance whose map says it has moved and whose `generated/` says it has not the
+   moment the compile that follows fails, and that state has no way out: a second
+   `--force-namespace-change` is refused as a move to the base IRI already locked, and a
+   plain run refuses the old IRIs still in the output. The run **rebases the previous
+   generated state** before lifecycle reads it, so nodes already written are recognized as
+   the nodes they are — without that, every one of them is an IRI the ID map has never
+   heard of (5.4), which at best fails the run and at worst would silently drop every
+   deprecated object in the instance. Rebasing is also what keeps `dcterms:modified` still:
+   the move changes where an object lives and nothing it says, so the commit is every IRI
+   and no dates, and the run report shows nothing new and nothing changed.
 
 ### 3.5 Lifecycle rules
 
@@ -377,6 +399,7 @@ semprini/
 ├── .github/workflows/             # this repository's own CI — lint, types, tests
 ├── src/semprini/
 │   ├── cli.py                     # the whole CLI surface (5.1)
+│   ├── run.py                     # the `semprini run` pipeline, end to end (5.1)
 │   ├── config.py                  # config/semprini.yaml loading and validation (5.1)
 │   ├── model.py                   # internal model dataclasses
 │   ├── identity.py                # ID map, minting, namespace lock
@@ -492,6 +515,14 @@ instance as a diff hunk nobody could account for.
 - **A file present but unrecorded fails the check** as surely as an edited one. Otherwise
   an instance accumulates output from a scheme that no longer exists, and a consumer
   loading the directory from Git reads statements no source still makes.
+- **A run removes what it did not produce.** "Overwritten wholesale" is a statement about
+  the directory, not about each file: output the run did not write is deleted, including
+  anything nested, since a consumer reading the tree reads that too. This is safe for a
+  `--source X` run as well as a full one, because every object outside the fetched scope is
+  carried forward by lifecycle (5.4) and so *is* produced. `.report.md` is the exception —
+  it is written only when something moved (5.6), so a run that produced no report has not
+  stopped producing the committed one. Removing a file counts as a change, so the run that
+  does it rewrites the report.
 - **A manifest is never written by an uninstalled compiler.** Run from a source tree the
   package reports version `0.0.0+source`, which identifies no release — two different
   working trees record the same string and the drift check (6.1) passes between them, so
@@ -551,9 +582,26 @@ fetch (per configured adapter)
   → resolve identity (ID map lookup / minting)
   → build rdflib Graphs (one per output file), from the model and the nodes
     lifecycle retained
-  → canonical serialization → write generated/*.ttl + .manifest.json + .report.md
+  → canonical serialization → write generated/*.ttl + .manifest.json + .report.md,
+    removing output this run did not produce (4.3)
   → update mappings/id-map.csv (append-only)
 ```
+
+**Nothing is written until every stage has succeeded.** Fetching, lifecycle, building,
+serialization, hashing and the report all complete in memory first, so a source that is
+down, a merge register that contradicts itself or a model that cannot be expressed leaves
+the instance exactly as it was rather than half-written — there is no state in which
+`generated/` describes one run and `mappings/` another. `--dry-run` is then the same
+pipeline without its last four lines, which is what makes what it reports worth believing:
+the bytes it would have committed are the bytes it computed.
+
+`--source <name>` fetches that source alone and compiles it against the previous state:
+every object outside the fetched scope arrives from lifecycle as a retained node (5.4), so
+the run still writes the whole directory. The one case that cannot be assembled this way is
+an object the ID map records against **two** sources when only one was fetched — the model
+holds it rebuilt from half its evidence — and the run refuses it (exit `1`) rather than
+choosing between deleting the other source's statements and discarding the update it was
+invoked for.
 
 Lifecycle runs **before** the build stage rather than over its output: a deprecated object
 is not in the model — no adapter returned it — so there is nothing for a later pass to
@@ -571,11 +619,20 @@ anything no output could honestly represent: an object in no scheme, in a scheme
 source defined, or in the wrong *kind* of scheme — a taxonomy value in a glossary; a
 scheme slug that is malformed or that has been renamed since it was minted (3.4.2); a
 cross-reference (`sem:attributeOf`, `sem:source`, `sem:target`, `skos:broader`,
-`sem:enumerates`) to something the run did not resolve, or that the ID map records as the
-wrong *kind* — `sem:enumerates` runs scheme → entity (3.3). The first four decide which
-*file* an object is written to, so they cannot be deferred to SHACL validation (6.1); the
-rest would otherwise reach a governed file as a triple pointing at nothing, or at the
-wrong thing.
+`sem:enumerates`) to something the run did not resolve, that the ID map records as the
+wrong *kind* — `sem:enumerates` runs scheme → entity (3.3) — or that resolves to a node
+**this run does not write**. The first four decide which *file* an object is written to, so
+they cannot be deferred to SHACL validation (6.1); the rest would otherwise reach a
+governed file as a triple pointing at nothing, or at the wrong thing.
+
+The last of those is a question about the whole output rather than about one statement,
+and is asked once the files are assembled. The ID map answers only whether an IRI was ever
+minted, and a row outlives the node — an object whose source was reconfigured away leaves
+one behind. What makes the stricter question answerable at all is that both legitimate
+sources of a node are in hand by then: the model, and the nodes lifecycle retained. A
+relationship may point at an entity no source reports any more, which is exactly what
+deprecation-not-deletion is for, and on a `--source X` run most of what a reference points
+at is retained rather than compiled.
 
 A dangling `sem:enumerates` is the ordinary case while an instance is being brought up
 rather than an exotic one: a workbook names its reference entity by that entity's key in
@@ -1011,6 +1068,14 @@ Out-of-scope objects are **carried forward exactly as they stand**, status inclu
 skipped: `generated/` files are rewritten whole, so a node left out of a run's output is a
 node deleted from the instance — the opposite of what "skip deprecation" is asking for.
 
+Carrying forward works because an out-of-scope object belongs to nobody the run fetched.
+An object the ID map records against **two** sources when only one was fetched is therefore
+the one case a partial run cannot assemble: the model holds it rebuilt from one source's
+statements, so writing it would delete the other's contribution, and carrying it forward
+would discard the very update the run was invoked for. The run refuses it (exit `1`) and
+says to compile in full, for the reason merging refuses to guess (5.2) — loosening this
+later is easy, and tightening it once instances hold files built under a guess is not.
+
 The `sem:relatesTo` shortcut needs saying separately, because it is the one statement
 written away from the node it is about (4.2): its subject is the source entity, but it
 lives in the relationship's file. When the entity is still reported and the *relationship*
@@ -1101,6 +1166,12 @@ no-op compile would rewrite "12 new" to "0 new" and open a PR containing nothing
 the empty diff the whole design exists to avoid (1.2, 4.3). A committed report is
 therefore always the report of the run that produced the files beside it, which is also
 what a reviewer wants it to be.
+
+"Changed something" is about the instance, not only about the bytes produced: the
+`.manifest.json` the run writes is part of the comparison, so a recompile after a plane
+upgrade rewrites the report rather than leaving one that names an older release beside a
+manifest that names the new one; and a run that produced byte-identical files while
+*removing* stale output (4.3) has changed the instance and rewrites it too.
 
 ### 5.7 Bootstrapping an instance
 

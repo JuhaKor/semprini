@@ -431,7 +431,7 @@ def test_exit_code_for_maps_each_error_to_its_published_code() -> None:
 
 
 def test_an_unreachable_source_exits_3(installed_dummy_adapter: Path, tmp_path: Path) -> None:
-    """The shape E2's fetch loop takes, with the source down.
+    """The shape the run's fetch loop takes, with the source down.
 
     Exit 3 is what tells a scheduled compile to retry rather than open an issue, so it
     has to survive the trip from the adapter's ``raise`` to the process's return code —

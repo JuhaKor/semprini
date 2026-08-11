@@ -613,15 +613,97 @@ def test_enumerating_something_that_is_not_an_entity_is_refused() -> None:
         compile_(merge_models(wrong))
 
 
-def test_a_partial_run_is_refused_rather_than_built_from_part_of_a_model() -> None:
-    """``write_all`` rewrites each file whole, so building a ``--source X`` model this way
-    would delete every other source's statements from the files it touched.
+def test_a_partial_run_refuses_an_object_another_source_describes() -> None:
+    """Files are rewritten whole, so an object rebuilt from half its evidence would have
+    the other half deleted (spec 5.4).
 
-    E2 owns making partial runs work (spec 5.4); until then the trap fails loudly rather
-    than silently deleting governed content.
+    The model here is the full sample compiled as a ``--source ellie-main`` run, so the
+    taxonomy's objects are exactly the case: described by a source this run did not fetch.
     """
-    with pytest.raises(BuildError, match="cannot build a partial run"):
+    with pytest.raises(BuildError, match="which this --source ellie-main run did not fetch"):
         compile_(ctx=context(only_source=ELLIE))
+
+
+def test_a_partial_run_of_a_source_that_owns_its_objects_is_built() -> None:
+    """The ordinary partial run: one source, its own objects, nothing shared.
+
+    What makes it safe is the other half — every object outside the fetched scope arrives
+    from lifecycle as a carried node (spec 3.5), which is asserted end to end in
+    ``test_run.py`` rather than here.
+    """
+    only_ellie = merge_models(
+        InternalModel(
+            schemes=(
+                Scheme(
+                    source_refs={ELLIE: "1234"},
+                    pref_label="Sales domain model",
+                    slug="sales",
+                    scheme_type=SchemeType.GLOSSARY,
+                ),
+            ),
+            entities=(Entity(source_refs={ELLIE: ORDER}, pref_label="Order", schemes=("sales",)),),
+        )
+    )
+
+    produced = by_name(compile_(only_ellie, ctx=context(only_source=ELLIE)))
+
+    assert sorted(produced) == ["concepts-sales.ttl", "ontology.ttl"]
+
+
+# ------------------------------------------------------- references point at real nodes
+
+
+def test_a_reference_to_a_node_the_run_does_not_write_is_refused() -> None:
+    """The ID map answers "was this IRI ever minted", which a row can outlive.
+
+    An entity whose source was reconfigured away leaves its row behind; a relationship
+    pointing at it would otherwise reach a governed file as a ``sem:target`` pointing at
+    nothing, and no SHACL shape can see a node that is not in the graph.
+    """
+    model = merge_models(
+        InternalModel(
+            schemes=(
+                Scheme(
+                    source_refs={ELLIE: "1234"},
+                    pref_label="Sales domain model",
+                    slug="sales",
+                    scheme_type=SchemeType.GLOSSARY,
+                ),
+            ),
+            entities=(Entity(source_refs={ELLIE: ORDER}, pref_label="Order", schemes=("sales",)),),
+            relationships=(
+                Relationship(
+                    source_refs={ELLIE: PLACES},
+                    pref_label="places",
+                    source=SourceRef(ELLIE, ORDER),
+                    target=SourceRef(ELLIE, CUSTOMER),
+                    schemes=("sales",),
+                ),
+            ),
+        )
+    )
+    # Customer is in the map from an earlier run, and in no file this one writes.
+    known = IdMap(
+        (
+            IdMapRow(
+                iri=f"{BASE}concepts/{CUSTOMER}",
+                kind=Kind.ENTITY,
+                source_name=ELLIE,
+                source_key=CUSTOMER,
+                first_seen=TODAY,
+            ),
+        )
+    )
+
+    with pytest.raises(
+        BuildError, match="nothing in this run's output describes that node"
+    ) as raised:
+        compile_(model, registry=Registry(known, BASE, today=TODAY))
+
+    # Once, not twice. A relationship's ends are resolved on two paths — for the statement
+    # and to key the sem:relatesTo shortcut by entity pair — and one problem reported twice
+    # is one an operator reads as two, in a file read in CI (spec 5.2).
+    assert len(raised.value.issues) == 1
 
 
 # ------------------------------------------------------------------ the scheme slug
