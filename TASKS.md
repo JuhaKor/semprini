@@ -1402,6 +1402,7 @@ done and green.
   `--dry-run` writes nothing (assert via filesystem snapshot); a mid-pipeline failure
   leaves `generated/` untouched rather than half-written.
   **Depends:** E1
+  **Merged — [PR #12](https://github.com/JuhaKor/semprini/pull/12).**
   **Done.** 709 tests green (36 of them E2's, in `tests/test_run.py`); ruff, ruff format
   and mypy (strict) clean. Thirty-two mutations were checked against the suite — stale
   files never found, only the top level of `generated/` scanned, the report treated as
