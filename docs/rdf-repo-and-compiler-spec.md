@@ -433,6 +433,7 @@ semprini/
 ```
 <org>-semantics/
 ├── README.md                  # points to the plane's docs; local stewardship notes
+├── .gitattributes             # eol=lf — required; see 4.3
 ├── generated/                 # compiler output — NEVER hand-edited
 │   ├── ontology.ttl               # verbatim copy of the pinned sem: ontology
 │   ├── concepts-<scheme>.ttl      # one file per glossary scheme
@@ -524,6 +525,11 @@ instance as a diff hunk nobody could account for.
   it is written only when something moved (5.6), so a run that produced no report has not
   stopped producing the committed one. Removing a file counts as a change, so the run that
   does it rewrites the report.
+- **An instance commits a `.gitattributes` pinning `eol=lf`, and it is not optional.**
+  Generated files are written with LF (5.5 rule 5) and compared byte for byte (6.1 check
+  7), so a clone on a machine with `core.autocrlf=true` — the Windows default — rewrites
+  every one of them on checkout and fails the determinism check on content nobody touched.
+  The scaffold writes it (5.7).
 - **A manifest is never written by an uninstalled compiler.** Run from a source tree the
   package reports version `0.0.0+source`, which identifies no release — two different
   working trees record the same string and the drift check (6.1) passes between them, so
@@ -551,7 +557,7 @@ sources, `pyshacl` for validation and `PyYAML` for configuration. It installs fr
 semprini init      --base-iri <IRI> --org <slug> [--dir <path>]   # bootstrap an instance (5.7)
 semprini run       [--source <name>] [--dry-run]                  # fetch, compile, write
                    [--force-namespace-change]                     # move the base IRI (3.4)
-semprini check                                                    # validate only, no writes
+semprini check     [--base <rev>]                                 # validate only, no writes
 semprini migrate   --to <version>                                 # apply migrations (7)
 semprini adapters                                                 # list discovered plugins
 semprini version                                                  # compiler + ontology versions
@@ -1179,7 +1185,8 @@ manifest that names the new one; and a run that produced byte-identical files wh
 
 `semprini init --base-iri https://semantics.acme.com/ --org acme`:
 
-1. Materializes `templates/instance/` into the target directory (4.2).
+1. Materializes `templates/instance/` into the target directory (4.2), `.gitattributes`
+   included (4.3).
 2. Writes `config/semprini.yaml` with the base IRI, instance id and default language, and
    an empty `sources:` list.
 3. Writes `mappings/namespace.lock` (3.4) and empty `id-map.csv` / `merges.csv` with
@@ -1198,7 +1205,19 @@ The command refuses to run in a directory that already contains a `namespace.loc
 ### 6.1 Checks
 
 All checks are implemented in `semprini check` — CI invokes the CLI and nothing else (6.3).
-Steps, all blocking unless noted:
+It reads the instance and writes nothing, so it is safe to run where it has no permission
+to write.
+
+Every check runs and every check collects: these are read in CI, where one problem per
+round trip is the difference between one fix and five. The exception is check 1 — content
+that does not parse cannot be asked what checks 4–7 ask, and those are then reported as
+**not run** rather than answered from the files that happened to load. A check that could
+not run is never reported as one that passed, and does not fail the command; the only
+other check that can report itself not run is the append-only half of check 6, which needs
+a base revision that does not always exist.
+
+Exit `1` for any error, `0` when only warnings were found, `2` for the two configuration
+categories below. Steps, all blocking unless noted:
 
 1. **Syntax**: every `.ttl` parses (rdflib).
 2. **Manifest integrity**: `generated/*` hashes match `.manifest.json`, every recorded
@@ -1209,7 +1228,14 @@ Steps, all blocking unless noted:
    separately reviewable "recompile with `<version>`" PR rather than a surprise reflow
    of every file mixed into a content change (7).
 4. **Namespace lock**: `config/semprini.yaml`'s base IRI matches `mappings/namespace.lock`
-   (3.4); every generated subject IRI falls under it.
+   (3.4); every generated subject IRI falls under it. The two halves fail differently and
+   deliberately: a base IRI disagreeing with the lock is exit `2` and aborts, because the
+   lock is frozen configuration and nothing else the command reports would be meaningful
+   under a base IRI the instance does not have; a subject outside it is an ordinary
+   finding. The subject rule is weaker than check 5's IRI policy, which also demands the
+   namespace of the subject's *kind* and the local name 3.4.2 mints — both are reported,
+   since this one asks nothing about what the node is and so holds for a subject no shape
+   targets.
 5. **SHACL** (`pyshacl`), core shapes from the package plus every shape in
    `shapes/local/`. The core shapes' own IRIs live in
    `https://w3id.org/semprini/shapes#`, never in `sem:` — that namespace resolves to the
@@ -1273,9 +1299,29 @@ Steps, all blocking unless noted:
      instance data; they cannot license data the core shapes forbid.
 6. **Identity checks**: ID map is append-only versus the base branch; no collisions;
    every subject IRI in `generated/` exists in the ID map; every `source_name` in the
-   ID map is configured (5.4).
+   ID map is configured (5.4); and the merge register names IRIs the map holds.
+
+   Only the first needs anything outside the working tree, and it is the one part of
+   `semprini check` that does: "append-only" is a claim about a *change*, so it is judged
+   against `--base <rev>`, or, absent that, the base branch CI names (`GITHUB_BASE_REF`)
+   or the remote's default branch (`origin/HEAD`). The comparison is made against the
+   **merge base** of that revision and `HEAD`, never the branch tip: a row another pull
+   request merged since this one forked would otherwise be reported as a row this change
+   deleted. There is deliberately no guess at `main` — a check that quietly measures the
+   wrong branch is worse than one that says it measured nothing — so where no revision can
+   be resolved, or the ID map at it cannot be read, this half reports itself **not run**
+   and the other three still answer. A base revision holding no ID map is an empty map,
+   not a failure: that is the pull request that creates the instance.
 7. **Determinism**: re-serialize the parsed graphs with the canonical serializer;
-   output must be byte-identical to the committed files.
+   output must be byte-identical to the committed files, line endings included (5.5
+   rule 5). This is the check that does not trust the manifest — every other guarantee
+   about `generated/` is recorded in a file the compiler also wrote, so a hand edit that
+   recomputes the hash defeats it, and this one re-derives the content from the graph.
+   `ontology.ttl` is compared against the metamodel the running compiler carries rather
+   than re-serialized, since it is copied verbatim and is the one generated file the
+   serializer did not produce (4.2); the comparison is skipped when check 3 found the
+   recorded ontology version drifting, because the committed copy is then expected to
+   differ.
 
 The plane's own test suite runs the same checks against `tests/fixtures/acme/` — a
 complete synthetic instance with a mocked source API and sample workbook, plus golden
@@ -1288,7 +1334,9 @@ adopters rather than merely asserted.
 Each instance has two workflows, both thin:
 
 - **`validate.yml`** — on every PR and on main: install the pinned plane version, run
-  `semprini check`.
+  `semprini check`. It checks out enough history for check 6 to resolve a base revision —
+  a single-commit checkout, which is several CI platforms' default, silently turns the
+  append-only comparison off — or passes `--base` explicitly.
 - **`compile.yml`** — on a schedule and on manual dispatch: install the pinned plane
   version, run `semprini run`, and if `generated/` or `mappings/` changed, open a PR (branch
   `compile/<date>`) with `generated/.report.md` as the description. It never pushes to

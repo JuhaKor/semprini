@@ -13,8 +13,9 @@ import argparse
 import sys
 from collections.abc import Sequence
 from enum import IntEnum
+from typing import TextIO
 
-from semprini import adapters, compiler_version, config, identity, ontology_version, run
+from semprini import adapters, compiler_version, config, identity, ontology_version, run, validate
 from semprini.adapters import AdapterError, AdapterLoadError, BaseAdapter, SourceUnreachableError
 from semprini.model import IssueError
 
@@ -41,7 +42,6 @@ class ExitCode(IntEnum):
 # fills each one so that a stub is never mistaken for a missing feature.
 _UNIMPLEMENTED = {
     "init": "task G1",
-    "check": "task F2",
     "migrate": "task G3",
 }
 
@@ -84,7 +84,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    subcommands.add_parser("check", help="validate only, no writes")
+    check = subcommands.add_parser("check", help="validate only, no writes")
+    check.add_argument(
+        "--base",
+        metavar="<rev>",
+        help=(
+            "the git revision the ID map is compared against for the append-only check "
+            "(spec 6.1 check 6); defaults to the pull request's base branch where CI "
+            "names one, and the check reports itself not run when there is none"
+        ),
+    )
 
     migrate = subcommands.add_parser("migrate", help="apply migrations")
     migrate.add_argument("--to", required=True, metavar="<version>")
@@ -95,17 +104,40 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _say(text: str, *, stream: TextIO | None = None) -> None:
+    """Print one line, degrading rather than failing on a console that cannot spell it.
+
+    Much of what ``semprini check`` prints is text nobody in this project wrote: a SHACL
+    message quotes the node it is about, and a node's label is whatever a modeller typed
+    into a workbook. On Windows a *redirected* stream still encodes as cp1252 with strict
+    errors, and cp1252 holds Latin-1 plus a little punctuation and nothing else — so an
+    arrow in a relationship's verb or any CJK label raises ``UnicodeEncodeError`` and
+    turns a report about someone's instance into a traceback about ours. It lands on a
+    *passing* check as readily as a failing one, since warnings are printed too.
+
+    Replaced rather than avoided: keeping our own strings ASCII (which spec 5.6's report
+    does) cannot help here, because the text is not all ours. A replaced character is a
+    legible line with a ``?`` in it; the alternative is no output and exit 1.
+    """
+    output = sys.stdout if stream is None else stream
+    try:
+        print(text, file=output)
+    except UnicodeEncodeError:
+        encoding = output.encoding or "ascii"
+        print(text.encode(encoding, errors="replace").decode(encoding), file=output)
+
+
 def _version() -> int:
     try:
         ontology = ontology_version()
     except (OSError, SyntaxError, ValueError) as error:
         # SyntaxError covers rdflib's BadSyntax on a corrupt sem.ttl — a malformed
         # bundled document is a compile failure with a message, not a traceback.
-        print(f"{_PROGRAM}: cannot read the bundled ontology: {error}", file=sys.stderr)
+        _say(f"{_PROGRAM}: cannot read the bundled ontology: {error}", stream=sys.stderr)
         return ExitCode.FAILURE
 
-    print(f"compiler {compiler_version()}")
-    print(f"ontology {ontology}")
+    _say(f"compiler {compiler_version()}")
+    _say(f"ontology {ontology}")
     return ExitCode.OK
 
 
@@ -119,7 +151,7 @@ def _adapters() -> int:
     """
     entries = adapters.discover()
     if not entries:
-        print("no adapters are installed")
+        _say("no adapters are installed")
         return ExitCode.OK
 
     rows: list[tuple[str, str, str]] = []
@@ -136,7 +168,7 @@ def _adapters() -> int:
     name_width = max(len(row[0]) for row in rows)
     provider_width = max(len(row[1]) for row in rows)
     for name, provider, summary in rows:
-        print(f"{name:<{name_width}}  {provider:<{provider_width}}  {summary}".rstrip())
+        _say(f"{name:<{name_width}}  {provider:<{provider_width}}  {summary}".rstrip())
 
     # A name two distributions claim is an installation that does not work, even though
     # every plugin in it imports: `adapter: <name>` cannot be resolved, so the run would
@@ -177,8 +209,21 @@ def _run(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
         force_namespace_change=arguments.force_namespace_change,
     )
     for line in result.summary():
-        print(line)
+        _say(line)
     return ExitCode.OK
+
+
+def _check(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
+    """``semprini check`` — every check of spec 6.1, and nothing written (spec 5.1).
+
+    The command CI runs on every pull request, so what it prints is what a reviewer reads:
+    each check by number and name, its findings underneath, and one line saying whether
+    the instance is committable. Warnings appear and do not fail it (spec 6.1.5).
+    """
+    result = validate.check(settings, base=arguments.base)
+    for line in result.summary():
+        _say(line)
+    return ExitCode.OK if result.ok else ExitCode.FAILURE
 
 
 def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig:
@@ -243,7 +288,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Every error the compiler raises deliberately carries what an operator has to
         # know; a traceback would carry it too, plus forty lines of this package's
         # internals for them to read past.
-        print(f"{_PROGRAM}: {error}", file=sys.stderr)
+        _say(f"{_PROGRAM}: {error}", stream=sys.stderr)
         return exit_code_for(error)
 
 
@@ -261,6 +306,8 @@ def _dispatch(arguments: argparse.Namespace) -> int:
         settings = _load_config(arguments)
         if arguments.command == "run":
             return _run(arguments, settings)
+        if arguments.command == "check":
+            return _check(arguments, settings)
 
     task = _UNIMPLEMENTED[arguments.command]
     print(

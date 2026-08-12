@@ -201,8 +201,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   vocabulary in `overlays/external/` without its concepts being asked for a `sem:status`
   nobody could give them — while an overlay that renames, deprecates or re-files a
   generated node is still refused, because `generated/` is the compiler's.
-  Wiring these into `semprini check` is the next task; today they are a library the
-  plane's own suite runs against the synthetic instance.
+- **`semprini check` validates an instance end to end** (§6.1): syntax, manifest
+  integrity, version drift, the namespace lock, SHACL, identity and determinism, in that
+  order, reading the instance and writing nothing. Every problem is reported in one run,
+  grouped under the check that found it — CI is where these are read, and one problem per
+  round trip is the difference between one fix and five. Missing definitions and anything
+  else a shape reports as a warning appear without failing the command; an error exits `1`
+  and a base IRI that disagrees with the namespace lock exits `2`.
+- Two of the seven checks answer questions no other stage can. **Determinism does not trust
+  the manifest**: it re-serializes what is committed and compares the bytes, line endings
+  included, so a hand edit that also recomputes its hash is still caught — and so is a
+  `generated/` file whose line endings a clone rewrote. **The ID map's append-only rule is
+  compared against the base revision** in git — the merge base, never the branch tip, so
+  rows another pull request merged in the meantime are not reported as rows this one
+  deleted. Where no base revision can be resolved, that half reports itself **not run**
+  rather than passing quietly, and `--base <rev>` names one on any CI platform.
+- **An instance must commit a `.gitattributes` pinning `eol=lf`.** Without it, a clone on a
+  machine with `core.autocrlf=true` — the Windows default — rewrites every generated file
+  on checkout, and the determinism check correctly fails on content nobody touched. The
+  scaffold will write it; an instance created before then should add it.
 
 ### Ontology 0.1.0
 

@@ -411,9 +411,11 @@ def test_a_configured_adapter_that_is_not_installed_exits_2(
 
 def test_the_name_check_is_skipped_when_no_adapter_is_installed(instance: Path) -> None:
     # Checking against an empty set would reject every valid configuration, so an
-    # installation with no adapters at all does not judge names (B3's reasoning). Exit 1
-    # is `check` reporting itself unimplemented, i.e. configuration loaded cleanly.
-    assert main(["check"]) == ExitCode.FAILURE
+    # installation with no adapters at all does not judge names (B3's reasoning). Exit 0
+    # is the whole check sequence passing, which it can: `check` reads the instance and
+    # never fetches, so it needs no adapter installed to validate a configuration naming
+    # two of them.
+    assert main(["check"]) == ExitCode.OK
 
 
 def test_exit_code_for_maps_each_error_to_its_published_code() -> None:

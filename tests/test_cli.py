@@ -6,6 +6,7 @@ on them, so each one is pinned by a test.
 
 from __future__ import annotations
 
+import io
 import shutil
 import subprocess
 from pathlib import Path
@@ -19,7 +20,6 @@ from semprini.cli import ExitCode, main
 # `adapters` left this list in D1, `run` in E2; `version` was never in it.
 STUB_INVOCATIONS = [
     ["init", "--base-iri", "https://semantics.example.com/", "--org", "example"],
-    ["check"],
     ["migrate", "--to", "0.2.0"],
 ]
 
@@ -78,6 +78,34 @@ def test_unimplemented_commands_exit_1(
     err = capsys.readouterr().err
     assert "not implemented" in err
     assert argv[0] in err
+
+
+def test_output_degrades_rather_than_failing_on_a_narrow_console() -> None:
+    """A console that cannot encode a character must not turn output into a traceback.
+
+    ``semprini check`` prints text nobody here wrote: SHACL messages quote the node they
+    are about, and a node's label is whatever a modeller typed into a workbook. On Windows
+    a *redirected* stream encodes as cp1252 with strict errors, and cp1252 holds Latin-1
+    plus a handful of punctuation and nothing else — so an arrow in a relationship's verb,
+    a Greek letter in a unit, or any CJK label raises ``UnicodeEncodeError`` and turns a
+    report about someone's instance into a traceback about ours.
+
+    Keeping our own strings ASCII, which the run report does, cannot help: the text is not
+    all ours.
+    """
+    written: list[str] = []
+
+    class NarrowConsole(io.StringIO):
+        encoding = "cp1252"
+
+        def write(self, text: str) -> int:
+            text.encode(self.encoding)  # raises UnicodeEncodeError, as the real one does
+            written.append(text)
+            return len(text)
+
+    cli._say("Order → Customer", stream=NarrowConsole())
+
+    assert "".join(written).startswith("Order ? Customer")
 
 
 def test_help_exits_0() -> None:

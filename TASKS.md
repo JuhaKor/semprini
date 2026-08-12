@@ -1702,7 +1702,7 @@ done and green.
     nothing rather than one that licenses anything, but the rejection §6.1.5 requires is
     still F3's to write.
 
-- [ ] **F2 · `semprini check` pipeline**
+- [x] **F2 · `semprini check` pipeline**
   **Spec:** §6.1 items 1–7
   **Deliver:** the full check sequence, including the version-drift check (§7) and the
   determinism re-serialization check.
@@ -1715,6 +1715,93 @@ done and green.
   `MergeRegister.load(...).check_against(id_map)` (E1) each return `Issue`s or raise an
   `IssueError` the CLI already maps. Getting the base revision out of git is the one part
   of check 6 nothing implements yet.
+
+  **Done.** 846 tests green (55 of them F2's); ruff, ruff format and mypy (strict) clean;
+  the wheel still installs into a bare venv with pip and `semprini check` passes there on
+  the fixture instance, which check 7 newly depends on — it reads the packaged `sem.ttl`
+  at run time.
+  Thirty-eight mutations were checked against the suite, twice — syntax errors in
+  `generated/` ignored, the ontology copy never parsed, overlays and local shapes not
+  parsed, checks 4–7 answered from content that did not parse, a check that did not run
+  counted as passed, warnings failing the command and errors not failing it, issues listed
+  unsorted, manifest hashes never recomputed, an unreadable manifest ignored, version drift
+  never checked, the namespace lock not verified, subjects not compared against the base
+  IRI, the shapes never applied or applied to an empty graph, unconfigured source names
+  tolerated, a generated subject missing from the ID map tolerated, the merge register
+  never checked, the append-only comparison never made, the base taken as the branch tip,
+  the repository path prefix ignored, a missing base revision reported as a pass, an
+  unreadable base map treated as empty, a git failure escaping as a traceback, each of the
+  three base-revision candidates not consulted, re-serialized bytes never compared, line
+  endings translated on the way in, a graph the serializer refuses skipped silently, the
+  ontology copy never compared and compared when it should not be, a skipped check losing
+  its note when it also found something, `check` always exiting 0, printing nothing,
+  ignoring `--base`, and output not surviving a narrow console — and each fails it.
+
+  **Five survived the first run, and four were real holes in the tests**: nothing asserted
+  that a *skipped* check is not a passing one; the lock test went through `main`, which
+  verifies the lock when it loads configuration, so `check`'s own call was untested; no
+  fixture had a damaged ID map at the *base* revision, where treating it as empty makes
+  the comparison trivially pass; and the ordering test was in-process, which F1 had already
+  written down as the way this exact assertion passes by luck.
+
+  **The fifth survivor was a design defect the battery found rather than a test hole**, and
+  it is worth remembering because it is self-concealing: `summary()` sorted the issues a
+  second time, so removing the real sort in `_outcome` changed nothing anyone could
+  observe. A guarantee enforced twice is a guarantee whose enforcement cannot be tested
+  through the output that carries it. There is now one sort, where the outcome is built.
+
+  Decisions, for later sessions:
+  - **All seven checks live in `validate.py`**, which §4.1 already names as "SHACL +
+    structural checks (6.1)". **API:** `check(settings, *, base=None, compiler=None,
+    ontology=None) -> CheckResult`, with `CheckOutcome` per check carrying `issues` and
+    `skipped`. The version arguments exist so a test can pin what the fixture instance's
+    manifest records; production callers pass neither. `check_shapes` gained optional
+    pre-parsed graphs, since four of the seven checks ask about the same bytes and an
+    instance big enough for check 5 to be slow is one that feels four more parses.
+  - **A check that could not run is never reported as one that passed.** `CheckOutcome`
+    carries `skipped`, and the summary says "not run" with the reason. It does not fail the
+    command — an instance with no git history is an ordinary instance — which is precisely
+    why it has to be said out loud. A check can be both: check 6 answers three questions
+    from the working tree and a fourth only from git, so findings and the skip note are
+    printed together. The first version suppressed the note whenever there were findings,
+    which made one state report two ways depending on unrelated failures.
+  - **Check 1 gates checks 4–7, and nothing else.** Content that does not parse cannot be
+    asked what those ask, and answering from the files that happened to load invents a
+    second problem on top of the real one. Checks 2 and 3 still run: they are bytes and
+    versions, and the operator learns everything the instance can be told in one round.
+  - **The append-only comparison is the one thing outside the working tree.** `--base
+    <rev>`, else `$GITHUB_BASE_REF`, else `origin/HEAD`, and always the **merge base** with
+    `HEAD` rather than the branch tip — a tip comparison reports rows another pull request
+    merged since this one forked as rows this change deleted. **There is deliberately no
+    fallback guess at `main`**: a check that quietly measures the wrong branch is worse
+    than one that says it measured nothing. `--base` is what makes this portable to GitLab
+    or Azure DevOps (§6.3), and it is now in §5.1's CLI listing.
+  - **G2 owns two things this implies.** `validate.yml` must check out enough history for a
+    base revision to resolve — a single-commit checkout, several platforms' default,
+    silently turns the append-only half off — and §6.2 now says so.
+  - **G1 owes every instance a `.gitattributes` pinning `eol=lf`.** Found by a test failing
+    on Windows, not by reading: a clone with `core.autocrlf=true` rewrites every generated
+    file on checkout and check 7 correctly fails on content nobody touched. §4.2, §4.3 and
+    §5.7 now say it, and `templates/instance/` has to carry it.
+  - **`ontology.ttl` is compared against the packaged metamodel, not re-serialized** — it
+    is copied verbatim (§4.2) and round-tripping it would strip the term comments that are
+    the vocabulary's published documentation. Skipped when check 3 found the ontology
+    version drifting, since the committed copy is then expected to differ.
+  - **The CLI now prints through `cli._say`**, which replaces characters the stream cannot
+    encode instead of raising. Not decoration: a SHACL message quotes the node it is about,
+    a label is whatever a modeller typed, and a redirected stream on Windows still encodes
+    as cp1252 — so an arrow in a relationship's verb or any CJK label would turn a report
+    about someone's instance into a traceback about ours, on a *passing* check as readily
+    as a failing one. The earlier suspicion that the shapes' own em dash was the trigger
+    was wrong: cp1252 holds an em dash. The hazard is source-supplied text.
+  - **"No collisions" (§6.1 check 6) is what loading the map already enforces** — a
+    duplicate source ref, or one IRI recorded under two kinds, is refused by `IdMap.loads`.
+    The stronger question, two *objects* resolving to one IRI, is answerable only over a
+    fetched model (§5.4), and `check` does not fetch. Nothing more is needed here; a run
+    asks it.
+  - **F3 has its seam.** Local shapes are loaded and applied as check 5 (F1), and `check`
+    changes nothing about that; the additive-only rejection still belongs to F3, which
+    should report through the same `CheckOutcome` for check 5 rather than adding an eighth.
 
 - [ ] **F3 · Additive-only enforcement for local shapes**
   **Spec:** §3.6, §6.1.5 (final bullet)
