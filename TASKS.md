@@ -1562,6 +1562,7 @@ done and green.
   source, and inheritance drawn across two of them closes a loop neither one holds — so
   the check has to run on the merged graph. Cover both hierarchies: taxonomy values and
   entities, which §6.1.5 now says may both carry `skos:broader`.
+  **Merged — [PR #13](https://github.com/JuhaKor/semprini/pull/13).**
 
   **Done.** 792 tests green (83 of them F1's); ruff, ruff format and mypy (strict) clean;
   the shapes ship inside the wheel, and `core_shapes()` loads them from a bare venv
