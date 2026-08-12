@@ -1715,6 +1715,7 @@ done and green.
   `MergeRegister.load(...).check_against(id_map)` (E1) each return `Issue`s or raise an
   `IssueError` the CLI already maps. Getting the base revision out of git is the one part
   of check 6 nothing implements yet.
+  **Merged — [PR #14](https://github.com/JuhaKor/semprini/pull/14).**
 
   **Done.** 846 tests green (55 of them F2's); ruff, ruff format and mypy (strict) clean;
   the wheel still installs into a bare venv with pip and `semprini check` passes there on
