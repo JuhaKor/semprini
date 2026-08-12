@@ -397,6 +397,36 @@ def test_an_issue_names_where_the_problem_is() -> None:
     assert str(Issue(Severity.WARNING, "no definition")) == "warning: no definition"
 
 
+def test_issues_sort_by_where_then_what_then_how_badly() -> None:
+    """Reports are read top to bottom, so location leads and severity breaks the tie."""
+    issues = [
+        Issue(Severity.ERROR, "b", "second"),
+        Issue(Severity.WARNING, "a", "first"),
+        Issue(Severity.ERROR, "a", "first"),
+        Issue(Severity.ERROR, "a"),
+    ]
+
+    assert [issue.sort_key for issue in sorted(issues, key=lambda issue: issue.sort_key)] == [
+        ("", "a", Severity.ERROR),
+        ("first", "a", Severity.ERROR),
+        ("first", "a", Severity.WARNING),
+        ("second", "b", Severity.ERROR),
+    ]
+
+
+def test_issues_alike_but_for_severity_are_not_tied() -> None:
+    """The pair a location-and-message sort leaves in whatever order a set produced.
+
+    Deterministic on purpose: issues are collected in sets, so a test that sorts a real
+    pair passes half the time by luck — this one fails outright if the key drops a field.
+    """
+    error = Issue(Severity.ERROR, "same", "same place")
+    warning = Issue(Severity.WARNING, "same", "same place")
+
+    assert error.sort_key != warning.sort_key
+    assert error.sort_key < warning.sort_key
+
+
 # --- text and language ----------------------------------------------------------------
 
 

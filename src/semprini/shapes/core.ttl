@@ -1,0 +1,326 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix shp: <https://w3id.org/semprini/shapes#> .
+@prefix sem: <https://w3id.org/semprini/ontology#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# The core shapes of spec 6.1.5: what every instance's generated/ must satisfy, stated
+# once and shipped with the compiler so that no adopter writes them again.
+#
+# The data graph is the instance's own generated output, without generated/ontology.ttl
+# and without overlays/. Two reasons, both spec 6.1.5. Overlays may hold curated subsets
+# of *external* SKOS vocabularies (spec 4.2), whose concepts carry no sem:status and are
+# nobody's to deprecate; and what an overlay may not do to a generated node is a question
+# about which file a statement came from, which a shape reading their union cannot ask.
+# semprini.validate applies overlays.ttl to overlays/ separately for that reason.
+#
+# Targets never depend on rdfs:subClassOf entailment. sem:Entity is a skos:Concept
+# (spec 3.2), so sh:targetClass skos:Concept would silently start matching entities the
+# moment a caller loads the metamodel alongside the data — and the taxonomy rules below
+# would then be enforced on nodes they were never written for. A taxonomy value is
+# selected by shp:TaxonomyValueTarget instead, which is SPARQL and does no entailment.
+#
+# **These shapes require SHACL Advanced Features** (pyshacl `advanced=True`), for that
+# SPARQL target. A validator run without them reports fewer violations rather than
+# failing, so run them through `semprini check`, which passes it.
+#
+# Licensed CC BY 4.0 (LICENSE-DOCS), like the sem: ontology: shapes are vocabulary, and
+# an adopter may quote and extend them. Local additions belong in the instance's own
+# shapes/local/ and may only add (spec 3.6, 6.1.5).
+
+shp:prefixes
+    sh:declare
+        [ sh:prefix "sem" ; sh:namespace "https://w3id.org/semprini/ontology#"^^xsd:anyURI ] ,
+        [ sh:prefix "skos" ; sh:namespace "http://www.w3.org/2004/02/skos/core#"^^xsd:anyURI ] .
+
+
+# --- Selecting a taxonomy value --------------------------------------------------
+#
+# A taxonomy value is a plain skos:Concept (spec 3.2): the metamodel gives it no class of
+# its own, so it is identified by what it is *not*. Written as a target rather than
+# repeated inside each constraint so that the four shapes below agree by construction.
+#
+# The one class list this file cannot share is the copy inside the hierarchy target
+# below, which has to apply the same test to a second variable. Kept in the same
+# IN(...) form so that the two read as one rule rather than two.
+
+shp:TaxonomyValueTarget
+    a sh:SPARQLTarget ;
+    rdfs:comment "Every plain skos:Concept: a taxonomy value, not an entity or a term." ;
+    sh:prefixes shp:prefixes ;
+    sh:select """
+        SELECT ?this
+        WHERE {
+            ?this a skos:Concept .
+            FILTER NOT EXISTS {
+                ?this a ?class .
+                FILTER ( ?class IN ( sem:Entity, sem:Attribute, sem:Relationship, sem:BusinessTerm ) )
+            }
+        }
+    """ .
+
+
+# --- Every node ------------------------------------------------------------------
+
+shp:Node
+    a sh:NodeShape ;
+    rdfs:label "Every generated node" ;
+    # Schemes included: lifecycle applies to every object, and a scheme disappears from a
+    # source as readily as anything else (spec 3.5, 3.7).
+    sh:targetClass sem:Entity, sem:Attribute, sem:Relationship, sem:BusinessTerm,
+                   skos:ConceptScheme ;
+    sh:target shp:TaxonomyValueTarget ;
+    sh:property [
+        sh:path skos:prefLabel ;
+        sh:minCount 1 ;
+        sh:uniqueLang true ;
+        sh:datatype rdf:langString ;
+        sh:message "a node needs exactly one skos:prefLabel per language, each carrying a language tag (spec 5.5 rule 6, 6.1.5)" ;
+    ] ;
+    sh:property [
+        sh:path sem:status ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:in ( "active" "deprecated" ) ;
+        sh:message "a node needs exactly one sem:status, \"active\" or \"deprecated\" (spec 3.5, 6.1.5)" ;
+    ] .
+
+shp:SchemeMember
+    a sh:NodeShape ;
+    rdfs:label "Every node that belongs to a scheme" ;
+    # A scheme is not itself in a scheme, so it is absent from these targets.
+    sh:targetClass sem:Entity, sem:Attribute, sem:Relationship, sem:BusinessTerm ;
+    sh:target shp:TaxonomyValueTarget ;
+    sh:property [
+        sh:path skos:inScheme ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:class skos:ConceptScheme ;
+        sh:message "a node needs at least one skos:inScheme, naming a declared skos:ConceptScheme (spec 6.1.5)" ;
+    ] .
+
+shp:Definition
+    a sh:NodeShape ;
+    rdfs:label "Definitions" ;
+    # A relationship's label is its verb and a scheme's is its title; neither is defined
+    # in the sense a steward would recognize, so neither is asked for one (spec 6.1.5).
+    sh:targetClass sem:Entity, sem:Attribute, sem:BusinessTerm ;
+    sh:target shp:TaxonomyValueTarget ;
+    sh:property [
+        sh:path skos:definition ;
+        sh:minCount 1 ;
+        # A warning in v1: an instance is brought up against sources that do not define
+        # everything yet, and a check that fails on day one is a check that gets disabled.
+        # An instance switches it to blocking when steward workflows are ready (spec 6.1.5).
+        sh:severity sh:Warning ;
+        sh:message "no skos:definition (spec 6.1.5 — a warning in v1, not a failure)" ;
+    ] ;
+    sh:property [
+        sh:path skos:definition ;
+        sh:datatype rdf:langString ;
+        sh:message "a skos:definition carries a language tag (spec 5.5 rule 6)" ;
+    ] .
+
+
+# --- Class-specific structure ----------------------------------------------------
+
+shp:Attribute
+    a sh:NodeShape ;
+    rdfs:label "Attributes" ;
+    sh:targetClass sem:Attribute ;
+    sh:property [
+        sh:path sem:attributeOf ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:class sem:Entity ;
+        sh:message "an attribute needs exactly one sem:attributeOf, naming an entity (spec 3.3, 6.1.5)" ;
+    ] .
+
+shp:Relationship
+    a sh:NodeShape ;
+    rdfs:label "Relationships" ;
+    sh:targetClass sem:Relationship ;
+    sh:property [
+        sh:path sem:source ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:class sem:Entity ;
+        sh:message "a relationship needs exactly one sem:source, naming an entity (spec 3.3, 6.1.5)" ;
+    ] ;
+    sh:property [
+        sh:path sem:target ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:class sem:Entity ;
+        sh:message "a relationship needs exactly one sem:target, naming an entity (spec 3.3, 6.1.5)" ;
+    ] .
+
+shp:Scheme
+    a sh:NodeShape ;
+    rdfs:label "Concept schemes" ;
+    sh:targetClass skos:ConceptScheme ;
+    sh:property [
+        sh:path sem:schemeType ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:in ( "glossary" "taxonomy" ) ;
+        sh:message "a scheme needs exactly one sem:schemeType, \"glossary\" or \"taxonomy\" (spec 3.3)" ;
+    ] ;
+    sh:property [
+        sh:path sem:enumerates ;
+        sh:class sem:Entity ;
+        sh:message "sem:enumerates names the entity a taxonomy provides the values of (spec 3.3)" ;
+    ] .
+
+
+# --- Hierarchy -------------------------------------------------------------------
+#
+# skos:broader runs between two nodes of the same class, and only in the two hierarchies
+# the metamodel has: taxonomy value to taxonomy value within one scheme, or entity to
+# entity (spec 3.3, 6.1.5). Three shapes, so that each failure says which rule it broke.
+#
+# The two rules that need SPARQL select the *offending* nodes in a target and then forbid
+# the skos:broader they were selected for. That is for cost, not taste: a validator
+# re-parses a sh:sparql constraint once per focus node, so a query this size costs ~17 ms
+# per taxonomy value, where a target is parsed once for the whole graph. On a 2 000-value
+# taxonomy it is the difference between 47 s and 19 s of check 5, and check 5 runs on
+# every pull request. The sh:message says what the target selected for; the sh:maxCount 0
+# is what turns "selected" into "reported", and cannot pass — every node these targets
+# return has the skos:broader it was selected for.
+
+shp:EntityHierarchy
+    a sh:NodeShape ;
+    rdfs:label "Entity inheritance" ;
+    sh:targetClass sem:Entity ;
+    sh:property [
+        sh:path skos:broader ;
+        sh:class sem:Entity ;
+        sh:message "an entity may only be narrower than another entity (spec 3.3, 6.1.5)" ;
+    ] .
+
+shp:MisplacedTaxonomyParentTarget
+    a sh:SPARQLTarget ;
+    rdfs:comment "Taxonomy values whose skos:broader is not a value of a scheme they share." ;
+    sh:prefixes shp:prefixes ;
+    sh:select """
+        SELECT ?this
+        WHERE {
+            ?this a skos:Concept ;
+                  skos:broader ?value .
+            FILTER NOT EXISTS {
+                ?this a ?class .
+                FILTER ( ?class IN ( sem:Entity, sem:Attribute, sem:Relationship, sem:BusinessTerm ) )
+            }
+            FILTER NOT EXISTS {
+                ?value a skos:Concept .
+                FILTER NOT EXISTS {
+                    ?value a ?class .
+                    FILTER ( ?class IN ( sem:Entity, sem:Attribute, sem:Relationship, sem:BusinessTerm ) )
+                }
+                ?this skos:inScheme ?scheme .
+                ?value skos:inScheme ?scheme .
+            }
+        }
+    """ .
+
+shp:TaxonomyHierarchy
+    a sh:NodeShape ;
+    rdfs:label "Taxonomy hierarchy" ;
+    sh:target shp:MisplacedTaxonomyParentTarget ;
+    sh:property [
+        sh:path skos:broader ;
+        sh:maxCount 0 ;
+        sh:message "a taxonomy value may only be narrower than another value of a scheme it is itself in (spec 6.1.5)" ;
+    ] .
+
+shp:FlatClasses
+    a sh:NodeShape ;
+    rdfs:label "Classes that form no hierarchy" ;
+    # Business terms included: the metamodel has two hierarchies and a glossary term is in
+    # neither (spec 6.1.5). Refused rather than left open, because relaxing this later —
+    # when a glossary adapter arrives with term-to-term hierarchies — is additive, while
+    # tightening it would invalidate content an instance had already committed.
+    sh:targetClass sem:Attribute, sem:Relationship, sem:BusinessTerm, skos:ConceptScheme ;
+    sh:property [
+        sh:path skos:broader ;
+        sh:maxCount 0 ;
+        sh:message "only entities and taxonomy values form skos:broader hierarchies (spec 6.1.5)" ;
+    ] .
+
+shp:CyclicHierarchyTarget
+    a sh:SPARQLTarget ;
+    rdfs:comment "Every node that is its own ancestor, at any distance." ;
+    sh:prefixes shp:prefixes ;
+    sh:select """
+        SELECT ?this
+        WHERE { ?this skos:broader+ ?this . }
+    """ .
+
+shp:AcyclicHierarchy
+    a sh:NodeShape ;
+    rdfs:label "No cycles in skos:broader" ;
+    # Nothing earlier in the pipeline can catch this: an adapter sees one source, and
+    # inheritance drawn across two of them closes a loop neither one holds (spec 6.1.5).
+    sh:target shp:CyclicHierarchyTarget ;
+    sh:property [
+        sh:path skos:broader ;
+        sh:maxCount 0 ;
+        sh:message "this node is its own ancestor: skos:broader must not contain a cycle, of any length (spec 6.1.5)" ;
+    ] .
+
+
+# --- Codes -----------------------------------------------------------------------
+
+shp:Notation
+    a sh:NodeShape ;
+    rdfs:label "Notations" ;
+    sh:targetSubjectsOf skos:notation ;
+    sh:property [
+        sh:path skos:notation ;
+        sh:datatype xsd:string ;
+        sh:message "a skos:notation is an untagged code, not prose in a language (spec 5.5 rule 6)" ;
+    ] ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:prefixes shp:prefixes ;
+        sh:message "this skos:notation is used by another node of the same scheme; a code identifies one value within its scheme (spec 6.1.5)" ;
+        sh:select """
+            SELECT $this ?value
+            WHERE {
+                $this skos:notation ?value ;
+                      skos:inScheme ?scheme .
+                ?other skos:notation ?value ;
+                       skos:inScheme ?scheme .
+                FILTER ( ?other != $this )
+            }
+        """ ;
+    ] .
+
+
+# --- Lifecycle -------------------------------------------------------------------
+
+shp:DeprecatedNodesAreUnreferenced
+    a sh:NodeShape ;
+    rdfs:label "Nothing active hangs off a deprecated node" ;
+    # A deprecated node keeps its IRI for ever (spec 3.4, 3.5), so the danger is not a
+    # dangling pointer but a live one: an active attribute whose entity is gone, or an
+    # active value under a retired parent, is a node a steward has stopped maintaining
+    # while queries still reach it.
+    sh:targetSubjectsOf sem:status ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:prefixes shp:prefixes ;
+        sh:message "this node is active but hangs off a deprecated one (spec 6.1.5)" ;
+        sh:select """
+            SELECT $this ?value
+            WHERE {
+                $this sem:status "active" ;
+                      skos:broader|sem:attributeOf ?value .
+                ?value sem:status "deprecated" .
+            }
+        """ ;
+    ] .

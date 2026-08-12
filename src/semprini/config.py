@@ -60,7 +60,13 @@ _SOURCE_KEYS = frozenset({"adapter", "name", "config"})
 # A slug: what an instance id and a source name may look like. Both end up in file
 # names, IRIs and the ID map's columns, so they stay to characters that need no
 # escaping anywhere (spec 5.4).
-_SLUG = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*")
+SLUG_PATTERN = r"[a-z0-9]+([-_][a-z0-9]+)*"
+"""The slug rule as a pattern, for the one caller that needs it as text rather than as a
+question: a scheme's IRI ends in its slug, and the SHACL shape that says so (spec 6.1.5)
+carries a regex, not a function. Written without ``(?:`` so that it stays valid in the
+XPath regex dialect SHACL's ``sh:pattern`` is defined against."""
+
+_SLUG = re.compile(SLUG_PATTERN)
 
 # The shape of an environment variable name, as opposed to the value of one. A
 # `token_env` holding `sk-live-...` is a credential written into configuration by an

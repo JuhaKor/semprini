@@ -1549,7 +1549,7 @@ done and green.
 
 ## Phase F — Validation
 
-- [ ] **F1 · Core SHACL shapes**
+- [x] **F1 · Core SHACL shapes**
   **Spec:** §6.1.5
   **Deliver:** `src/semprini/shapes/` covering every constraint listed, with the
   missing-definition rule as a warning.
@@ -1562,6 +1562,144 @@ done and green.
   source, and inheritance drawn across two of them closes a loop neither one holds — so
   the check has to run on the merged graph. Cover both hierarchies: taxonomy values and
   entities, which §6.1.5 now says may both carry `skos:broader`.
+
+  **Done.** 792 tests green (83 of them F1's); ruff, ruff format and mypy (strict) clean;
+  the shapes ship inside the wheel, and `core_shapes()` loads them from a bare venv
+  install with no source tree present. Fifty-three mutations were checked against the
+  suite — `sh:uniqueLang` dropped, an untagged label or definition tolerated, a label,
+  status, membership, scheme type or attribute owner made optional, any status or scheme
+  type value accepted, two statuses tolerated, schemes exempted from the node rules, an
+  undeclared scheme accepted, `sem:enumerates` pointing anywhere, the missing-definition
+  rule made blocking, relationships asked for definitions, an attribute owned by two
+  entities or by a non-entity, either relationship end unchecked, an entity specializing
+  anything, a taxonomy hierarchy crossing schemes, attributes and relationships forming
+  hierarchies, only a self-loop counted as a cycle, notations compared globally instead of
+  per scheme or not at all, a notation as prose, active nodes hanging off deprecated ones,
+  the taxonomy target selecting by class alone, advanced features off, warnings treated as
+  errors and the reverse, the core shapes judging overlays, the overlay rules judging
+  `generated/`, the overlay or local shapes never applied, local shapes seeing one graph,
+  overlays read non-recursively, an unreadable overlay skipped, inference materialized
+  into the validated graph, results unsorted or undeduplicated, one message taken instead
+  of all, the IRI policy skipped, its patterns unanchored, and schemes given a UUID — and
+  each fails it. **Three survived the first run and each was a real hole in the tests, not
+  a harmless mutation**: nothing exercised a node carrying two `rdf:type`s (so the
+  taxonomy target's filters were untested), the local-shape test used `sh:targetNode`,
+  which selects a node whether or not the data mentions it and so proved nothing about
+  which graphs are validated, and every IRI-policy test called the shapes directly rather
+  than through `check_shapes`, which therefore did not have to apply them.
+
+  **A fourth was caught only by running the battery twice**, and it generalizes: the
+  ordering mutation passed one run and failed the next. Issues are collected in a set, so
+  an in-process assertion that three of them come out sorted passes by luck one time in
+  six — the test *looked* like it pinned the order while mostly agreeing with chance.
+  Ordering is now asserted across three subprocesses with different `PYTHONHASHSEED`s,
+  which is what C2 established for choosing among rdflib's objects and is the only way to
+  test a promise about hashing. **A mutation battery that runs once tells you less than it
+  appears to** wherever a set is involved.
+
+  **A review round found five things, and four of them were worth fixing.** Recorded
+  because three are traps a later task can walk into again:
+  - **`sem:BusinessTerm` fell through every hierarchy rule** — not in the entity rule, not
+    a taxonomy value, not in the flat list — so a glossary term could be `skos:broader`
+    than a scheme. Nothing emits business terms yet, which is exactly why it would have
+    gone unnoticed until a glossary adapter landed. Refused now: relaxing this when that
+    adapter arrives is additive, tightening later would refuse committed content. **Every
+    class-by-class list in the shapes is a place the fifth class can be forgotten.**
+  - **A validator re-parses a `sh:sparql` constraint once per focus node**, so the cost of
+    a SPARQL rule is the length of its *text*, not the work its query does. The taxonomy
+    rule cost ~17 ms per value and was 63% of check 5 on a 2 000-value taxonomy; the same
+    query as a `sh:SPARQLTarget` is parsed once for the whole graph. The two SPARQL rules
+    now select the offending nodes in a target and forbid the `skos:broader` they were
+    selected for, which took check 5 on 2 000 values from 54 s to 15 s. Same verdicts,
+    pinned by the cross-scheme, non-concept-parent and three cycle-length tests.
+    **Prefer a target to a per-node constraint whenever the rule can be phrased either
+    way**; per-node SPARQL is a per-node parse.
+  - **A deep `skos:broader` chain crashed the run** rather than reporting: rdflib walks
+    `broader+` recursively, and around a thousand links it raises `RecursionError` out of
+    the one rule that exists to catch hierarchies gone wrong. `shacl()` now names the
+    depth as the finding, and §6.1.5 says so.
+  - **The issue order was not total.** Sorting by location and message left a pair tied
+    when only severity differed — reachable as soon as a local shape restates a core rule
+    more leniently — and issues are collected in sets, so the pair came out by hashing.
+    `Issue.sort_key` now carries all three fields, alongside the `sort_key` properties
+    `Text` and `SemanticObject` already have, and is where F2 should sort from. Note the
+    testing shape of this: the deterministic test is in `test_model.py` against the key
+    itself, because a test that sorts a real pair of issues passes half the time by luck.
+  - Not fixed: the reviewer read `Kind.ENTITY`'s IRI message as ungrammatical (`a entity`,
+    `a taxonomy-value`). True, and the fix was not a better article but a written-out
+    phrase per rule — the `c:` rule covers entities, attributes *and* business terms, and
+    naming only the first sends an operator to the wrong rule.
+
+  **The one decision everything else follows from: the core shapes judge `generated/`
+  alone.** §6.1.5 said which constraints to check but not what to check them against, and
+  the obvious reading — the union a consumer loads — is wrong. `overlays/external/` holds
+  curated subsets of standard vocabularies (§4.2): SKOS concepts with no `sem:status`, no
+  scheme of this instance's and nobody to deprecate them. Judging those against the
+  compiler's own guarantees would report dozens of violations at an organization for using
+  overlays exactly as the layout invites. So there are three graphs and three shape sets —
+  core over `generated/`, the overlay rules over `overlays/` alone (which file a statement
+  came from is the whole question, and their union no longer knows), local shapes over
+  both, since an organization's rules are about an organization's whole graph. §6.1.5 now
+  says all of this, and §4.3's "validated against the same core shapes" line, which said
+  the opposite, is corrected.
+
+  Decisions, for later sessions:
+  - **API, for F2:** `check_shapes(repo_root, *, base_iri) -> tuple[Issue, ...]` is check 5
+    end to end. It returns issues and raises only when a *file* cannot be read
+    (`ValidationError`, an `IssueError`, so exit 1 is already mapped). Warnings come back
+    as `Severity.WARNING` and blocking is F2's decision, not this module's. The parts are
+    public too — `core_shapes()`, `instance_shapes(base_iri)`, `overlay_shapes(base_iri)`,
+    `read_overlays()`, `read_local_shapes()`, `shacl(data, shapes)` — so F3 can ask what
+    the core shapes constrain without re-parsing them.
+  - **Shape IRIs live in `https://w3id.org/semprini/shapes#`**, the path A2's catch-all
+    already reserves. Not `sem:`: that namespace resolves to the metamodel document and
+    A3 fixed its inventory, so a shape IRI there would be a published term the ontology
+    does not declare. A test refuses any shape subject under `sem:`.
+  - **The shapes require SHACL advanced features**, and `shacl()` is the one call site
+    that passes `advanced=True`. A taxonomy value is a plain `skos:Concept` (§3.2), so it
+    is selected by a SPARQL target rather than `sh:targetClass`: every `sem:` class is a
+    `skos:Concept`, so the class-based form starts matching entities the moment anyone
+    loads `sem.ttl` beside the data or turns on an RDFS reasoner — and the taxonomy rules
+    would then be enforced on inheritance they were never written for.
+    `test_the_shapes_do_not_depend_on_the_metamodel_being_loaded` pins it. The cost is
+    that a third party running `pyshacl` without `-a` gets *fewer* violations rather than
+    an error; the shapes README says so, and §6.3 makes `semprini check` the contract.
+  - **`sh:in`, not a Python constant, for `sem:status` and `sem:schemeType`** — but the
+    allowed values are `build.STATUS_ACTIVE`/`STATUS_DEPRECATED` and `SchemeType`, in a
+    second file. Nothing yet stops those from drifting apart; the check that would catch
+    it is the fixture instance conforming, which is real but indirect.
+  - **`UUID_PATTERN` (identity) and `SLUG_PATTERN` (config) are now public**, and
+    `validate.LOCAL_NAME_PATTERNS` maps a `Kind` to one of them. The IRI policy is the
+    other half of §3.4.2's minting rules — what a local name may *look like* against what
+    `mint_local_name` *produces* — and `test_the_iri_policy_matches_what_identity_mints`
+    runs every object of the shared sample model through both. Both patterns are written
+    without `(?:` so they stay valid in the XPath regex dialect `sh:pattern` is defined
+    against.
+  - **Five constraints are wider than §6.1.5's list, and the spec now carries them all**:
+    `sem:status` and `skos:prefLabel` are required on *every* node, schemes included (§3.5
+    applies to every object, which C1 already implemented); labels and definitions must
+    carry a language tag (§5.5 rule 6); a scheme needs exactly one `sem:schemeType` from
+    the allowed pair and a `sem:enumerates` must name an entity (§3.3); a notation is
+    untagged (§5.5 rule 6); and an attribute, relationship, business term or scheme
+    carrying `skos:broader` is refused, since the metamodel has two hierarchies and no
+    others.
+  - **Check 5 is the slow one, and mostly not because of these shapes.** After the target
+    rewrite, a 2 000-value taxonomy costs ~15 s, of which ~10 s is pyshacl evaluating
+    ordinary core-SHACL property shapes — roughly 7 ms per node, linear in the graph. A
+    50 000-concept taxonomy therefore puts check 5 in the minutes on every pull request.
+    Nothing in the shapes will fix that; if it becomes a complaint, the lever is F2's
+    (pyshacl options, or checking only what a PR changed), not another rewrite here.
+  - **The fixture instance was left untouched** — it still has no `overlays/` or
+    `shapes/local/`, and every overlay test writes into the throwaway copy the `instance`
+    fixture makes. **G1's scaffold creates both directories**; a missing one is a legal
+    empty graph here, not an error.
+  - **`sem:sourceRef` is deliberately not required.** Nothing in §6.1.5 asks for it, and
+    an overlay-declared `x:` term typed as a `sem:Entity` has no source to name.
+  - **F3's job is untouched by this.** Local shapes are loaded and applied; nothing yet
+    checks that one is additive, and a local shape that weakens a core constraint is
+    silently obeyed today — the core shape still runs, so the effect is a shape that adds
+    nothing rather than one that licenses anything, but the rejection §6.1.5 requires is
+    still F3's to write.
 
 - [ ] **F2 · `semprini check` pipeline**
   **Spec:** §6.1 items 1–7

@@ -418,7 +418,8 @@ semprini/
 │   │   └── excel_taxonomy.py      # bundled (5.3)
 │   ├── ontology/
 │   │   └── sem.ttl                # the metamodel, versioned (3.1, 7)
-│   └── shapes/                    # core SHACL shapes (6.1)
+│   └── shapes/
+│       └── core.ttl               # core SHACL shapes (6.1.5)
 ├── templates/instance/            # the scaffold `semprini init` materializes (4.2)
 ├── workflows/                     # reusable/portable CI definitions for *instances* (6.2, 6.3)
 └── tests/
@@ -527,8 +528,9 @@ instance as a diff hunk nobody could account for.
   package reports version `0.0.0+source`, which identifies no release — two different
   working trees record the same string and the drift check (6.1) passes between them, so
   writing to `generated/` is refused instead (7).
-- `overlays/` and `shapes/local/` are written by humans through normal PRs and
-  validated against the same core shapes.
+- `overlays/` and `shapes/local/` are written by humans through normal PRs, and are
+  validated — by the rules that apply to hand-written RDF rather than by the core shapes,
+  which state what the *compiler* guarantees about its own output (6.1.5).
 - Source files are committed — Excel taxonomies under `sources/taxonomies/`, exported
   Ellie models under `sources/ellie/` — so that a source edit and its generated TTL land
   in the same PR and are reviewed together. This is also why an adapter's configured path
@@ -1209,22 +1211,61 @@ Steps, all blocking unless noted:
 4. **Namespace lock**: `config/semprini.yaml`'s base IRI matches `mappings/namespace.lock`
    (3.4); every generated subject IRI falls under it.
 5. **SHACL** (`pyshacl`), core shapes from the package plus every shape in
-   `shapes/local/`:
-   - Every `sem:Entity` / `sem:Attribute` / taxonomy concept: exactly one
-     `skos:prefLabel` per language; at least one `skos:inScheme`; `sem:status` present
-     with an allowed value.
+   `shapes/local/`. The core shapes' own IRIs live in
+   `https://w3id.org/semprini/shapes#`, never in `sem:` — that namespace resolves to the
+   metamodel document, whose term inventory is fixed by 3.2/3.3. They select a taxonomy
+   value with a SPARQL target and therefore need **SHACL advanced features**; `semprini
+   check` enables them, and a validator run without them reports fewer violations rather
+   than failing.
+
+   **Which graph each set of shapes judges** is part of the contract, not an
+   implementation detail:
+   - The **core shapes** judge `generated/` alone, without `generated/ontology.ttl`.
+     They state what the compiler guarantees about its own output. They are deliberately
+     *not* applied to `overlays/`, which may hold curated subsets of external
+     vocabularies (4.2): those concepts carry no `sem:status`, belong to no scheme of
+     this instance's, and are nobody's to deprecate.
+   - The **overlay rules** below judge `overlays/` alone. Which file a statement came
+     from is the whole question, and the union of the two graphs no longer knows.
+   - **Local shapes** judge `generated/` and `overlays/` together — the organization's
+     data as its stewards see it, including their own `x:` terms (3.6).
+
+   The constraints:
+   - Every node the compiler writes — `sem:Entity`, `sem:Attribute`, `sem:Relationship`,
+     `sem:BusinessTerm`, taxonomy concept **and `skos:ConceptScheme`**: exactly one
+     `skos:prefLabel` per language, each language-tagged (5.5 rule 6); `sem:status`
+     present exactly once, with an allowed value. Schemes are included because 3.5
+     applies to every object, and a scheme is deleted from a source as readily as
+     anything else.
+   - Every one of those but a scheme: at least one `skos:inScheme`, naming a declared
+     `skos:ConceptScheme`. A scheme is not itself in a scheme.
    - `skos:definition` present — **warning** in v1 (reported, not blocking), switched
-     to blocking per instance when steward workflows are ready.
+     to blocking per instance when steward workflows are ready. Asked of entities,
+     attributes, business terms and taxonomy values only: a relationship's label is its
+     verb and a scheme's is its title. A definition that *is* present carries a language
+     tag, which is not a warning.
    - `sem:Attribute` has exactly one `sem:attributeOf`; `sem:Relationship` has exactly
      one `sem:source` and one `sem:target`, both `sem:Entity`.
+   - `skos:ConceptScheme` has exactly one `sem:schemeType`, `"glossary"` or
+     `"taxonomy"`; a `sem:enumerates` names a `sem:Entity` (3.3).
    - `skos:broader` only between two nodes of the same class — taxonomy value to taxonomy
      value within one scheme, or entity to entity (inheritance, §3.3) — and **no cycles**,
      of any length. Nothing earlier in the pipeline can catch a cycle: an adapter sees one
      source, and inheritance drawn across two of them closes a loop neither one holds.
-   - `skos:notation` unique within a scheme.
+     The metamodel has those two hierarchies and no others, so an attribute, a
+     relationship, a business term or a scheme carrying `skos:broader` is refused
+     outright. A glossary adapter that brings term-to-term hierarchies with it relaxes
+     this in the same change that adds the adapter; refusing first is the order that
+     never invalidates content an instance has already committed. A `skos:broader` chain
+     some thousand levels deep is reported as *too deep to check* rather than checked —
+     validators evaluate the closure recursively — which is a defect in a source rather
+     than a taxonomy anyone stewards.
+   - `skos:notation` unique within a scheme, and untagged: a code is not prose in a
+     language (5.5 rule 6). The same code in two taxonomies is ordinary.
    - Deprecated nodes: no incoming `skos:broader`/`sem:attributeOf` from active nodes.
-   - IRI policy: subject IRIs under the instance's namespaces; local names match the
-     expected patterns (UUID / slug).
+   - IRI policy: subject IRIs under the instance's namespace **for their kind** (3.1),
+     with the local name 3.4.2 mints — a UUID, or a slug for a scheme. Applied to
+     `generated/` only: an overlay's own `x:` term is what 3.6 exists to allow.
    - Overlays may add statements about generated IRIs but never redefine
      `skos:prefLabel`, `sem:status`, or scheme membership of a generated node.
    - **Local shapes are additive only**: a shape in `shapes/local/` that targets a
