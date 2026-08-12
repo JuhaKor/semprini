@@ -151,7 +151,7 @@ def instance_shapes(base_iri: str) -> Graph:
     # around something that could not have minted the IRIs it is about to judge.
     namespaces = serialize.namespaces(base_iri)
     graph = Graph()
-    for kind, classes in _IRI_POLICY_TARGETS:
+    for kind, classes, described in _IRI_POLICY_TARGETS:
         namespace = namespaces[kind.prefix]
         shape = URIRef(f"{SHAPES_NAMESPACE}IriPolicy-{kind.value}")
         pattern = f"^{re.escape(namespace)}{LOCAL_NAME_PATTERNS[kind]}$"
@@ -164,7 +164,7 @@ def instance_shapes(base_iri: str) -> Graph:
             (
                 SH.message,
                 Literal(
-                    f"a {kind} is minted as <{namespace}> plus an opaque local name; "
+                    f"{described} is minted as <{namespace}> plus an opaque local name; "
                     f"this IRI is not (spec 3.1, 3.4.2)"
                 ),
             ),
@@ -239,20 +239,36 @@ def shacl(data: Graph, shapes: Graph) -> tuple[Issue, ...]:
     message is one problem, and CI output that reorders between runs is output nobody can
     diff.
     """
-    _, report, _ = _run_shacl(
-        data,
-        shacl_graph=shapes,
-        # The core shapes select taxonomy values with a SPARQL target, which is a SHACL
-        # advanced feature. Without this, that target matches nothing and the rules built
-        # on it pass silently — every constraint they carry would be reported as clean.
-        advanced=True,
-        # Nothing here reaches the network: no ontology is fetched, no owl:imports is
-        # followed. A check that dialled out would fail differently on a laptop and in CI,
-        # which is exactly what spec 6.3 promises it cannot do.
-        do_owl_imports=False,
-        inference="none",
-        js=False,
-    )
+    try:
+        _, report, _ = _run_shacl(
+            data,
+            shacl_graph=shapes,
+            # The core shapes select taxonomy values with a SPARQL target, which is a
+            # SHACL advanced feature. Without this, that target matches nothing and the
+            # rules built on it pass silently — every constraint they carry would be
+            # reported as clean.
+            advanced=True,
+            # Nothing here reaches the network: no ontology is fetched, no owl:imports is
+            # followed. A check that dialled out would fail differently on a laptop and in
+            # CI, which is exactly what spec 6.3 promises it cannot do.
+            do_owl_imports=False,
+            inference="none",
+            js=False,
+        )
+    except RecursionError as error:
+        # rdflib walks skos:broader+ recursively, so a chain around a thousand deep
+        # exhausts the stack — in the cycle rule, which is the one thing an unreadable
+        # traceback here would be hiding. Named instead: the depth is the finding.
+        raise ValidationError(
+            [
+                Issue(
+                    Severity.ERROR,
+                    "the skos:broader hierarchy is too deep to check for cycles "
+                    "(about a thousand levels); a hierarchy that deep is a defect in the "
+                    "source, not a taxonomy",
+                )
+            ]
+        ) from error
     issues = {
         Issue(
             _severity(report, result),
@@ -261,7 +277,7 @@ def shacl(data: Graph, shapes: Graph) -> tuple[Issue, ...]:
         )
         for result in report.subjects(RDF.type, SH.ValidationResult)
     }
-    return tuple(sorted(issues, key=lambda issue: (issue.location or "", issue.message)))
+    return tuple(sorted(issues, key=lambda issue: issue.sort_key))
 
 
 def check_shapes(repo_root: Path | None = None, *, base_iri: str) -> tuple[Issue, ...]:
@@ -282,26 +298,32 @@ def check_shapes(repo_root: Path | None = None, *, base_iri: str) -> tuple[Issue
         # The org's own rules see the org's whole graph, generated and hand-written
         # together: a local shape about an x: term would otherwise be unable to see it.
         issues += shacl(generated + overlays, local)
-    return tuple(sorted(set(issues), key=lambda issue: (issue.location or "", issue.message)))
+    return tuple(sorted(set(issues), key=lambda issue: issue.sort_key))
 
 
 # ------------------------------------------------------------------------ internals
 
-_IRI_POLICY_TARGETS: Sequence[tuple[Kind, tuple[URIRef, ...]]] = (
+_IRI_POLICY_TARGETS: Sequence[tuple[Kind, tuple[URIRef, ...], str]] = (
     (
         Kind.ENTITY,
         (URIRef(f"{SEM}Entity"), URIRef(f"{SEM}Attribute"), URIRef(f"{SEM}BusinessTerm")),
+        "an entity, an attribute or a business term",
     ),
-    (Kind.RELATIONSHIP, (URIRef(f"{SEM}Relationship"),)),
-    (Kind.SCHEME, (SKOS_CONCEPT_SCHEME,)),
-    (Kind.TAXONOMY_VALUE, ()),
+    (Kind.RELATIONSHIP, (URIRef(f"{SEM}Relationship"),), "a relationship"),
+    (Kind.SCHEME, (SKOS_CONCEPT_SCHEME,), "a scheme"),
+    (Kind.TAXONOMY_VALUE, (), "a taxonomy value"),
 )
-"""Which classes each kind's IRI rule targets.
+"""Which classes each kind's IRI rule targets, and how its message names them.
 
 ``Kind.ENTITY`` covers attributes and business terms too: spec 3.1 partitions the IRI
 space by kind of *thing*, and all three are concepts minted in ``c:`` — the same reason
 ``Kind.prefix`` maps them together. A taxonomy value has no class of its own and arrives
 through the SPARQL target instead.
+
+The phrase is written out rather than derived from ``Kind``: these messages are what an
+operator reads when a run refuses an IRI, and the enum's own spelling would produce "a
+entity" and "a taxonomy-value" — and would claim the ``c:`` rule is about entities when it
+is equally about the other two.
 """
 
 

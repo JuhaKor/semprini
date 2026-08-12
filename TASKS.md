@@ -1563,9 +1563,9 @@ done and green.
   the check has to run on the merged graph. Cover both hierarchies: taxonomy values and
   entities, which §6.1.5 now says may both carry `skos:broader`.
 
-  **Done.** 785 tests green (76 of them F1's); ruff, ruff format and mypy (strict) clean;
+  **Done.** 792 tests green (83 of them F1's); ruff, ruff format and mypy (strict) clean;
   the shapes ship inside the wheel, and `core_shapes()` loads them from a bare venv
-  install with no source tree present. Forty-five mutations were checked against the
+  install with no source tree present. Fifty-three mutations were checked against the
   suite — `sh:uniqueLang` dropped, an untagged label or definition tolerated, a label,
   status, membership, scheme type or attribute owner made optional, any status or scheme
   type value accepted, two statuses tolerated, schemes exempted from the node rules, an
@@ -1596,6 +1596,39 @@ done and green.
   which is what C2 established for choosing among rdflib's objects and is the only way to
   test a promise about hashing. **A mutation battery that runs once tells you less than it
   appears to** wherever a set is involved.
+
+  **A review round found five things, and four of them were worth fixing.** Recorded
+  because three are traps a later task can walk into again:
+  - **`sem:BusinessTerm` fell through every hierarchy rule** — not in the entity rule, not
+    a taxonomy value, not in the flat list — so a glossary term could be `skos:broader`
+    than a scheme. Nothing emits business terms yet, which is exactly why it would have
+    gone unnoticed until a glossary adapter landed. Refused now: relaxing this when that
+    adapter arrives is additive, tightening later would refuse committed content. **Every
+    class-by-class list in the shapes is a place the fifth class can be forgotten.**
+  - **A validator re-parses a `sh:sparql` constraint once per focus node**, so the cost of
+    a SPARQL rule is the length of its *text*, not the work its query does. The taxonomy
+    rule cost ~17 ms per value and was 63% of check 5 on a 2 000-value taxonomy; the same
+    query as a `sh:SPARQLTarget` is parsed once for the whole graph. The two SPARQL rules
+    now select the offending nodes in a target and forbid the `skos:broader` they were
+    selected for, which took check 5 on 2 000 values from 54 s to 15 s. Same verdicts,
+    pinned by the cross-scheme, non-concept-parent and three cycle-length tests.
+    **Prefer a target to a per-node constraint whenever the rule can be phrased either
+    way**; per-node SPARQL is a per-node parse.
+  - **A deep `skos:broader` chain crashed the run** rather than reporting: rdflib walks
+    `broader+` recursively, and around a thousand links it raises `RecursionError` out of
+    the one rule that exists to catch hierarchies gone wrong. `shacl()` now names the
+    depth as the finding, and §6.1.5 says so.
+  - **The issue order was not total.** Sorting by location and message left a pair tied
+    when only severity differed — reachable as soon as a local shape restates a core rule
+    more leniently — and issues are collected in sets, so the pair came out by hashing.
+    `Issue.sort_key` now carries all three fields, alongside the `sort_key` properties
+    `Text` and `SemanticObject` already have, and is where F2 should sort from. Note the
+    testing shape of this: the deterministic test is in `test_model.py` against the key
+    itself, because a test that sorts a real pair of issues passes half the time by luck.
+  - Not fixed: the reviewer read `Kind.ENTITY`'s IRI message as ungrammatical (`a entity`,
+    `a taxonomy-value`). True, and the fix was not a better article but a written-out
+    phrase per rule — the `c:` rule covers entities, attributes *and* business terms, and
+    naming only the first sends an operator to the wrong rule.
 
   **The one decision everything else follows from: the core shapes judge `generated/`
   alone.** §6.1.5 said which constraints to check but not what to check them against, and
@@ -1647,8 +1680,15 @@ done and green.
     applies to every object, which C1 already implemented); labels and definitions must
     carry a language tag (§5.5 rule 6); a scheme needs exactly one `sem:schemeType` from
     the allowed pair and a `sem:enumerates` must name an entity (§3.3); a notation is
-    untagged (§5.5 rule 6); and an attribute, relationship or scheme carrying
-    `skos:broader` is refused, since the metamodel has two hierarchies and no others.
+    untagged (§5.5 rule 6); and an attribute, relationship, business term or scheme
+    carrying `skos:broader` is refused, since the metamodel has two hierarchies and no
+    others.
+  - **Check 5 is the slow one, and mostly not because of these shapes.** After the target
+    rewrite, a 2 000-value taxonomy costs ~15 s, of which ~10 s is pyshacl evaluating
+    ordinary core-SHACL property shapes — roughly 7 ms per node, linear in the graph. A
+    50 000-concept taxonomy therefore puts check 5 in the minutes on every pull request.
+    Nothing in the shapes will fix that; if it becomes a complaint, the lever is F2's
+    (pyshacl options, or checking only what a PR changed), not another rewrite here.
   - **The fixture instance was left untouched** — it still has no `overlays/` or
     `shapes/local/`, and every overlay test writes into the throwaway copy the `instance`
     fixture makes. **G1's scaffold creates both directories**; a missing one is a legal

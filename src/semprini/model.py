@@ -121,6 +121,18 @@ class Issue:
         where = f" ({self.location})" if self.location else ""
         return f"{self.severity}: {self.message}{where}"
 
+    @property
+    def sort_key(self) -> tuple[str, str, str]:
+        """A total order over issues, for a report whose order is part of its output.
+
+        Location and message first, because that is the order a reader wants them in.
+        Severity last and never left out: issues are collected in sets — one problem found
+        by two checks is one issue — and a pair that ties on every field in the key comes
+        out in whatever order this run's string hashing produced. Two issues alike but for
+        severity are what a local shape restating a core rule produces (spec 6.1.5).
+        """
+        return (self.location or "", self.message, self.severity)
+
 
 class IssueError(ValueError):
     """An error that carries every :class:`Issue` behind it, not just the first.

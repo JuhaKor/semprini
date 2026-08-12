@@ -42,6 +42,8 @@ CUSTOMER_ID = "44444444-4444-4444-8444-444444444444"
 PLACES = "55555555-5555-4555-8555-555555555555"
 TOOLS = "66666666-6666-4666-8666-666666666666"
 DRILLS = "77777777-7777-4777-8777-777777777777"
+TERM = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+STRAY = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
 PREFIXES = f"""
 @prefix sem: <https://w3id.org/semprini/ontology#> .
@@ -397,12 +399,53 @@ def test_a_taxonomy_value_narrower_than_a_value_of_another_scheme_is_reported() 
     assert_error(graph, about=iri("values/", DRILLS), saying="value of a scheme it is itself in")
 
 
+def test_a_taxonomy_value_narrower_than_something_that_is_not_a_concept_is_reported() -> None:
+    """Sharing a scheme is not enough — the parent has to be a taxonomy value.
+
+    Nothing the compiler writes could produce this, which is the point: these shapes judge
+    ``generated/``, where a node of an unexpected type is either a hand edit or a defect
+    in a source adapter, and both are what check 5 exists to stop (spec 4.3, 6.1.5).
+    """
+    stray = f"""{PREFIXES}
+    v:{STRAY} a x:Region ;
+      skos:prefLabel "Nordics"@en ;
+      skos:inScheme sch:product-category ;
+      sem:status "active" .
+    """
+    graph = sample(stray)
+    assert_no_errors(graph)
+
+    graph.add((iri("values/", DRILLS), SKOS.broader, iri("values/", STRAY)))
+    assert_error(graph, about=iri("values/", DRILLS), saying="value of a scheme it is itself in")
+
+
 @pytest.mark.parametrize("subject", ["concepts/" + CUSTOMER_ID, "relationships/" + PLACES])
 def test_a_class_that_forms_no_hierarchy_may_not_carry_broader(subject: str) -> None:
     prefix, local = subject.split("/", 1)
     graph = sample()
     graph.add((iri(f"{prefix}/", local), SKOS.broader, iri("concepts/", CUSTOMER)))
     assert_error(graph, about=iri(f"{prefix}/", local), saying="only entities and taxonomy values")
+
+
+def test_a_business_term_may_not_carry_broader() -> None:
+    """A glossary term is in neither hierarchy the metamodel has (spec 3.3, 6.1.5).
+
+    Refused now rather than left open: no adapter emits a business term yet, and relaxing
+    this when a glossary adapter arrives with term-to-term hierarchies is additive, where
+    tightening it later would refuse content an instance had already committed.
+    """
+    term = f"""{PREFIXES}
+    c:{TERM} a sem:BusinessTerm ;
+      skos:prefLabel "Churn"@en ;
+      skos:definition "A customer who stops buying from us."@en ;
+      skos:inScheme sch:storefront ;
+      sem:status "active" .
+    """
+    graph = sample(term)
+    assert_no_errors(graph)
+
+    graph.add((iri("concepts/", TERM), SKOS.broader, iri("concepts/", CUSTOMER)))
+    assert_error(graph, about=iri("concepts/", TERM), saying="only entities and taxonomy values")
 
 
 def test_a_scheme_may_not_carry_broader() -> None:
@@ -451,6 +494,19 @@ def test_a_cycle_of_three_taxonomy_values_is_reported() -> None:
 
     assert len(found) == 3
     assert all("own ancestor" in issue.message for issue in found)
+
+
+def test_a_hierarchy_too_deep_to_check_is_named_rather_than_crashing() -> None:
+    """rdflib walks ``skos:broader+`` recursively, so a chain about a thousand deep
+    exhausts the stack — inside the cycle rule, the one thing a bare traceback here would
+    be hiding. The depth is reported as the finding instead."""
+    graph = sample()
+    chain = [iri("values/", f"{index:08d}-0000-4000-8000-000000000000") for index in range(2000)]
+    for child, parent in zip(chain[1:], chain, strict=False):
+        graph.add((child, SKOS.broader, parent))
+
+    with pytest.raises(validate.ValidationError, match="too deep to check for cycles"):
+        checked(graph)
 
 
 def test_a_node_that_is_its_own_parent_is_reported() -> None:
@@ -612,6 +668,17 @@ def test_a_dual_typed_node_is_not_treated_as_a_taxonomy_value() -> None:
 def test_a_well_formed_iri_of_every_kind_passes() -> None:
     """The other half of the parametrized case above: the sample uses all five."""
     assert_no_errors(sample())
+
+
+def test_the_iri_policy_names_the_kinds_each_rule_is_about() -> None:
+    """These messages are what an operator reads when a run refuses an IRI, so they name
+    the classes the rule covers — the ``c:`` rule is as much about attributes and business
+    terms as about entities — in a sentence written for a person."""
+    messages = {str(value) for value in validate.instance_shapes(BASE).objects(None, SH.message)}
+
+    assert any("an entity, an attribute or a business term is minted" in m for m in messages)
+    assert any("a taxonomy value is minted" in m for m in messages)
+    assert not any("a entity" in m or "taxonomy-value" in m for m in messages), messages
 
 
 def test_the_iri_policy_matches_what_identity_mints() -> None:
@@ -882,6 +949,40 @@ def test_the_order_is_the_same_on_every_machine() -> None:
     assert first == second == third
     # Guards the guard: three identical empty outputs would also pass the line above.
     assert first.count("\n") == 2
+
+
+_SEVERITY_SHAPES = f"""{PREFIXES}
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+<urn:test:strict> a sh:NodeShape ;
+    sh:targetClass sem:Attribute ;
+    sh:property [ sh:path skos:example ; sh:minCount 1 ; sh:message "needs an example" ] .
+
+<urn:test:lenient> a sh:NodeShape ;
+    sh:targetClass sem:Attribute ;
+    sh:property [ sh:path skos:example ; sh:minCount 1 ; sh:severity sh:Warning ;
+                  sh:message "needs an example" ] .
+"""
+"""One node, one message, two severities — what a local shape restating a core rule at a
+different severity produces (spec 6.1.5)."""
+
+
+def test_two_issues_alike_but_for_severity_keep_a_fixed_order() -> None:
+    """The pair a location-and-message sort leaves tied, and a set then orders by hashing.
+
+    Not reachable through the core shapes alone, which is exactly why it is worth pinning:
+    the first ``shapes/local/`` rule that repeats a core one at a lower severity would
+    otherwise reintroduce output that reorders between runs.
+    """
+    shapes = Graph()
+    shapes.parse(data=_SEVERITY_SHAPES, format="turtle")
+
+    issues = validate.shacl(sample(), shapes)
+
+    assert [(issue.severity, issue.location) for issue in issues] == [
+        (Severity.ERROR, str(iri("concepts/", CUSTOMER_ID))),
+        (Severity.WARNING, str(iri("concepts/", CUSTOMER_ID))),
+    ]
 
 
 def test_the_same_problem_found_twice_is_reported_once() -> None:

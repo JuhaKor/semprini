@@ -1253,7 +1253,13 @@ Steps, all blocking unless noted:
      of any length. Nothing earlier in the pipeline can catch a cycle: an adapter sees one
      source, and inheritance drawn across two of them closes a loop neither one holds.
      The metamodel has those two hierarchies and no others, so an attribute, a
-     relationship or a scheme carrying `skos:broader` is refused outright.
+     relationship, a business term or a scheme carrying `skos:broader` is refused
+     outright. A glossary adapter that brings term-to-term hierarchies with it relaxes
+     this in the same change that adds the adapter; refusing first is the order that
+     never invalidates content an instance has already committed. A `skos:broader` chain
+     some thousand levels deep is reported as *too deep to check* rather than checked —
+     validators evaluate the closure recursively — which is a defect in a source rather
+     than a taxonomy anyone stewards.
    - `skos:notation` unique within a scheme, and untagged: a code is not prose in a
      language (5.5 rule 6). The same code in two taxonomies is ordinary.
    - Deprecated nodes: no incoming `skos:broader`/`sem:attributeOf` from active nodes.

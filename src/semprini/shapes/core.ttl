@@ -41,6 +41,10 @@ shp:prefixes
 # A taxonomy value is a plain skos:Concept (spec 3.2): the metamodel gives it no class of
 # its own, so it is identified by what it is *not*. Written as a target rather than
 # repeated inside each constraint so that the four shapes below agree by construction.
+#
+# The one class list this file cannot share is the copy inside the hierarchy target
+# below, which has to apply the same test to a second variable. Kept in the same
+# IN(...) form so that the two read as one rule rather than two.
 
 shp:TaxonomyValueTarget
     a sh:SPARQLTarget ;
@@ -50,10 +54,10 @@ shp:TaxonomyValueTarget
         SELECT ?this
         WHERE {
             ?this a skos:Concept .
-            FILTER NOT EXISTS { ?this a sem:Entity }
-            FILTER NOT EXISTS { ?this a sem:Attribute }
-            FILTER NOT EXISTS { ?this a sem:Relationship }
-            FILTER NOT EXISTS { ?this a sem:BusinessTerm }
+            FILTER NOT EXISTS {
+                ?this a ?class .
+                FILTER ( ?class IN ( sem:Entity, sem:Attribute, sem:Relationship, sem:BusinessTerm ) )
+            }
         }
     """ .
 
@@ -178,6 +182,15 @@ shp:Scheme
 # skos:broader runs between two nodes of the same class, and only in the two hierarchies
 # the metamodel has: taxonomy value to taxonomy value within one scheme, or entity to
 # entity (spec 3.3, 6.1.5). Three shapes, so that each failure says which rule it broke.
+#
+# The two rules that need SPARQL select the *offending* nodes in a target and then forbid
+# the skos:broader they were selected for. That is for cost, not taste: a validator
+# re-parses a sh:sparql constraint once per focus node, so a query this size costs ~17 ms
+# per taxonomy value, where a target is parsed once for the whole graph. On a 2 000-value
+# taxonomy it is the difference between 47 s and 19 s of check 5, and check 5 runs on
+# every pull request. The sh:message says what the target selected for; the sh:maxCount 0
+# is what turns "selected" into "reported", and cannot pass — every node these targets
+# return has the skos:broader it was selected for.
 
 shp:EntityHierarchy
     a sh:NodeShape ;
@@ -189,55 +202,74 @@ shp:EntityHierarchy
         sh:message "an entity may only be narrower than another entity (spec 3.3, 6.1.5)" ;
     ] .
 
+shp:MisplacedTaxonomyParentTarget
+    a sh:SPARQLTarget ;
+    rdfs:comment "Taxonomy values whose skos:broader is not a value of a scheme they share." ;
+    sh:prefixes shp:prefixes ;
+    sh:select """
+        SELECT ?this
+        WHERE {
+            ?this a skos:Concept ;
+                  skos:broader ?value .
+            FILTER NOT EXISTS {
+                ?this a ?class .
+                FILTER ( ?class IN ( sem:Entity, sem:Attribute, sem:Relationship, sem:BusinessTerm ) )
+            }
+            FILTER NOT EXISTS {
+                ?value a skos:Concept .
+                FILTER NOT EXISTS {
+                    ?value a ?class .
+                    FILTER ( ?class IN ( sem:Entity, sem:Attribute, sem:Relationship, sem:BusinessTerm ) )
+                }
+                ?this skos:inScheme ?scheme .
+                ?value skos:inScheme ?scheme .
+            }
+        }
+    """ .
+
 shp:TaxonomyHierarchy
     a sh:NodeShape ;
     rdfs:label "Taxonomy hierarchy" ;
-    sh:target shp:TaxonomyValueTarget ;
-    sh:sparql [
-        a sh:SPARQLConstraint ;
-        sh:prefixes shp:prefixes ;
+    sh:target shp:MisplacedTaxonomyParentTarget ;
+    sh:property [
+        sh:path skos:broader ;
+        sh:maxCount 0 ;
         sh:message "a taxonomy value may only be narrower than another value of a scheme it is itself in (spec 6.1.5)" ;
-        sh:select """
-            SELECT $this ?value
-            WHERE {
-                $this skos:broader ?value .
-                FILTER NOT EXISTS {
-                    ?value a skos:Concept .
-                    FILTER NOT EXISTS { ?value a sem:Entity }
-                    FILTER NOT EXISTS { ?value a sem:Attribute }
-                    FILTER NOT EXISTS { ?value a sem:Relationship }
-                    FILTER NOT EXISTS { ?value a sem:BusinessTerm }
-                    $this skos:inScheme ?scheme .
-                    ?value skos:inScheme ?scheme .
-                }
-            }
-        """ ;
     ] .
 
 shp:FlatClasses
     a sh:NodeShape ;
     rdfs:label "Classes that form no hierarchy" ;
-    sh:targetClass sem:Attribute, sem:Relationship, skos:ConceptScheme ;
+    # Business terms included: the metamodel has two hierarchies and a glossary term is in
+    # neither (spec 6.1.5). Refused rather than left open, because relaxing this later —
+    # when a glossary adapter arrives with term-to-term hierarchies — is additive, while
+    # tightening it would invalidate content an instance had already committed.
+    sh:targetClass sem:Attribute, sem:Relationship, sem:BusinessTerm, skos:ConceptScheme ;
     sh:property [
         sh:path skos:broader ;
         sh:maxCount 0 ;
         sh:message "only entities and taxonomy values form skos:broader hierarchies (spec 6.1.5)" ;
     ] .
 
+shp:CyclicHierarchyTarget
+    a sh:SPARQLTarget ;
+    rdfs:comment "Every node that is its own ancestor, at any distance." ;
+    sh:prefixes shp:prefixes ;
+    sh:select """
+        SELECT ?this
+        WHERE { ?this skos:broader+ ?this . }
+    """ .
+
 shp:AcyclicHierarchy
     a sh:NodeShape ;
     rdfs:label "No cycles in skos:broader" ;
     # Nothing earlier in the pipeline can catch this: an adapter sees one source, and
     # inheritance drawn across two of them closes a loop neither one holds (spec 6.1.5).
-    sh:targetSubjectsOf skos:broader ;
-    sh:sparql [
-        a sh:SPARQLConstraint ;
-        sh:prefixes shp:prefixes ;
+    sh:target shp:CyclicHierarchyTarget ;
+    sh:property [
+        sh:path skos:broader ;
+        sh:maxCount 0 ;
         sh:message "this node is its own ancestor: skos:broader must not contain a cycle, of any length (spec 6.1.5)" ;
-        sh:select """
-            SELECT $this
-            WHERE { $this skos:broader+ $this . }
-        """ ;
     ] .
 
 
