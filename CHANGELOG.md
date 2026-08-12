@@ -184,6 +184,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   defined. Naming the taxonomy's own source there is refused as a configuration error —
   it is the mistake the setting exists to undo, and it would otherwise surface two stages
   later as an unresolvable reference pointing at the workbook rather than at the config.
+- **The core SHACL shapes ship with the compiler** (§6.1.5): every constraint the
+  specification lists, as a document an instance validates against without writing a rule
+  of its own. Labels, statuses and scheme membership on every generated node; exactly one
+  owner for an attribute and two ends for a relationship; hierarchies that stay within one
+  class and one taxonomy, and contain **no cycles of any length** — which nothing earlier
+  in the pipeline can detect, since an adapter sees one source and inheritance drawn
+  across two of them closes a loop neither one holds; unique codes within a scheme;
+  nothing active left hanging off a deprecated node; and IRIs that are under the
+  instance's namespace for their kind, which is what catches a hand edit to `generated/`.
+  A **missing definition is a warning**, reported without failing the run, as §6.1.5
+  requires until an instance turns it on.
+- Each of the three graphs is judged by the rules that apply to it: the core shapes read
+  `generated/`, the overlay rules read `overlays/`, and an instance's own `shapes/local/`
+  reads both. An organization can therefore keep a curated subset of an external
+  vocabulary in `overlays/external/` without its concepts being asked for a `sem:status`
+  nobody could give them — while an overlay that renames, deprecates or re-files a
+  generated node is still refused, because `generated/` is the compiler's.
+  Wiring these into `semprini check` is the next task; today they are a library the
+  plane's own suite runs against the synthetic instance.
 
 ### Ontology 0.1.0
 

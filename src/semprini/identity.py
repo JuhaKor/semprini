@@ -86,6 +86,17 @@ went on holding the old ones; that is why it is a literal here and not a computa
 someone could adjust in passing.
 """
 
+UUID_PATTERN = r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+"""What a minted local name looks like, for everything but a scheme (spec 3.4.2).
+
+Lower case only, unlike :data:`_CANONICAL_UUID` below: that one reads what a *source*
+wrote and normalizes it, while this describes what :func:`mint_local_name` produced and
+froze. The SHACL IRI policy (spec 6.1.5) is written against it, so the two halves of
+"an IRI is opaque" — how a local name is minted and what one is allowed to look like —
+have one definition between them. Written without ``(?:`` so that it stays valid in the
+XPath regex dialect SHACL's ``sh:pattern`` is defined against.
+"""
+
 _ISO_DATE = "%Y-%m-%d"
 
 # A UUID as a source is expected to write one: the canonical 8-4-4-4-12 form. Case is
