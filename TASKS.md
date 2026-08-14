@@ -1925,7 +1925,7 @@ done and green.
 
 ## Phase G — Distribution and operations
 
-- [ ] **G1 · Instance scaffold and `semprini init`**
+- [x] **G1 · Instance scaffold and `semprini init`**
   **Spec:** §4.2, §5.7
   **Deliver:** `templates/instance/` and the `init` command, all six steps.
   **Verify:** init into a temp directory then `semprini check` passes on the fresh, empty
@@ -1937,6 +1937,92 @@ done and green.
   is a legal empty register, so this is about the tree matching §4.2, not about a run
   failing without it.
 
+  **Done.** 913 tests green (39 of them G1's); ruff, ruff format and mypy (strict) clean.
+  The wheel was rebuilt and installed into a bare venv, and the whole task was verified
+  *from that install* rather than from the source tree: `semprini init` creates the
+  seventeen-file tree, `semprini check` reports seven checks passed on it, and a second
+  `init` exits 2. Thirty-two mutations were checked against the suite, twice — an existing
+  instance bootstrapped over, only the lock protected rather than every file beside it, a
+  second bootstrap reported as an ordinary overwrite, the tree written as it is rendered,
+  only the first bad argument reported, the base IRI judged by a looser rule than the
+  serializer's, the instance id not held to the slug rule, any language tag accepted, a
+  source tree allowed to bootstrap, an unresolved placeholder left in the file, the
+  templates copied rather than rendered, a template read without translating its line
+  endings, the instance written with CRLF, the files ordered by name rather than by path,
+  the workflows not materialized / written outside `.github/` / installing the latest
+  version rather than this one, a workflow template that is not valid YAML, a pull request
+  opened with no report in it, `generated/` left for the first run to create, the ontology
+  copy tidied up on the way through, the merge register omitted, the ID map created without
+  its header, the lock dated from a clock rather than from its argument, the lock recording
+  the compiler version as the ontology version, the frozen base IRI differing from the
+  configured one, the target directory not created, a configured source written into a
+  fresh instance, `--dir` and `--language` ignored, a refusal exiting 1, and `init`
+  reporting itself unimplemented — and each fails it.
+
+  **Two of those survived the first run, and both were the same mistake in the tests
+  rather than in the code.** The pinned `TODAY` was set to the day the file was written, so
+  a scaffold that ignored its injected date passed every assertion about it; and the
+  compiler and ontology versions are both `0.1.0` today, so asserting the lock's
+  `ontology_version` said nothing about *which* version it recorded. The date constant is
+  now deliberately not today's, with a comment saying why, and a second test pins the lock
+  with the two versions set to different numbers. Worth writing down because neither test
+  looked weak: both asserted a specific value and both were right.
+
+  Decisions, for later sessions:
+  - **Everything `init` materializes lives inside the package** — `src/semprini/templates/instance/`
+    and `src/semprini/workflows/<platform>/` — not at the repository root where §4.1 put
+    them. An adopter installs a wheel and never sees this repository, so a scaffold at the
+    root is absent from the one place `init` runs; `ontology/sem.ttl` and `shapes/core.ttl`
+    are inside the package for the same reason. Verified against a built wheel: poetry-core
+    ships dotfiles and `.gitkeep`s in a package directory. **§4.1 now says this.**
+  - **Workflows are held one directory per CI platform**, and `WORKFLOW_DIRS` maps the
+    platform to the path its files go to. That is the whole GitHub-specific surface of the
+    scaffold: **G2's GitLab or Azure port adds a directory and a line**, and touches nothing
+    else. `WORKFLOW_PLATFORM` is the only reason `init` knows what GitHub is.
+  - **Placeholders are `%%name%%`, not `{{ name }}`.** The workflow templates are full of
+    GitHub's own `${{ ... }}` expressions; a colliding syntax would either eat one or make
+    "is every placeholder resolved?" unanswerable. An unknown placeholder raises rather
+    than passing through — a literal `%%og%%` in an adopter's README is traceable to
+    nobody. A test asserts no `%%...%%` survives into a created instance.
+  - **`init` writes `generated/`, and what it writes is exactly what a run would.**
+    `test_a_run_straight_after_a_bootstrap_writes_nothing` is the strongest statement
+    available about the scaffold and the one to keep: without it, an adopter's first
+    scheduled compile opens a pull request fixing up files nobody edited, before they have
+    configured a single source. It is also what makes `semprini check` green on an instance
+    that has never compiled.
+  - **Refusals are wider than §5.7's rule and are exit 2.** The lock is the case that
+    matters and keeps its own message; every other file `init` would overwrite is refused
+    too. `ScaffoldError` subclasses `ConfigError`: every way this command refuses is about
+    the invocation or the directory it names, and it writes no content, so it can never
+    produce a validation failure. **§5.7 now says all of this**, along with "nothing is
+    written until every refusal has been made" — `create()` renders and checks, `write()`
+    writes, and a test asserts the split rather than trusting it.
+  - **`--language <tag>` is new, and is in §5.1's listing.** Unlike the base IRI it is not
+    frozen, so it is a convenience rather than a decision; without it an organization whose
+    vocabulary is not English tags every label `en` on its first run and changes them all
+    on the second.
+  - **A source tree cannot bootstrap an instance.** Checked in `scaffold` with a message
+    naming the pin, ahead of `Manifest.create`'s identical refusal, which stays as the
+    backstop. The consequence for **G5**: the release process is the first thing that can
+    produce a bootstrappable install, and `semprini init` from a tagged release is already
+    one of its verification steps.
+  - **The instance README, the `overlays/` README and the `shapes/local/` README are
+    content, not scaffolding.** The last of these is F3's handover, and names all four
+    refusals plus the legal `sh:targetClass sem:Entity` form. **G4 should treat these three
+    as part of the documentation it is auditing**, since they are what an adopter reads
+    first and they are versioned with the compiler rather than with the docs site.
+  - **`compile.yml` uses `peter-evans/create-pull-request`** and one shell line computing
+    the date for the `compile/<date>` branch §6.2 names. That date line is the only logic
+    in either file, and **G2's mechanical §6.3 guard has to decide whether it passes** —
+    it names a branch rather than checking anything, but a guard written as "install, run,
+    open a PR, nothing else" will see it. The alternative, `gh pr create` in a `run:` block,
+    is more logic in YAML and no third-party action; the trade was made for fewer lines,
+    not for fewer dependencies.
+  - `semprini init` does **not** run `git init` and creates no remote (§11 #8, resolved).
+    Both are printed as next steps, along with branch protection and the Actions setting
+    that lets the scheduled compile open a pull request at all — which is the kind of thing
+    an adopter discovers from a failing job three weeks later.
+
 - [ ] **G2 · Workflow templates and CI portability**
   **Spec:** §6.2, §6.3
   **Deliver:** `workflows/` templates for `compile.yml` and `validate.yml`, materialized
@@ -1946,6 +2032,13 @@ done and green.
   on §6.3. Run both against the fixture instance in a container and confirm a compile
   PR body carries the run report.
   **Depends:** G1
+  **G1 already delivered both files**, at `src/semprini/workflows/github/`, materialized
+  into `.github/workflows/` and pinned to the plane version — inside the package, since a
+  scaffold at the repository root is absent from the wheel `init` runs from. What is left
+  here is the §6.3 guard, the container run and the PR-body check. Two things to settle:
+  whether the one shell line computing `compile/<date>` counts as logic under that guard,
+  and whether a second platform directory (`gitlab/`, `azure/`) ships now — the seam is
+  `scaffold.WORKFLOW_DIRS` and costs one line per platform.
 
 - [ ] **G3 · Versioning, drift and migrations**
   **Spec:** §7
@@ -2008,7 +2101,7 @@ be deferred without stalling the build.
 | ~~5~~ | ~~Default language tag(s)~~ — **resolved in B3:** one per instance, applied only where a label carries no tag of its own | ~~B3~~; C1 applies it |
 | 6 | When missing-definition becomes blocking | per instance; H1 |
 | ~~7~~ | ~~Ellie pagination and rate limits~~ — **resolved by scope:** the adapter reads exported files, so v1 makes no API call | ~~D3~~; whoever builds the API mode |
-| 8 | Whether `init` creates the remote repository | G1 |
+| ~~8~~ | ~~Whether `init` creates the remote repository~~ — **resolved in G1:** it stays offline, creates nothing remote and prints the steps instead | ~~G1~~ |
 
 ## Sequencing notes
 
@@ -2039,6 +2132,13 @@ be deferred without stalling the build.
 - ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
   once an instance holds generated files, every serializer change becomes a migration
   (§7). It now is one — a change to `serialize.py`'s output is a major bump.
-- **F3, G3 and D3 are the three tasks most likely to overrun.** Each has a genuinely
-  hard core — defining "additive only", proving migrations preserve identity, and
-  an external API's real behaviour versus its documentation.
+- ~~**F3, G3 and D3 are the three tasks most likely to overrun.**~~ Two of the three are
+  done. **G3 is the one left**, and its hard core is unchanged: proving that a migration
+  preserves identity, rather than asserting it.
+- **G1 done: the plane can now create the thing it compiles.** An organization with the
+  wheel installed gets a complete instance repository, and it is green from the first
+  command — `semprini check` passes on it and a run against it writes nothing. **G2 next**,
+  and it is narrower than it looks: both workflows exist and are materialized, so what is
+  left is the mechanical §6.3 guard, running them against the fixture instance in a
+  container, and confirming a compile pull request carries the report. G1's note on the
+  one shell line in `compile.yml` is the thing to decide first.

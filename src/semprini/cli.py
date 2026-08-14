@@ -13,9 +13,19 @@ import argparse
 import sys
 from collections.abc import Sequence
 from enum import IntEnum
+from pathlib import Path
 from typing import TextIO
 
-from semprini import adapters, compiler_version, config, identity, ontology_version, run, validate
+from semprini import (
+    adapters,
+    compiler_version,
+    config,
+    identity,
+    ontology_version,
+    run,
+    scaffold,
+    validate,
+)
 from semprini.adapters import AdapterError, AdapterLoadError, BaseAdapter, SourceUnreachableError
 from semprini.model import IssueError
 
@@ -41,7 +51,6 @@ class ExitCode(IntEnum):
 # Subcommands whose implementation lands in a later task. Listed with the task that
 # fills each one so that a stub is never mistaken for a missing feature.
 _UNIMPLEMENTED = {
-    "init": "task G1",
     "migrate": "task G3",
 }
 
@@ -68,9 +77,28 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", metavar="<command>")
 
     init = subcommands.add_parser("init", help="bootstrap an instance repository")
-    init.add_argument("--base-iri", required=True, metavar="<IRI>")
-    init.add_argument("--org", required=True, metavar="<slug>")
-    init.add_argument("--dir", metavar="<path>")
+    init.add_argument(
+        "--base-iri",
+        required=True,
+        metavar="<IRI>",
+        help="the namespace root every IRI is minted under; frozen permanently (spec 3.4)",
+    )
+    init.add_argument(
+        "--org",
+        required=True,
+        metavar="<slug>",
+        help="this instance's id, frozen alongside the base IRI",
+    )
+    init.add_argument("--dir", metavar="<path>", help="where to create it; defaults to '.'")
+    init.add_argument(
+        "--language",
+        default=config.DEFAULT_LANGUAGE,
+        metavar="<tag>",
+        help=(
+            "the language applied to labels that arrive without one "
+            f"(default {config.DEFAULT_LANGUAGE}); an ordinary setting, not frozen"
+        ),
+    )
 
     run = subcommands.add_parser("run", help="fetch, compile, write")
     run.add_argument("--source", metavar="<name>")
@@ -195,6 +223,23 @@ def _summary(adapter: type[BaseAdapter]) -> str:
     return lines[0].strip() if lines else ""
 
 
+def _init(arguments: argparse.Namespace) -> int:
+    """``semprini init`` — bootstrap an instance repository (spec 5.1, 5.7).
+
+    The one command that writes an instance instead of reading one, so it is also the one
+    that does not load configuration first: it creates the file every other command reads.
+    """
+    result = scaffold.init(
+        Path(arguments.dir) if arguments.dir else None,
+        base_iri=arguments.base_iri,
+        org=arguments.org,
+        default_language=arguments.language,
+    )
+    for line in result.summary():
+        _say(line)
+    return ExitCode.OK
+
+
 def _run(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
     """``semprini run`` — fetch, compile, write (spec 5.1).
 
@@ -298,6 +343,9 @@ def _dispatch(arguments: argparse.Namespace) -> int:
 
     if arguments.command == "adapters":
         return _adapters()
+
+    if arguments.command == "init":
+        return _init(arguments)
 
     if arguments.command in _NEEDS_CONFIG:
         # Deliberately ahead of the "not implemented" message below: a command that will
