@@ -20,6 +20,12 @@ not restate about a generated node, because it legitimately holds curated subset
 external vocabularies; and an instance's own `shapes/local/` sees both together.
 
 Licensed CC BY 4.0 (`LICENSE-DOCS`), not Apache-2.0 — shapes are vocabulary, like the
-`sem:` ontology, so adopters can quote and extend them. An instance adds its own rules in
-`shapes/local/`, which may only be **additive**: local shapes never weaken a core
-constraint and never redefine a `sem:` term (§3.6, §6.1.5).
+`sem:` ontology, so adopters can quote and extend them.
+
+An instance adds its own rules in `shapes/local/`, which may only be **additive** (§3.6,
+§6.1.5). Target what you like, `sem:` classes included, and be as strict as you want. What
+is rejected is a statement whose subject is a `sem:` term or one of these shapes — so
+copying this file into `shapes/local/` and editing it does not work, and is refused rather
+than silently ignored — along with a constraint that constrains nothing (`sh:minCount 0`),
+a `sh:rule`, and a reference to a shape in here, which your file cannot see. Put your own
+terms and shapes in your own namespace.

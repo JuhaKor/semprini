@@ -40,8 +40,10 @@ holds curated subsets of standard vocabularies (spec 4.2) whose concepts carry n
 guarantees would report dozens of violations for using overlays exactly as intended.
 
 *Local shapes* — ``shapes/local/`` — are the organization's own rules, and are applied to
-the generated and overlay graphs together, which is the data as its stewards see it.
-Whether a local shape is additive, and so allowed at all, is task F3's.
+the generated and overlay graphs together, which is the data as its stewards see it. They
+are **additive only** (spec 3.6, 6.1.5): :func:`check_additive` refuses one that edits a
+core shape, redefines a ``sem:`` term, writes a constraint that constrains nothing, or
+derives statements the instance does not hold, and a refused file's rules are not applied.
 """
 
 from __future__ import annotations
@@ -49,7 +51,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -81,10 +83,12 @@ __all__ = [
     "CheckResult",
     "ValidationError",
     "check",
+    "check_additive",
     "check_shapes",
     "core_shapes",
     "instance_shapes",
     "overlay_shapes",
+    "read_local_shape_files",
     "read_local_shapes",
     "read_overlays",
     "shacl",
@@ -250,13 +254,76 @@ def read_overlays(repo_root: Path | None = None) -> Graph:
 
     Recursive, because overlays are filed by provenance — ``external/``, ``ext/``,
     ``patches/`` — and a steward adding a directory is doing what the layout invites.
+
+    One graph rather than one per file, unlike the local shapes below: the overlay rules
+    ask what the overlays say about a generated node, which is a question about the tree
+    and not about any file in it.
     """
-    return _parse_tree(_dir(repo_root, OVERLAYS_DIR), "overlay")
+    root = _root(repo_root)
+    return build.union_of(_parse_files(root / OVERLAYS_DIR, "overlay", root).values())
+
+
+def read_local_shape_files(repo_root: Path | None = None) -> Mapping[str, Graph]:
+    """The instance's own shapes, one graph per file, keyed by path from the instance root.
+
+    Kept apart rather than unioned because a local shape is *accepted or refused as a
+    file* (spec 6.1.5): the file is what a steward wrote and what they edit, so it is what
+    a rejection has to name, and a file that is refused must not have its rules applied
+    while the others still are. Their union is :func:`read_local_shapes`.
+    """
+    root = _root(repo_root)
+    return _parse_files(root / LOCAL_SHAPES_DIR, "local shape", root)
 
 
 def read_local_shapes(repo_root: Path | None = None) -> Graph:
-    """Parse the instance's own shapes, which are applied alongside the core ones."""
-    return _parse_tree(_dir(repo_root, LOCAL_SHAPES_DIR), "local shape")
+    """Every local shape as one graph — what is applied, once the refused files are out."""
+    return build.union_of(read_local_shape_files(repo_root).values())
+
+
+def check_additive(files: Mapping[str, Graph]) -> tuple[Issue, ...]:
+    """Refuse a local shape that is not additive (spec 3.6, 6.1.5).
+
+    A local shape adds rules about an organization's own data. It may target a ``sem:``
+    class, say anything about the organization's own ``x:`` terms, and be as strict as its
+    stewards like. What it may not do is reach back into what the plane defines, and
+    "additive only" is that rule made precise — four refusals, each of which an adopter
+    can check by reading their own file:
+
+    1. **A statement about a core IRI.** Anything in the ``sem:`` namespace (a metamodel
+       term, spec 3.2/3.3) or in :data:`SHAPES_NAMESPACE` (a core shape) is the plane's,
+       and every instance answers to the same copy of it. This is the refusal that catches
+       the likeliest attempt by far — ``core.ttl`` copied into ``shapes/local/`` and
+       edited — as well as ``sem:Entity a sh:NodeShape``, which is SHACL's implicit class
+       target and turns a metamodel class into a shape, and ``shp:Node sh:deactivated
+       true``, which reads as switching a core rule off. Naming a core IRI as an *object*
+       is untouched: ``sh:targetClass sem:Entity`` is how a local rule says what it is
+       about.
+    2. **A constraint parameter that constrains nothing** — ``sh:minCount 0``,
+       ``sh:uniqueLang false``, ``sh:closed false``. Each is a no-op in SHACL, so refusing
+       it blocks no rule anyone meant to write; what it reads as is "this is optional
+       now", which is the relaxation an adopter would reach for. Refusing it says the true
+       thing: validation is conjunctive, so a local file cannot subtract, and the core
+       rule applies whatever this one says.
+    3. **A SHACL rule.** ``sh:rule`` derives triples into the graph being validated, so a
+       local file could make its own rules pass against statements no file in the instance
+       holds — and would license exactly what spec 6.1.5's last sentence forbids the day
+       anyone validates the two shape sets together. Hand-written statements belong in
+       ``overlays/`` (spec 4.2), where they are visible and reviewable.
+    4. **A reference to a core shape**, in any position. This is the first thing an
+       adopter tries after refusal 1, and it never works: local shapes are validated as
+       their own graph, which does not hold the core ones (spec 6.1.5). What it does
+       instead depends on where it was written — ``sh:node shp:Node`` silently matches
+       everything, while ``sh:target shp:TaxonomyValueTarget`` aborts the validator — and
+       neither is what the author meant, so both are refused with the reason.
+
+    Returns issues rather than raising: a file that cannot be *read* is a
+    :class:`ValidationError`, but a file that reads fine and breaks the rule is a finding,
+    and one run reports every one of them (spec 6.1).
+    """
+    issues: list[Issue] = []
+    for name, graph in files.items():
+        issues.extend(_not_additive(name, graph))
+    return tuple(sorted(set(issues), key=_sort_key))
 
 
 def shacl(data: Graph, shapes: Graph) -> tuple[Issue, ...]:
@@ -301,6 +368,19 @@ def shacl(data: Graph, shapes: Graph) -> tuple[Issue, ...]:
                 )
             ]
         ) from error
+    except Exception as error:
+        # A shapes graph that parses as Turtle can still be unusable as SHACL, and
+        # `shapes/local/` is hand-written (spec 4.2, 6.1.5): a property shape with no
+        # path, two paths on one, a reference to a shape that is not there, a pattern that
+        # is not a regex, a sh:select that is not a query. Deliberately broad, and the
+        # breadth is the point — those five raise from three libraries (pyshacl, `re` and
+        # pyparsing) and nothing promises what the sixth will raise. Enumerating them
+        # would be a promise this module cannot keep, and every gap in the enumeration is
+        # a traceback in somebody's CI instead of a finding. `check_shapes` turns this
+        # into an issue against the file that caused it.
+        raise ValidationError(
+            [Issue(Severity.ERROR, f"cannot be applied as SHACL: {_one_line(error)}")]
+        ) from error
     issues = {
         Issue(
             _severity(report, result),
@@ -318,7 +398,7 @@ def check_shapes(
     base_iri: str,
     generated: Graph | None = None,
     overlays: Graph | None = None,
-    local: Graph | None = None,
+    local: Mapping[str, Graph] | None = None,
 ) -> tuple[Issue, ...]:
     """Check 5 of spec 6.1, end to end: core shapes, IRI policy, overlays, local shapes.
 
@@ -326,11 +406,17 @@ def check_shapes(
     read. Whether the result fails the command is the caller's decision — warnings do
     not (spec 6.1.5), and :func:`check` owns the exit code.
 
-    The three graphs may be passed in already parsed. :func:`check` does, because it has
-    read them for check 1 and four of the seven checks ask questions about the same
-    bytes: an instance large enough for check 5 to be slow is one where parsing
-    ``generated/`` four more times is felt. Omitted, they are read from ``repo_root`` as
-    before, which is what a caller wanting check 5 alone means.
+    The graphs may be passed in already parsed. :func:`check` does, because it has read
+    them for check 1 and four of the seven checks ask questions about the same bytes: an
+    instance large enough for check 5 to be slow is one where parsing ``generated/`` four
+    more times is felt. Omitted, they are read from ``repo_root`` as before, which is what
+    a caller wanting check 5 alone means. ``local`` is per file rather than one graph,
+    because a local shape is accepted or refused as a file (:func:`check_additive`).
+
+    A refused file's rules are **not applied**, which is what "rejected" means in spec
+    6.1.5 — reporting a shape as forbidden and then obeying it would leave an instance
+    whose verdict depends on a file the plane says it will not honour. The other files
+    still run: one steward's mistake does not switch off an organization's rules.
     """
     generated = (
         build.union_of(build.read_previous_files(repo_root).values())
@@ -338,16 +424,66 @@ def check_shapes(
         else generated
     )
     overlays = read_overlays(repo_root) if overlays is None else overlays
-    local = read_local_shapes(repo_root) if local is None else local
+    local = read_local_shape_files(repo_root) if local is None else local
 
     issues = list(shacl(generated, core_shapes() + instance_shapes(base_iri)))
     if len(overlays):
         issues += shacl(overlays, overlay_shapes(base_iri))
-    if len(local):
-        # The org's own rules see the org's whole graph, generated and hand-written
-        # together: a local shape about an x: term would otherwise be unable to see it.
-        issues += shacl(generated + overlays, local)
+
+    not_additive = check_additive(local)
+    issues += not_additive
+    # Only an error refuses a file. Every refusal is one today, so this filter changes
+    # nothing — it is here because the alternative is a rule added later at warning
+    # severity silently switching off the file it is about.
+    refused = {issue.location for issue in not_additive if issue.severity is Severity.ERROR}
+    # The org's own rules see the org's whole graph, generated and hand-written together:
+    # a local shape about an x: term would otherwise be unable to see it.
+    issues += _apply_local(generated + overlays, local, refused)
     return tuple(sorted(set(issues), key=lambda issue: issue.sort_key))
+
+
+def _apply_local(
+    data: Graph, files: Mapping[str, Graph], refused: Container[str | None]
+) -> tuple[Issue, ...]:
+    """Run the local shapes that were not refused, naming a file that cannot be run.
+
+    A shapes file is hand-written, so "this is not usable SHACL" is an ordinary thing for
+    it to be — and the validator says so about the whole graph it was handed, in a message
+    that often names nothing at all. So the union is tried once, and only when it fails is
+    each file run on its own to find which one is responsible. The retry costs a
+    validation pass per file and happens only on the path where the alternative is an
+    operator reading "None of these types match a TargetType:" and opening five files.
+
+    Reported as issues rather than raised, like everything else check 5 finds: the files
+    that *do* load are validated in the same pass, so one run still reports every problem
+    the instance has (spec 6.1).
+    """
+    applied = {name: graph for name, graph in files.items() if name not in refused}
+    union = build.union_of(applied.values())
+    if not len(union):
+        # No files, or none with anything in them. A `shapes/local/` holding one empty
+        # file is not a reason to run a validator over the whole instance.
+        return ()
+    try:
+        return shacl(data, union)
+    except ValidationError as union_failed:
+        issues: list[Issue] = []
+        blamed = False
+        for name, graph in sorted(applied.items()):
+            try:
+                issues.extend(shacl(data, graph))
+            except ValidationError as error:
+                blamed = True
+                issues.extend(Issue(issue.severity, issue.message, name) for issue in error.issues)
+        if not blamed:
+            # Every file loads on its own but their union does not — one shape referring
+            # to another across files, most likely. The directory is then the honest
+            # location, since no single file is the answer.
+            issues.extend(
+                Issue(issue.severity, issue.message, LOCAL_SHAPES_DIR.as_posix())
+                for issue in union_failed.issues
+            )
+        return tuple(issues)
 
 
 # --------------------------------------------------------------- the check sequence
@@ -560,7 +696,8 @@ class _Content:
     """``generated/ontology.ttl`` as committed, or ``None`` if it is absent."""
 
     overlays: Graph
-    local: Graph
+    local: Mapping[str, Graph]
+    """The local shapes per file, since one is accepted or refused as a file (spec 6.1.5)."""
 
 
 def _read_content(root: Path) -> tuple[_Content, tuple[Issue, ...]]:
@@ -594,17 +731,17 @@ def _read_content(root: Path) -> tuple[_Content, tuple[Issue, ...]]:
         ontology = None
         issues.append(Issue(Severity.ERROR, f"cannot read the ontology copy: {error}", "generated"))
 
-    overlays, local = Graph(), Graph()
-    for reader, target in ((read_overlays, "overlays"), (read_local_shapes, "local")):
-        try:
-            parsed = reader(root)
-        except ValidationError as error:
-            issues.extend(error.issues)
-        else:
-            if target == "overlays":
-                overlays = parsed
-            else:
-                local = parsed
+    overlays = Graph()
+    try:
+        overlays = read_overlays(root)
+    except ValidationError as error:
+        issues.extend(error.issues)
+
+    local: Mapping[str, Graph] = {}
+    try:
+        local = read_local_shape_files(root)
+    except ValidationError as error:
+        issues.extend(error.issues)
 
     content = _Content(generated=generated, ontology=ontology, overlays=overlays, local=local)
     return content, tuple(sorted(set(issues), key=_sort_key))
@@ -950,6 +1087,17 @@ def _count(number: int, noun: str) -> str:
     return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
 
 
+def _one_line(error: Exception) -> str:
+    """A library's message as one line.
+
+    pyshacl's carry a "For reference, see <spec URL>" continuation, and a parser's carry
+    the offending text. An issue is rendered as one bullet by ``CheckResult.summary`` and
+    pasted into a pull request body (spec 6.2), so a newline inside one silently ends the
+    list it was in — the same trap the run report hit with source-supplied labels.
+    """
+    return " ".join(str(error).split())
+
+
 _IRI_POLICY_TARGETS: Sequence[tuple[Kind, tuple[URIRef, ...], str]] = (
     (
         Kind.ENTITY,
@@ -974,31 +1122,161 @@ is equally about the other two.
 """
 
 
-def _dir(repo_root: Path | None, relative: Path) -> Path:
-    return (Path.cwd() if repo_root is None else Path(repo_root)) / relative
+def _root(repo_root: Path | None) -> Path:
+    return Path.cwd() if repo_root is None else Path(repo_root)
 
 
-def _parse_tree(directory: Path, what: str) -> Graph:
-    """Every ``.ttl`` below ``directory``, as one graph.
+def _parse_files(directory: Path, what: str, root: Path) -> Mapping[str, Graph]:
+    """Every ``.ttl`` below ``directory``, one graph each, keyed by path from ``root``.
 
-    An absent directory is an empty graph, not an error: an instance with no overlays and
-    no local shapes is an ordinary instance, and spec 4.2's layout is a place to put
-    them rather than an obligation to have any.
+    An absent directory is no files, not an error: an instance with no overlays and no
+    local shapes is an ordinary instance, and spec 4.2's layout is a place to put them
+    rather than an obligation to have any.
+
+    Keyed relative to the instance root, and as a posix path, because these keys are what
+    an :class:`~semprini.model.Issue` reports as its location — a steward reads
+    ``shapes/local/regions.ttl`` and knows which file to open, on any platform.
     """
-    graph = Graph()
     if not directory.is_dir():
-        return graph
+        return {}
     issues: list[Issue] = []
+    files: dict[str, Graph] = {}
     for path in sorted(directory.rglob("*.ttl")):
+        name = path.relative_to(root).as_posix()
         try:
+            graph = Graph()
             graph.parse(path, format="turtle")
         except (OSError, UnicodeDecodeError, SyntaxError) as error:
             # Hand-written RDF is where a syntax error is *likely* (spec 4.2), so it is
             # named and collected rather than left to surface as an rdflib traceback.
             issues.append(Issue(Severity.ERROR, f"cannot read {what}: {error}", str(path)))
+        else:
+            files[name] = graph
     if issues:
         raise ValidationError(issues)
-    return graph
+    return files
+
+
+# ------------------------------------------------------- what makes a local shape additive
+
+_CORE_NAMESPACES: Sequence[tuple[str, str]] = (
+    ("sem", SEM),
+    ("shp", SHAPES_NAMESPACE),
+)
+"""The two namespaces an instance does not own, and the prefixes a message names them by.
+
+``sem:`` is the metamodel, whose inventory is fixed by spec 3.2/3.3 and published at one
+IRI for every instance in existence; ``shp:`` is the core shapes. Whole namespaces rather
+than the terms and shapes that exist today, deliberately: a local file that claimed an
+unused IRI in either would be broken by the release that adds one, and the answer to
+"where do my own terms go" is spec 3.6's ``x:`` in both cases.
+"""
+
+_CONSTRAINS_NOTHING: Sequence[tuple[URIRef, Literal, str]] = (
+    (SH.minCount, Literal(0), "sh:minCount 0"),
+    (SH.uniqueLang, Literal(False), "sh:uniqueLang false"),
+    (SH.closed, Literal(False), "sh:closed false"),
+)
+"""Constraint parameters at the value that makes them a no-op.
+
+Each is legal SHACL that constrains nothing at all — ``sh:minCount 0`` is satisfied by
+every node, and ``sh:uniqueLang``/``sh:closed`` only constrain when true. So refusing them
+cannot block a rule anyone meant, and each is what "make the core rule optional" looks
+like when someone writes it down.
+"""
+
+
+def _not_additive(name: str, graph: Graph) -> Iterable[Issue]:
+    """The findings for one local shape file, in the order :func:`check_additive` lists."""
+    for subject in sorted(set(graph.subjects()), key=str):
+        if isinstance(subject, URIRef) and (core := _core_prefix(str(subject))):
+            yield Issue(Severity.ERROR, _owned_by_the_plane(core, subject), name)
+
+    for predicate, value, written in _CONSTRAINS_NOTHING:
+        for subject in graph.subjects(predicate, value):
+            yield Issue(Severity.ERROR, _relaxes(graph, subject, written), name)
+
+    for subject in set(graph.subjects(SH.rule, None)):
+        yield Issue(
+            Severity.ERROR,
+            f"{_short(subject)} carries a sh:rule, which derives statements the instance "
+            f"does not hold: a shape judges the graph and does not write to it, and "
+            f"hand-written statements belong in overlays/ (spec 4.2, 6.1.5)",
+            name,
+        )
+
+    for object_ in sorted({value for value in graph.objects() if _is_core_shape(value)}, key=str):
+        yield Issue(
+            Severity.ERROR,
+            f"references the core shape {_short(object_)}, which is not part of this "
+            f"graph: local shapes are validated on their own, so the reference matches "
+            f"everything or stops the validator outright, and never means what it reads "
+            f"as — state the rule here, over your own terms (spec 6.1.5)",
+            name,
+        )
+
+
+def _owned_by_the_plane(prefix: str, subject: URIRef) -> str:
+    """Why a statement about a core IRI is refused, said in the terms of the one it hit."""
+    if prefix == "sem":
+        return (
+            f"makes a statement about {_short(subject)}, a metamodel term: an instance "
+            f"never redefines, narrows or retargets a core term, because every instance's "
+            f"data answers to the same shared vocabulary. A class or property of your own "
+            f"belongs in this instance's x: namespace (spec 3.6 rule 2)"
+        )
+    return (
+        f"makes a statement about {_short(subject)}, a core shape: local shapes are "
+        f"additive, so they state their own rules under their own IRIs and cannot edit, "
+        f"extend or switch off one the compiler ships (spec 6.1.5)"
+    )
+
+
+def _relaxes(graph: Graph, subject: Node, written: str) -> str:
+    """Why a no-op constraint is refused, naming the path it was written against.
+
+    The subject is usually a blank node — a property shape written inline — so the path is
+    what makes the message point at something a steward can find in their file.
+
+    ``min`` rather than ``Graph.value``, which picks arbitrarily among several: a property
+    shape carrying two paths is malformed but perfectly possible to write, and a message
+    chosen by rdflib's iteration order is a message that differs between machines.
+    """
+    path = min(graph.objects(subject, SH.path), key=str, default=None)
+    about = f" on {_short(path)}" if isinstance(path, URIRef) else ""
+    return (
+        f"sets {written}{about}, which constrains nothing: SHACL validation is the sum of "
+        f"every shape, so a local file can add a rule but cannot remove one, and the core "
+        f"rule applies whatever this file says (spec 6.1.5)"
+    )
+
+
+def _core_prefix(iri: str) -> str | None:
+    """``sem`` or ``shp`` if ``iri`` is the plane's, else ``None``."""
+    for prefix, namespace in _CORE_NAMESPACES:
+        if iri.startswith(namespace):
+            return prefix
+    return None
+
+
+def _is_core_shape(value: Node) -> bool:
+    return isinstance(value, URIRef) and str(value).startswith(SHAPES_NAMESPACE)
+
+
+def _short(value: Node) -> str:
+    """How a message names a term: a core IRI prefixed, anything else in full.
+
+    A blank node is named by what it is rather than by its identifier: an inline shape's
+    ``N4f3a...`` appears in no file, so quoting it would send a steward looking for a
+    string their editor cannot find.
+    """
+    if isinstance(value, BNode):
+        return "an unnamed shape"
+    text = str(value)
+    for prefix, namespace in _CORE_NAMESPACES:
+        if text.startswith(namespace):
+            return f"{prefix}:{text[len(namespace) :]}"
+    return f"<{text}>"
 
 
 def _severity(report: Graph, result: Node) -> Severity:

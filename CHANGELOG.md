@@ -220,6 +220,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   machine with `core.autocrlf=true` — the Windows default — rewrites every generated file
   on checkout, and the determinism check correctly fails on content nobody touched. The
   scaffold will write it; an instance created before then should add it.
+- **An organization's own shapes are enforced as additive** (§3.6, §6.1.5). Write rules
+  about anything, target `sem:` classes, be stricter than the plane is — but a file in
+  `shapes/local/` that makes a statement *about* a `sem:` term or about a core shape is
+  rejected and not applied, and so is one that relaxes a constraint to nothing
+  (`sh:minCount 0`), derives statements with a `sh:rule`, or references a core shape it
+  cannot see. The refusal names the file. Copying the core shapes into `shapes/local/` and
+  editing them was the way an adopter would expect to change a rule; it never had any
+  effect on validation, and now it says so instead of passing quietly.
+- **A local shape that is not usable SHACL is reported, not raised.** These files are
+  written by hand, and a property shape with no path, a pattern that is not a regex or a
+  `sh:select` that is not a query used to reach an operator as a traceback from inside
+  pyshacl, `re` or a SPARQL parser — naming no file, on content that parses perfectly well
+  as Turtle. It is now an error against the file responsible, the files that do load are
+  validated in the same run, and where only the union of them fails, the directory is
+  named.
 
 ### Ontology 0.1.0
 

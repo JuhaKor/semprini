@@ -341,7 +341,9 @@ define. It must be able to add one without forking this project.
 3. Local terms **should** relate themselves to core terms where the meaning allows
    (`rdfs:subClassOf sem:Entity`, `rdfs:subPropertyOf sem:isAbout`), so that generic
    queries still reach them.
-4. Local shapes live in `shapes/local/` and are **additive only** (6.1).
+4. Local shapes live in `shapes/local/` and are **additive only** (6.1.5, which states
+   precisely what that permits and what it rejects). They may target `sem:` classes;
+   they may not make statements about `sem:` terms or about the core shapes.
 
 ### 3.7 Example (illustrative)
 
@@ -1294,9 +1296,42 @@ categories below. Steps, all blocking unless noted:
      `generated/` only: an overlay's own `x:` term is what 3.6 exists to allow.
    - Overlays may add statements about generated IRIs but never redefine
      `skos:prefLabel`, `sem:status`, or scheme membership of a generated node.
-   - **Local shapes are additive only**: a shape in `shapes/local/` that targets a
-     `sem:` term and weakens a core constraint is rejected. Local shapes constrain
-     instance data; they cannot license data the core shapes forbid.
+   - **Local shapes are additive only**, and this is what that means precisely. A local
+     shape may *target* anything, `sem:` classes included — `sh:targetClass sem:Entity`
+     is how a local rule says what it is about — and may be as strict as its stewards
+     like. Four things are rejected, with the file named:
+     1. **A statement about a core IRI**: any subject in the `sem:` namespace (3.2, 3.3)
+        or in the core shapes' own (`https://w3id.org/semprini/shapes#`). This is what
+        catches `core.ttl` copied into `shapes/local/` and edited, `sem:Entity a
+        sh:NodeShape` (SHACL's implicit class target, which makes a metamodel class a
+        shape), and `sh:deactivated true` on a core shape. Whole namespaces rather than
+        the terms that exist today: a file that claimed an unused IRI in either would be
+        broken by the release that adds one. Naming a core IRI as an *object* is
+        untouched.
+     2. **A constraint parameter that constrains nothing** — `sh:minCount 0`,
+        `sh:uniqueLang false`, `sh:closed false`. Each is a no-op in SHACL, so refusing
+        it blocks no rule anyone meant to write, and each is what "make the core rule
+        optional here" looks like when someone writes it down. It would not work:
+        validation is the sum of every shape, so a local file can add a rule but cannot
+        remove one.
+     3. **A SHACL rule** (`sh:rule`), which derives statements into the graph being
+        validated. Shapes judge the graph; hand-written statements belong in `overlays/`
+        (4.2), where they are visible in a diff.
+     4. **A reference to a core shape**, in any position. Local shapes are validated as
+        their own graph, which does not hold the core ones, so the reference either
+        matches everything or aborts the validator — never "the core rule applies here
+        too", which is what its author means by it.
+
+     A rejected file's rules are **not applied**; the other files' still are. Local
+     shapes constrain instance data; they cannot license data the core shapes forbid.
+   - **A local shape that is not usable SHACL is a finding, not a crash.** These files
+     are hand-written, so a property shape with no path, two paths on one, a pattern that
+     is not a regex or a `sh:select` that is not a query are ordinary mistakes — and they
+     raise from inside the validator, its regex engine or its SPARQL parser, none of
+     which names the file. Check 1 has nothing to say about them: they parse. So the
+     failure is reported as an error against the file that caused it, the files that do
+     load are validated in the same pass, and where only their *union* fails the finding
+     is reported against `shapes/local/` itself.
 6. **Identity checks**: ID map is append-only versus the base branch; no collisions;
    every subject IRI in `generated/` exists in the ID map; every `source_name` in the
    ID map is configured (5.4); and the merge register names IRIs the map holds.
