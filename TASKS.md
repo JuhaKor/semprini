@@ -2025,6 +2025,13 @@ done and green.
     refusals plus the legal `sh:targetClass sem:Entity` form. **G4 should treat these three
     as part of the documentation it is auditing**, since they are what an adopter reads
     first and they are versioned with the compiler rather than with the docs site.
+  - **Superseded by G2 (2026-08-14) — the action is being removed and the trade below was
+    reversed.** The record of why it was made stands; read the rest of this bullet as
+    history, not as the current shape of the file. `compile.yml` now opens its pull
+    request with `git` plus `gh pr create`, §6.3 forbids a third-party action in a shipped
+    workflow, and the `compile/<date>` line moves inside that step. The two review
+    findings named below are unchanged and still the reason the conditional and the
+    `semprini check` step exist.
   - **`compile.yml` uses `peter-evans/create-pull-request`** and one shell line computing
     the date for the `compile/<date>` branch §6.2 names. That date line is the only logic
     in either file, and **G2's mechanical §6.3 guard has to decide whether it passes** —
@@ -2050,16 +2057,67 @@ done and green.
   by `init`.
   **Verify:** a test asserts each workflow contains no logic beyond installing the
   pinned version, invoking `semprini`, and (for compile) opening a PR — the mechanical guard
-  on §6.3. Run both against the fixture instance in a container and confirm a compile
+  on §6.3. Run both against a scratch instance repository on GitHub and confirm a compile
   PR body carries the run report.
   **Depends:** G1
   **G1 already delivered both files**, at `src/semprini/workflows/github/`, materialized
   into `.github/workflows/` and pinned to the plane version — inside the package, since a
   scaffold at the repository root is absent from the wheel `init` runs from. What is left
-  here is the §6.3 guard, the container run and the PR-body check. Two things to settle:
-  whether the one shell line computing `compile/<date>` counts as logic under that guard,
-  and whether a second platform directory (`gitlab/`, `azure/`) ships now — the seam is
-  `scaffold.WORKFLOW_DIRS` and costs one line per platform.
+  is the third-party dependency below, the §6.3 guard, and the run against a real
+  instance.
+
+  **Decided before starting (2026-08-14), and both are already in §6.2/§6.3:**
+  - **`peter-evans/create-pull-request` goes; the PR step becomes `git` plus
+    `gh pr create`.** It is the only non-`actions/` dependency anywhere in the project, it
+    ships into every instance `init` creates, and it runs there with `contents: write` on
+    that organization's knowledge graph — pinned to `@v7`, a moving tag, so its code can
+    change without a diff anyone reviews. That is the one thing this design refuses
+    everywhere else, and pinning to a commit SHA would have kept the line count while
+    still running someone else's code. The cost is real and was G1's reason for choosing
+    the action: the step grows to roughly fifteen lines of shell. **§6.3 now states the
+    rule** — the PR step uses the platform's own CLI and a workflow may contain no other
+    logic — so the guard below enforces something written down rather than something
+    inferred. Three of those lines are not obvious and each has a reason: `git commit`
+    exits non-zero with nothing staged, `--force` on the push and a `gh pr list` check
+    cover dispatching the workflow twice in one day, and a runner has no default
+    `user.email`. §6.2 gained the empty-staging-area case.
+  - **The guard is not "no multi-line `run:` blocks".** That rule was available while the
+    action existed and is not any more. It becomes: exactly one PR-opening step, invoking
+    nothing but `git` and `gh` — no Python, no RDF, no second tool, no reading of
+    `generated/` beyond handing the report path to `gh` — and every other step is
+    checkout, setup-python, a pinned `pip install`, or a `semprini` subcommand. G1's
+    question about the `compile/<date>` shell line answers itself: it moves inside the PR
+    step, where it belongs.
+  - **A container is the wrong test, and is replaced by a scratch instance repository.**
+    Every defect G1's review found in these files was a GitHub *runtime* behaviour, not a
+    shell bug — a `GITHUB_TOKEN`-opened PR firing no `pull_request` event cannot be
+    reproduced under `act` at all, which mocks both the token and the event model. The
+    move to `gh pr create` adds more of exactly that surface: real API auth, the
+    `permissions:` block, and the repository setting **"Allow GitHub Actions to create and
+    approve pull requests"**, which is off by default and fails the step no matter how
+    correct the YAML is — the kind of thing G1 noted an adopter discovers from a failing
+    job three weeks later. It also puts a report through a real PR body, which C2 escapes
+    pipes and newlines for and which nothing has ever checked.
+    `juhakor/semprini-scratch-instance` **exists and has that setting on.**
+
+  **One deviation the scratch run cannot avoid:** `pip install semprini==%%version%%`
+  fails, because nothing is published and the channel is still open (§11 #3, G5). The
+  scratch instance substitutes `pip install git+https://github.com/JuhaKor/semprini@<sha>`
+  — one line, pinned, no logic, so the guard still passes against it — and the real line
+  stays untested until **G5**. Say so in the task report rather than implying it was
+  covered.
+
+  **Decided: GitHub only, and no second platform directory ships in v1.** The seam is
+  `scaffold.WORKFLOW_DIRS` and a port costs one line plus a directory, but a port that
+  cannot be run against a real instance is untested template text, and §6.3's portability
+  claim is about the *cost* of porting — which the seam and the guard demonstrate without
+  a second directory existing. The first adopter on another platform contributes one.
+  **§6.3 now says this**, so an adopter reading the spec finds out before looking for a
+  `gitlab/` that is not there. G2 therefore adds no platform: `WORKFLOW_DIRS` and
+  `WORKFLOW_PLATFORM` are untouched.
+
+  **The workflow files still carry the action** — this entry is the decision, not the
+  change. G2's first commit is the replacement plus the guard.
 
 - [ ] **G3 · Versioning, drift and migrations**
   **Spec:** §7
@@ -2159,7 +2217,11 @@ be deferred without stalling the build.
 - **G1 done: the plane can now create the thing it compiles.** An organization with the
   wheel installed gets a complete instance repository, and it is green from the first
   command — `semprini check` passes on it and a run against it writes nothing. **G2 next**,
-  and it is narrower than it looks: both workflows exist and are materialized, so what is
-  left is the mechanical §6.3 guard, running them against the fixture instance in a
-  container, and confirming a compile pull request carries the report. G1's note on the
-  one shell line in `compile.yml` is the thing to decide first.
+  and it grew a little: both workflows exist and are materialized, but the PR step is
+  being rewritten to drop `peter-evans/create-pull-request` — the project's only
+  third-party CI dependency, and one that shipped into every instance — in favour of `git`
+  plus `gh pr create`, which §6.3 now requires. What is left is that replacement, the
+  mechanical §6.3 guard around it, and a run against `semprini-scratch-instance` on GitHub
+  rather than against a container, since every defect these files have produced so far was
+  a GitHub runtime behaviour no container reproduces. G1's question about the one shell
+  line is answered: it moves inside the PR step.

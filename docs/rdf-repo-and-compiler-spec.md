@@ -1410,9 +1410,10 @@ Each instance has two workflows, both thin:
   version, run `semprini run`, run `semprini check` on what it produced, and if `generated/`
   or `mappings/` changed, open a PR (branch `compile/<date>`) with `generated/.report.md` as
   the description. It never pushes to main. Two consequences of the platform, not of the
-  design: a run that changed nothing writes no report (§5.6), so the PR step is conditional
-  on that file existing rather than allowed to fail on its absence; and where the CI
-  platform fires no pull-request event for a PR its own token opened — GitHub does not —
+  design: a run that changed nothing writes no report (§5.6) and leaves nothing to commit,
+  so the PR step is conditional on that file existing rather than allowed to fail on its
+  absence, and must tolerate an empty staging area; and where the CI platform fires no
+  pull-request event for a PR its own token opened — GitHub does not —
   `validate.yml` does not run on a compile PR, which is why `compile.yml` validates before
   it proposes. An instance that gives the PR step a credential of its own gets the check on
   the PR itself and may drop the step.
@@ -1426,11 +1427,21 @@ review.
 the package, run a command, and (for `compile.yml`) open a PR. Consequences:
 
 - An adopter on GitLab, Azure DevOps or on-prem Bitbucket ports the plane by
-  contributing a YAML file, not by reimplementing logic.
+  contributing a YAML file, not by reimplementing logic. **v1 ships GitHub definitions
+  only**, and deliberately: a port nobody runs against a real instance is untested
+  template text, and the claim being made here is about the *cost* of porting — which the
+  seam in 4.1 and the guard on this section demonstrate without a second directory
+  existing. The first adopter on another platform contributes one.
 - `semprini check` behaves identically on a developer's laptop and in CI, so failures are
   reproducible locally.
 - The plane depends on no GitHub-only feature for correctness; PR creation is the one
   platform-specific step, isolated in the workflow layer.
+- **That step uses the platform's own CLI — `gh`, `glab` — and never a third-party CI
+  action.** A shipped workflow runs in every instance with write access to `generated/`
+  and `mappings/`, and an action referenced by a moving tag is code that changes without
+  a diff anyone reviews, which is what this design refuses everywhere else. The price is
+  roughly a dozen lines of shell in that one step; it does nothing but `git` and the
+  platform CLI, and a workflow may contain no other logic.
 
 ---
 
