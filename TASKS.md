@@ -1815,6 +1815,7 @@ done and green.
   retargeting a `sem:` class, or redeclaring a `sem:` property is rejected with an
   explanatory message.
   **Depends:** F2
+  **Merged — [PR #15](https://github.com/JuhaKor/semprini/pull/15).**
 
   **Done.** 877 tests green (26 of them F3's); ruff, ruff format and mypy (strict) clean;
   the wheel still installs into a bare venv with pip and `semprini check` passes there on
