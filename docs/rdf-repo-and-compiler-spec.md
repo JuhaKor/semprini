@@ -402,6 +402,7 @@ semprini/
 ├── src/semprini/
 │   ├── cli.py                     # the whole CLI surface (5.1)
 │   ├── run.py                     # the `semprini run` pipeline, end to end (5.1)
+│   ├── scaffold.py                # the `semprini init` scaffold (5.7)
 │   ├── config.py                  # config/semprini.yaml loading and validation (5.1)
 │   ├── model.py                   # internal model dataclasses
 │   ├── identity.py                # ID map, minting, namespace lock
@@ -420,15 +421,23 @@ semprini/
 │   │   └── excel_taxonomy.py      # bundled (5.3)
 │   ├── ontology/
 │   │   └── sem.ttl                # the metamodel, versioned (3.1, 7)
-│   └── shapes/
-│       └── core.ttl               # core SHACL shapes (6.1.5)
-├── templates/instance/            # the scaffold `semprini init` materializes (4.2)
-├── workflows/                     # reusable/portable CI definitions for *instances* (6.2, 6.3)
+│   ├── shapes/
+│   │   └── core.ttl               # core SHACL shapes (6.1.5)
+│   ├── templates/instance/        # the scaffold `semprini init` materializes (4.2)
+│   └── workflows/                 # portable CI definitions for *instances* (6.2, 6.3)
+│       └── github/                # one directory per platform
 └── tests/
     └── fixtures/
         ├── acme/                  # a complete synthetic instance + golden TTL (6.1)
         └── dummy-adapter/         # a third-party adapter distribution, as installed (5.2)
 ```
+
+**Everything `init` materializes lives inside the package**, alongside `sem.ttl` and
+`core.ttl` and for the same reason: an adopter installs a wheel with pip and never sees
+this repository, so a scaffold at the repository root would be absent from the one place
+`semprini init` runs. The workflow templates are held one directory per CI platform, which
+is the seam 6.3 promises — a port to GitLab adds a directory and the path its files go to,
+and changes nothing else about the scaffold.
 
 ### 4.2 An instance repository
 
@@ -557,6 +566,7 @@ sources, `pyshacl` for validation and `PyYAML` for configuration. It installs fr
 
 ```
 semprini init      --base-iri <IRI> --org <slug> [--dir <path>]   # bootstrap an instance (5.7)
+                   [--language <tag>]                             # default_language (5.5 rule 6)
 semprini run       [--source <name>] [--dry-run]                  # fetch, compile, write
                    [--force-namespace-change]                     # move the base IRI (3.4)
 semprini check     [--base <rev>]                                 # validate only, no writes
@@ -1185,20 +1195,44 @@ manifest that names the new one; and a run that produced byte-identical files wh
 
 ### 5.7 Bootstrapping an instance
 
-`semprini init --base-iri https://semantics.acme.com/ --org acme`:
+`semprini init --base-iri https://semantics.acme.com/ --org acme [--language en]`:
 
 1. Materializes `templates/instance/` into the target directory (4.2), `.gitattributes`
-   included (4.3).
+   included (4.3). Directories a steward has not filled in yet — the three under
+   `overlays/`, the two under `sources/` — are created with a keep file, since git cannot
+   commit an empty one and a missing directory is one more thing to get right by hand.
+   `overlays/` and `shapes/local/` each carry a README: an adopter meets the rules those
+   directories are governed by when a file of theirs is rejected, which is the worst
+   moment to read about them for the first time.
 2. Writes `config/semprini.yaml` with the base IRI, instance id and default language, and
    an empty `sources:` list.
 3. Writes `mappings/namespace.lock` (3.4) and empty `id-map.csv` / `merges.csv` with
    headers.
-4. Writes `generated/ontology.ttl` (the pinned metamodel) and a manifest.
-5. Writes the two workflow stubs, pinned to the plane version that produced them.
+4. Writes `generated/ontology.ttl` (the pinned metamodel) and a manifest. A fresh instance
+   has no content, so that is the whole of `generated/` — and it is what lets `semprini
+   check` pass on an instance that has never been compiled, which an adopter's first CI
+   run is. It is also byte for byte what a run would produce, so the first scheduled
+   compile finds nothing to change and opens no pull request.
+5. Writes the two workflows (6.2) for the target CI platform, pinned to the plane version
+   that produced them.
 6. Prints the required secrets and the next steps; makes **no** network calls and
-   creates no remote repository.
+   creates no remote repository (11 #8).
 
-The command refuses to run in a directory that already contains a `namespace.lock`.
+**Nothing is written until every refusal has been made.** The whole tree is rendered in
+memory first, so a bad argument or an occupied directory leaves the target exactly as it
+was; there is no half-created instance, which would be the one state a second `init` would
+refuse to finish. Every refusal is a configuration error — exit code 2.
+
+The command refuses to run in a directory that already contains a `namespace.lock`: the
+base IRI frozen there is a decision that cannot be taken twice, and a second bootstrap
+would mint a parallel set of IRIs beside the ones `mappings/id-map.csv` already records. It
+refuses on **any** file it would otherwise overwrite, for the weaker but sufficient reason
+that nothing in the scaffold is safe to clobber — and "it only overwrote the ones you had
+not touched" is not a state anyone can reason about afterwards.
+
+**A source tree cannot bootstrap an instance.** Two of the files above pin the plane
+version — the workflows an adopter's CI installs from, and the manifest that says which
+release produced `generated/` — and `0.0.0+source` identifies no release (4.3, 7).
 
 ---
 
@@ -1373,9 +1407,15 @@ Each instance has two workflows, both thin:
   a single-commit checkout, which is several CI platforms' default, silently turns the
   append-only comparison off — or passes `--base` explicitly.
 - **`compile.yml`** — on a schedule and on manual dispatch: install the pinned plane
-  version, run `semprini run`, and if `generated/` or `mappings/` changed, open a PR (branch
-  `compile/<date>`) with `generated/.report.md` as the description. It never pushes to
-  main.
+  version, run `semprini run`, run `semprini check` on what it produced, and if `generated/`
+  or `mappings/` changed, open a PR (branch `compile/<date>`) with `generated/.report.md` as
+  the description. It never pushes to main. Two consequences of the platform, not of the
+  design: a run that changed nothing writes no report (§5.6), so the PR step is conditional
+  on that file existing rather than allowed to fail on its absence; and where the CI
+  platform fires no pull-request event for a PR its own token opened — GitHub does not —
+  `validate.yml` does not run on a compile PR, which is why `compile.yml` validates before
+  it proposes. An instance that gives the PR step a credential of its own gets the check on
+  the PR itself and may drop the step.
 
 Branch protection on an instance's main: PRs only, validation must pass, at least one
 review.

@@ -1,0 +1,53 @@
+# This instance's configuration (Semprini spec 5.1).
+#
+# Credentials are NEVER written into this file. No adapter shipped with this version asks
+# for one — both read files already in the repository, and `token_env` on either is exit
+# code 2 rather than a setting that quietly does nothing. When an adapter that calls an API
+# arrives, a source will name an environment variable and the value will be read from the
+# environment at fetch time; a token pasted in here is refused before anything is fetched.
+#
+# An unknown key is an error rather than an extra, so a misspelling fails the run instead
+# of quietly doing something else.
+
+semprini:
+  # Frozen at bootstrap by mappings/namespace.lock. Editing it here moves nothing: every
+  # IRI already minted stays under the base it was minted in, and the run refuses to start
+  # rather than mint a second, parallel set. Moving an instance to a new base is
+  # `semprini run --force-namespace-change` (spec 3.4.4).
+  base_iri: "%%base_iri%%"
+
+  # This instance's own slug. Recorded in the namespace lock and equally frozen.
+  instance_id: "%%org%%"
+
+  # Applied to every label and definition that arrives without a language of its own; one
+  # that arrives already tagged keeps its tag (spec 5.5 rule 6).
+  default_language: "%%default_language%%"
+
+# Every source this instance compiles. `semprini adapters` lists what is installed.
+#
+# A source's `name` is assigned once and never changed or reused: it is written into every
+# sem:sourceRef and into every row of mappings/id-map.csv, so renaming one detaches every
+# object it owns from its IRI (spec 5.4). Name the source, not the tool that reads it.
+#
+# Two worked examples, as the plane's own test instance configures them:
+#
+# sources:
+#   # One Ellie instance is one source: entity ids are unique across the instance, so
+#   # every model of it is listed here under one name, behind an allowlist.
+#   - adapter: ellie
+#     name: ellie-main
+#     config:
+#       base_url: https://%%org%%.ellie.ai/api/v1
+#       models:
+#         - id: 70337
+#           path: sources/ellie/storefront.json
+#           scheme_slug: storefront
+#
+#   # One workbook is one taxonomy is one source.
+#   - adapter: excel-taxonomy
+#     name: product-category
+#     config:
+#       path: sources/taxonomies/product-category.xlsx
+#       scheme_slug: product-category
+#       enumerates_source: ellie-main
+sources: []

@@ -1,0 +1,72 @@
+# Compile this instance on a schedule, and open a pull request if anything moved
+# (Semprini spec 6.2).
+#
+# Deliberately thin: install a pinned version, run one command, open a PR. Every decision
+# — what changed, whether anything changed at all, what to deprecate — belongs to the CLI
+# (spec 6.3). This workflow never pushes to main.
+name: compile
+
+on:
+  schedule:
+    # Monday morning, UTC. Any cadence works; a run that finds nothing writes nothing and
+    # opens no pull request, so a frequent schedule costs only the run itself.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pinned to the plane version that created this instance. Upgrading is a deliberate
+      # edit to this line, reviewed like any other change (spec 7).
+      - run: pip install semprini==%%version%%
+
+      - run: semprini run
+        # No adapter shipped with this version needs a credential: both read files already
+        # in the repository. When one that calls an API does, it will name an environment
+        # variable in config/semprini.yaml — never the value — and this step gains one line
+        # per source pointing that name at a repository secret:
+        #
+        # env:
+        #   SOME_API_TOKEN: ${{ secrets.SOME_API_TOKEN }}
+
+      # The compile PR is opened with GITHUB_TOKEN, and GitHub fires no `pull_request`
+      # event for those — so validate.yml does not run on it, and on a protected main the
+      # required check would never report. Running the same command here is what keeps the
+      # compiler's own output from being the one diff in this instance nobody validated.
+      # Give create-pull-request a PAT or app token instead if you would rather the check
+      # run on the pull request itself; then this step is redundant and can go.
+      #
+      # `--base` is the commit this run started from: nothing has been committed yet, so
+      # that is exactly the ID map as it stood before the compile (spec 6.1 check 6).
+      - run: semprini check --base ${{ github.sha }}
+
+      - id: date
+        run: echo "value=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - uses: peter-evans/create-pull-request@v7
+        # A run that changed nothing writes no report, and the action rejects a `body-path`
+        # naming a file that is not there — before it looks for a commit to open a PR for.
+        # Without this guard the quiet weeks are the ones that go red.
+        if: hashFiles('generated/.report.md') != ''
+        with:
+          branch: compile/${{ steps.date.outputs.value }}
+          title: "Compile ${{ steps.date.outputs.value }}"
+          # The run's own report is the description: what is new, what changed, what was
+          # deprecated, and which warnings were raised. A run that changed nothing does not
+          # rewrite it — and produces no commit, so no pull request is opened either.
+          body-path: generated/.report.md
+          commit-message: "Compile ${{ steps.date.outputs.value }}"
+          add-paths: |
+            generated
+            mappings

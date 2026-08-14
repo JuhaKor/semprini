@@ -218,8 +218,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rather than passing quietly, and `--base <rev>` names one on any CI platform.
 - **An instance must commit a `.gitattributes` pinning `eol=lf`.** Without it, a clone on a
   machine with `core.autocrlf=true` — the Windows default — rewrites every generated file
-  on checkout, and the determinism check correctly fails on content nobody touched. The
-  scaffold will write it; an instance created before then should add it.
+  on checkout, and the determinism check correctly fails on content nobody touched.
+  `semprini init` writes it; an instance created before then should add it.
 - **An organization's own shapes are enforced as additive** (§3.6, §6.1.5). Write rules
   about anything, target `sem:` classes, be stricter than the plane is — but a file in
   `shapes/local/` that makes a statement *about* a `sem:` term or about a core shape is
@@ -235,6 +235,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   as Turtle. It is now an error against the file responsible, the files that do load are
   validated in the same run, and where only the union of them fails, the directory is
   named.
+- **`semprini init` creates an instance repository** (§4.2, §5.7): the whole tree, its
+  configuration, an empty ID map and merge register, the frozen `mappings/namespace.lock`,
+  a verbatim copy of the pinned metamodel with its manifest, and the two CI workflows
+  pinned to the plane version that produced them. It then prints what to do next. The
+  fresh instance passes `semprini check` with no findings, and a run against it writes
+  nothing — so an adopter's first pull request is theirs, not a compile fixing up its own
+  scaffold.
+- `semprini init --language <tag>` sets the instance's `default_language` at bootstrap
+  (§5.5 rule 6). It is an ordinary setting and, unlike the base IRI, can be changed later.
+- **`init` never overwrites.** It refuses a directory holding a `mappings/namespace.lock`,
+  because the base IRI frozen there is a decision that cannot be taken twice — and it
+  refuses on any other file it would have written, since nothing in the scaffold is safe
+  to clobber. Every refusal is exit `2` and leaves the directory exactly as it was: the
+  tree is rendered in memory before anything reaches the disk.
+- **`init` makes no network calls and creates no remote repository** (§11 #8, now
+  resolved). Creating the repository, protecting `main` and allowing Actions to open pull
+  requests are steps it prints rather than performs.
+- A source tree cannot bootstrap an instance: the scaffold pins the plane version in two
+  workflows and in a manifest, and `0.0.0+source` identifies no release (§4.3, §7).
+- **The scheduled compile stays quiet when nothing moved, and validates itself when
+  something did.** A week with no changes writes no report and now opens no pull request
+  instead of failing on the missing file. And because GitHub fires no `pull_request` event
+  for a pull request opened with `GITHUB_TOKEN`, `validate.yml` never runs on a compile
+  PR — so `compile.yml` runs `semprini check` itself, before proposing anything. On a main
+  protected the way `init` recommends, an instance that wants the required check to report
+  on the pull request itself gives the action a PAT or app token instead.
 
 ### Ontology 0.1.0
 

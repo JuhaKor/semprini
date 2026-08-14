@@ -1,0 +1,34 @@
+# Validate this instance on every pull request (Semprini spec 6.2).
+#
+# Deliberately thin. Every check lives in the CLI (spec 6.3), so this file installs a
+# pinned version and runs one command — which is why `semprini check` reaches the same
+# verdict on a laptop as it does here, and why porting this repository to GitLab or Azure
+# DevOps means writing a few lines of YAML rather than reimplementing anything.
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Check 6 compares mappings/id-map.csv against the pull request's base revision
+          # to prove no row was deleted or edited. A single-commit checkout — several CI
+          # platforms' default — leaves no base to compare against, and the check reports
+          # itself as not run rather than passing.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pinned to the plane version that created this instance. Upgrading is a deliberate
+      # edit to this line, reviewed like any other change (spec 7).
+      - run: pip install semprini==%%version%%
+
+      - run: semprini check

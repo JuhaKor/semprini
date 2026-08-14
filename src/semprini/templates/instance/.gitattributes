@@ -1,0 +1,10 @@
+# Required, not optional (Semprini spec 4.3).
+#
+# generated/ is written with LF line endings and compared byte for byte by
+# `semprini check` (spec 5.5 rule 5, 6.1 check 7). Without this file, a clone on a
+# machine with core.autocrlf=true — the Windows default — rewrites every generated file
+# on checkout, and the determinism check then fails on content nobody touched.
+* text=auto eol=lf
+
+# Excel taxonomies are binary and must never be line-ending normalized or diffed as text.
+*.xlsx binary
