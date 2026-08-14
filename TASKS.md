@@ -1804,7 +1804,7 @@ done and green.
     changes nothing about that; the additive-only rejection still belongs to F3, which
     should report through the same `CheckOutcome` for check 5 rather than adding an eighth.
 
-- [ ] **F3 · Additive-only enforcement for local shapes**
+- [x] **F3 · Additive-only enforcement for local shapes**
   **Spec:** §3.6, §6.1.5 (final bullet)
   **Deliver:** rejection of a `shapes/local/` shape that weakens a core constraint or
   redefines a `sem:` term. Split out because it is the hardest check to get right —
@@ -1815,6 +1815,110 @@ done and green.
   retargeting a `sem:` class, or redeclaring a `sem:` property is rejected with an
   explanatory message.
   **Depends:** F2
+
+  **Done.** 877 tests green (26 of them F3's); ruff, ruff format and mypy (strict) clean;
+  the wheel still installs into a bare venv with pip and `semprini check` passes there on
+  the fixture instance. Twenty-six mutations were checked against the suite, twice — a
+  statement about a core IRI tolerated, only one of the two core namespaces protected
+  (each way round), only the core IRIs that exist today protected rather than the
+  namespaces, a core IRI refused in object position too, no-op constraints tolerated, only
+  `sh:minCount` of the three caught, an ordinary cardinality refused, the relaxed path not
+  named / chosen by rdflib iteration order / taken last in string order, a `sh:rule`
+  tolerated, a core-shape reference tolerated, a refusal downgraded to a warning, refusals
+  not reported at all, a refused file applied anyway, one refused file switching off every
+  other file, refusals unsorted, a shape file keyed by name rather than by path, the local
+  shapes read as one graph again, an unusable shapes graph escaping as a traceback, an
+  unusable local shape swallowed, the file responsible not named, the files that do load
+  left unvalidated when another one fails, and a library's newlines kept — and each fails
+  it.
+
+  **The battery's own guard earned its keep on the last run.** A test added after the
+  first two rounds was failing, and a battery run against a failing baseline reports
+  *every* mutation as caught — the one result it exists to be unable to fake. The harness
+  now runs the unmutated suite first and refuses to start otherwise. Worth writing down
+  because the failure is silent and looks like success.
+
+  **The premise the task was written on turned out to be false, and that shaped
+  everything.** SHACL validation is conjunctive: adding a shape can only ever add
+  violations, so a local file *cannot* weaken a core constraint by being present, and the
+  core shapes are a separate `shacl()` call over their own graph besides. Nothing an
+  adopter writes in `shapes/local/` has ever licensed data the core shapes forbid. What
+  they can do is reach back into what the plane defines and believe they have changed it.
+  So the rule is about ownership and honesty rather than about safety, and it is four
+  refusals — all in §6.1.5 now, since the spec's own wording named the wrong mechanism
+  ("targets a `sem:` term and weakens a core constraint"): *targeting* `sem:Entity` is how
+  every legitimate local rule says what it is about, and a test guards that it stays legal.
+  1. **A statement whose subject is a core IRI** — the `sem:` namespace or
+     `https://w3id.org/semprini/shapes#`. This is the one that matters: it catches
+     `core.ttl` copied into `shapes/local/` and edited, which is what an adopter would
+     actually try, along with `sem:Entity a sh:NodeShape` (SHACL's implicit class target,
+     which turns a metamodel class into a shape) and `shp:Node sh:deactivated true`. Whole
+     namespaces, not the inventory of the day, so the release that adds a term cannot
+     break a file that claimed its IRI first.
+  2. **A constraint parameter that constrains nothing** — `sh:minCount 0`,
+     `sh:uniqueLang false`, `sh:closed false`. Each is a no-op in SHACL, so refusing it
+     blocks no rule anyone meant, and each is precisely what "make the core rule optional"
+     looks like written down.
+  3. **`sh:rule`**, which derives triples into the graph being validated. Verified against
+     pyshacl rather than assumed: a rule supplying `sem:status` makes a shape demanding
+     `sem:status` pass on data that has none. It cannot reach the core check, but it lets
+     a steward's own rules pass against statements no file in the instance holds.
+  4. **A reference to a core shape, in any position**, which is the first thing an adopter
+     tries after refusal 1 — see the crash below for why it is a refusal and not a hint.
+
+  **A refused file's rules are not applied; the other files' still are.** Reporting a
+  shape as forbidden and then obeying it would leave the verdict resting on a file the
+  plane says it will not honour, and one steward's mistake must not switch off an
+  organization's rules. Both halves are tested, and the first needed repairing: the
+  refused file's rule originally had no target, so it would not have fired either way and
+  the test asserted nothing.
+
+  **A malformed local shape crashed `semprini check` with a traceback, and does not now.**
+  Found by a test, not by reading: five of six ordinary mistakes in a hand-written shapes
+  file — a property shape with no path, two paths on one, a reference to a shape that is
+  not there, a pattern that is not a regex, a `sh:select` that is not a query — raise out
+  of **three different libraries** (pyshacl, `re`, pyparsing), and check 1 has nothing to
+  say about any of them because they parse perfectly well as Turtle. `shacl()` now catches
+  broadly and the breadth is deliberate: an enumeration of exception types is a promise
+  this project cannot keep about a validator evaluating arbitrary user-written SPARQL and
+  regexes, and every gap in it is a traceback in an adopter's CI. §6.1.5 says so.
+
+  Decisions, for later sessions:
+  - **API:** `check_additive(files) -> tuple[Issue, ...]` and `read_local_shape_files()`,
+    which returns one graph per file keyed by path from the instance root
+    (`shapes/local/regions.ttl`). Local shapes are read per file rather than unioned
+    because a shape is accepted or refused **as a file** — that is what a rejection names
+    and what stops being applied. `read_local_shapes()` survives as their union.
+    `check_shapes`'s `local` parameter is now that mapping rather than a `Graph`; **F2's
+    handover note said `Graph | None` and this supersedes it.**
+  - **The failure of a file that will not load is attributed by re-running.** A validator
+    says "these shapes are broken" about the whole graph it was handed, in a message that
+    often names nothing at all — the `sh:target` case names neither file nor shape. So the
+    union is tried once and, only when it fails, each file is run alone to find which one
+    is responsible; the files that do load are validated in that same pass, so one run
+    still reports everything. Where every file loads alone and only their union does not —
+    two files sharing a shape IRI, which is constructible and tested — the finding is
+    reported against `shapes/local/` itself.
+  - **Rejection is reported as check 5**, per F2's seam, not as an eighth check: it is a
+    fact about the shapes that check applies. A test pins that no other check reports an
+    error for it, since an instance told two checks failed goes looking for a second cause.
+  - **Only an error refuses a file.** Every refusal is one today, so that filter changes
+    nothing and no test can reach it — it is there because a rule added later at warning
+    severity would otherwise silently switch off the file it is about. Recorded rather
+    than removed, deliberately, and the comment says as much.
+  - **The path a no-op constraint was written against is chosen with `min`, not
+    `Graph.value`** — rdflib picks arbitrarily among several, and a property shape with
+    two paths is malformed but perfectly possible to write. Note the assertion pinning
+    this is the weaker kind: a `Graph.value` regression is caught only when hashing
+    happens to offer the other path, so the `max` mutation is the one that catches it
+    deterministically.
+  - **A message names a term prefixed only for the two namespaces the plane owns**; a
+    `skos:` path appears in full. Fine as it stands, but if these messages are ever
+    widened, the display table is a second concern from `_CORE_NAMESPACES`, which decides
+    the *rule*.
+  - **G1's scaffold should create `shapes/local/` with a README** pointing at §6.1.5's
+    four refusals: an adopter meets this rule when their file is rejected, which is the
+    worst moment to first read about it. An absent directory remains a legal empty graph.
 
 ---
 

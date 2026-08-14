@@ -430,6 +430,67 @@ def test_the_shapes_see_the_content_the_checks_read(instance: Path) -> None:
     assert set(outcome(check(instance), 5).issues) == set(direct)
 
 
+def local_shape(instance: Path, name: str, turtle: str) -> None:
+    (instance / "shapes" / "local").mkdir(parents=True, exist_ok=True)
+    write(
+        instance / "shapes" / "local" / name,
+        "@prefix sh: <http://www.w3.org/ns/shacl#> .\n"
+        "@prefix shp: <https://w3id.org/semprini/shapes#> .\n"
+        "@prefix sem: <https://w3id.org/semprini/ontology#> .\n"
+        "@prefix skos: <http://www.w3.org/2004/02/skos/core#> .\n" + turtle,
+    )
+
+
+def test_a_local_shape_that_is_not_additive_fails_check_5(instance: Path) -> None:
+    """Spec 6.1.5's rejection is reported as part of the SHACL check rather than as an
+    eighth one: it is a fact about the shapes that check applies."""
+    local_shape(instance, "relaxed.ttl", "shp:Node sh:deactivated true .\n")
+
+    result = check(instance)
+
+    assert [issue.location for issue in failed(result, 5)] == ["shapes/local/relaxed.ttl"]
+    assert not result.ok
+    # And nowhere else: a local shape is a fact about check 5, and an instance told it
+    # failed two checks goes looking for a second cause that is not there.
+    assert [item.number for item in result.outcomes if item.errors] == [5]
+
+
+def test_a_local_shape_that_is_not_additive_exits_1(instance: Path, capsys: Any) -> None:
+    """What an adopter's CI sees: exit 1, and the file to open (spec 5.1, 6.1)."""
+    local_shape(
+        instance,
+        "relaxed.ttl",
+        "sem:Entity a sh:NodeShape ; sh:property [ sh:path skos:example ; sh:minCount 0 ] .\n",
+    )
+
+    code = main(["check"])
+
+    assert code == ExitCode.FAILURE
+    printed = capsys.readouterr().out
+    assert "shapes/local/relaxed.ttl" in printed
+    assert "sem:Entity" in printed
+
+
+def test_a_local_shape_that_is_not_usable_shacl_exits_1(instance: Path, capsys: Any) -> None:
+    """Turtle that parses and is additive, and that pyshacl cannot load.
+
+    Check 1 has nothing to say about it — it parses — so before this it left the command
+    as a traceback out of a library, on the one file in an instance that a person writes
+    by hand and the compiler never touches.
+    """
+    local_shape(
+        instance,
+        "broken.ttl",
+        "<urn:ours:S> a sh:NodeShape ; sh:targetClass sem:Entity ;"
+        " sh:property [ sh:minCount 1 ] .\n",
+    )
+
+    code = main(["check"])
+
+    assert code == ExitCode.FAILURE
+    assert "shapes/local/broken.ttl" in capsys.readouterr().out
+
+
 # ------------------------------------------------------------------------ check 6: identity
 
 

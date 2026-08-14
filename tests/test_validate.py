@@ -834,21 +834,51 @@ def test_an_instance_with_no_overlays_is_ordinary(instance: Path) -> None:
 # ------------------------------------------------------------------ local shapes
 
 
+SHAPE_PREFIXES = (
+    PREFIXES
+    + """
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix shp: <https://w3id.org/semprini/shapes#> .
+@prefix ours: <https://semantics.example.com/shapes#> .
+"""
+)
+"""``shp:`` is the plane's shape namespace and ``ours:`` is the instance's own.
+
+Both are spelled out in every fixture below, because the difference between them is the
+whole of spec 6.1.5's additive rule and a test that blurred it would prove nothing.
+"""
+
+
+def local_shape(instance: Path, name: str, turtle: str) -> Path:
+    path = instance / "shapes" / "local" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(SHAPE_PREFIXES + turtle, encoding="utf-8", newline="\n")
+    return path
+
+
+def additive(instance: Path) -> tuple[Issue, ...]:
+    """What spec 6.1.5's additive-only rule says about the instance's local shapes."""
+    return validate.check_additive(validate.read_local_shape_files(instance))
+
+
+def shapes_from(turtle: str) -> Graph:
+    graph = Graph()
+    graph.parse(data=SHAPE_PREFIXES + turtle, format="turtle")
+    return graph
+
+
 def test_a_local_shape_is_applied(instance: Path) -> None:
     """Spec 6.1.5: the core shapes plus every shape in ``shapes/local/``."""
-    path = instance / "shapes" / "local" / "definitions.ttl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        f"""{PREFIXES}
-        @prefix sh: <http://www.w3.org/ns/shacl#> .
-
-        <https://semantics.example.com/shapes#Everything> a sh:NodeShape ;
+    local_shape(
+        instance,
+        "definitions.ttl",
+        """
+        ours:Everything a sh:NodeShape ;
             sh:targetClass sem:Entity ;
             sh:property [ sh:path skos:example ; sh:minCount 1 ;
                           sh:message "our stewards want an example" ] .
         """,
-        encoding="utf-8",
-        newline="\n",
     )
 
     found = [issue for issue in check(instance) if "example" in issue.message]
@@ -872,24 +902,513 @@ def test_a_local_shape_sees_the_overlays_too(instance: Path) -> None:
         x:oslo a x:Region ; skos:prefLabel "Oslo"@en .
         """,
     )
-    path = instance / "shapes" / "local" / "regions.ttl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        f"""{PREFIXES}
-        @prefix sh: <http://www.w3.org/ns/shacl#> .
-
-        <https://semantics.example.com/shapes#Regions> a sh:NodeShape ;
+    local_shape(
+        instance,
+        "regions.ttl",
+        """
+        ours:Regions a sh:NodeShape ;
             sh:targetClass x:Region ;
             sh:property [ sh:path skos:definition ; sh:minCount 1 ;
                           sh:message "a local term needs a definition" ] .
         """,
-        encoding="utf-8",
-        newline="\n",
     )
 
     found = [issue for issue in check(instance) if "local term" in issue.message]
 
     assert [issue.location for issue in found] == [f"{BASE}ext#oslo"]
+
+
+def test_the_local_shapes_are_read_one_file_at_a_time(instance: Path) -> None:
+    """A local shape is accepted or refused as a *file*, so it is read as one.
+
+    The key is the path a steward would open, from the instance root and in posix form on
+    every platform: it is what a rejection reports as its location.
+    """
+    local_shape(instance, "one.ttl", "ours:One a sh:NodeShape .")
+    local_shape(instance, "team/two.ttl", "ours:Two a sh:NodeShape .")
+
+    files = validate.read_local_shape_files(instance)
+
+    assert sorted(files) == ["shapes/local/one.ttl", "shapes/local/team/two.ttl"]
+    assert all(len(graph) for graph in files.values())
+    # The union is what gets applied, and must be the same statements (spec 6.1.5).
+    assert len(validate.read_local_shapes(instance)) == sum(len(g) for g in files.values())
+
+
+# ------------------------------------------- local shapes are additive only (spec 6.1.5)
+
+
+def test_a_shape_that_only_adds_is_accepted(instance: Path) -> None:
+    """The case the whole rule must not break: an organization's own rule, as strict as
+    it likes, about the classes the metamodel defines (spec 3.6)."""
+    local_shape(
+        instance,
+        "stewardship.ttl",
+        """
+        ours:Stewardship a sh:NodeShape ;
+            rdfs:label "What our stewards require" ;
+            sh:targetClass sem:Entity, sem:Attribute ;
+            sh:property [ sh:path skos:definition ; sh:minCount 1 ; sh:maxCount 1 ;
+                          sh:severity sh:Violation ;
+                          sh:message "every entity is defined, here" ] ;
+            sh:property [ sh:path skos:example ; sh:minCount 1 ] .
+        """,
+    )
+
+    assert additive(instance) == ()
+
+
+def test_naming_a_core_term_as_an_object_is_how_a_local_rule_says_what_it_is_about(
+    instance: Path,
+) -> None:
+    """Guards the rule against over-reach in the direction that would matter most.
+
+    ``sh:targetClass sem:Entity`` and ``sh:path sem:status`` mention core IRIs in every
+    legitimate local shape there is. Only the *subject* position is the plane's.
+    """
+    local_shape(
+        instance,
+        "about-core-terms.ttl",
+        """
+        ours:Statuses a sh:NodeShape ;
+            sh:targetClass sem:Relationship ;
+            sh:property [ sh:path sem:status ; sh:hasValue "active" ;
+                          sh:message "we do not keep deprecated relationships" ] .
+        """,
+    )
+
+    assert additive(instance) == ()
+
+
+def test_a_local_shape_may_not_redefine_a_metamodel_term(instance: Path) -> None:
+    """Spec 3.6 rule 2: core terms are never redefined, narrowed or retargeted."""
+    local_shape(instance, "terms.ttl", "sem:status rdfs:range xsd:integer .")
+
+    (issue,) = additive(instance)
+
+    assert issue.severity is Severity.ERROR
+    assert issue.location == "shapes/local/terms.ttl"
+    assert "sem:status" in issue.message
+    assert "x: namespace" in issue.message
+
+
+def test_a_local_shape_may_not_retarget_a_metamodel_class(instance: Path) -> None:
+    """SHACL's implicit class target: a ``sem:`` class that is also a ``sh:NodeShape``
+    becomes a shape, so this is how a core class would be given rules from outside."""
+    local_shape(
+        instance,
+        "entities.ttl",
+        """
+        sem:Entity a sh:NodeShape ;
+            sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ] .
+        """,
+    )
+
+    assert [issue.location for issue in additive(instance)] == ["shapes/local/entities.ttl"]
+    assert "sem:Entity" in additive(instance)[0].message
+
+
+def test_a_local_shape_may_not_edit_a_core_shape(instance: Path) -> None:
+    """Switching one off is the clearest case: the statement is about ``shp:Node``."""
+    local_shape(instance, "off.ttl", "shp:Node sh:deactivated true .")
+
+    (issue,) = additive(instance)
+
+    assert issue.severity is Severity.ERROR
+    assert "shp:Node" in issue.message
+    assert "core shape" in issue.message
+
+
+def test_a_local_shape_may_not_claim_a_core_iri_that_does_not_exist_yet(
+    instance: Path,
+) -> None:
+    """Whole namespaces, not today's inventory: a file that claimed an unused ``shp:``
+    IRI would be broken by the release that adds one, and its own terms belong in ``x:``
+    either way (spec 3.6)."""
+    local_shape(instance, "future.ttl", "shp:SomethingWeInvented a sh:NodeShape .")
+
+    assert len(additive(instance)) == 1
+
+
+@pytest.mark.parametrize(
+    ("written", "shape"),
+    [
+        ("sh:minCount 0", "sh:property [ sh:path skos:prefLabel ; sh:minCount 0 ]"),
+        ("sh:uniqueLang false", "sh:property [ sh:path skos:prefLabel ; sh:uniqueLang false ]"),
+        ("sh:closed false", "sh:closed false ; sh:property [ sh:path skos:prefLabel ]"),
+    ],
+)
+def test_a_constraint_that_constrains_nothing_is_refused(
+    instance: Path, written: str, shape: str
+) -> None:
+    """The three ways SHACL lets someone write "this is optional now".
+
+    Each is a no-op — every node satisfies ``sh:minCount 0``, and the other two only
+    constrain when true — so refusing them blocks no rule anyone meant to write, and says
+    the true thing: validation is the sum of every shape, so a local file cannot subtract.
+    """
+    local_shape(instance, "relaxed.ttl", f"ours:Relaxed a sh:NodeShape ; {shape} .")
+
+    (issue,) = additive(instance)
+
+    assert issue.severity is Severity.ERROR
+    assert written in issue.message
+    assert "constrains nothing" in issue.message
+
+
+def test_a_relaxed_cardinality_is_reported_against_the_path_it_was_written_for(
+    instance: Path,
+) -> None:
+    """A property shape is usually a blank node, so the path is the only thing a steward
+    can find in their own file."""
+    local_shape(
+        instance,
+        "relaxed.ttl",
+        "ours:Relaxed a sh:NodeShape ; sh:property [ sh:path sem:status ; sh:minCount 0 ] .",
+    )
+
+    assert "sem:status" in additive(instance)[0].message
+
+
+def test_the_named_path_does_not_depend_on_rdflib_iteration_order(instance: Path) -> None:
+    """A property shape with two paths is malformed and perfectly possible to write.
+
+    rdflib holds a subject's objects in a set, so "the" path is whichever one hashing
+    offers first — the trap the run report hit when choosing among a node's labels. The
+    first in string order is named instead, and the file is reported as unusable SHACL by
+    the same run, which is the other half of what is wrong with it.
+    """
+    local_shape(
+        instance,
+        "relaxed.ttl",
+        """
+        ours:Relaxed a sh:NodeShape ; sh:targetClass sem:Entity ;
+            sh:property [ sh:path skos:prefLabel ; sh:path skos:definition ;
+                          sh:minCount 0 ] .
+        """,
+    )
+
+    (issue,) = [item for item in additive(instance) if "constrains nothing" in item.message]
+
+    # In full, since only the two namespaces the plane owns are shortened in a message.
+    assert "core#definition" in issue.message
+    assert "prefLabel" not in issue.message
+
+
+def test_a_local_shape_may_not_derive_the_data_it_judges(instance: Path) -> None:
+    """``sh:rule`` writes into the graph being validated (spec 4.2, 6.1.5)."""
+    local_shape(
+        instance,
+        "inference.ttl",
+        """
+        ours:Inferred a sh:NodeShape ;
+            sh:targetClass sem:Entity ;
+            sh:rule [ a sh:TripleRule ; sh:subject sh:this ;
+                      sh:predicate sem:status ; sh:object "active" ] .
+        """,
+    )
+
+    (issue,) = additive(instance)
+
+    assert issue.severity is Severity.ERROR
+    assert "sh:rule" in issue.message
+    assert "overlays/" in issue.message
+
+
+def test_a_shacl_rule_would_otherwise_invent_the_statements_it_checks() -> None:
+    """Why ``sh:rule`` is refused rather than tolerated, shown rather than asserted.
+
+    The same shape passes or fails depending only on whether the rule is there — on data
+    that is missing the very statement the rule supplies. Nothing in the instance holds
+    that statement, so no reviewer would ever see it.
+    """
+    graph = sample()
+    graph.remove((iri("concepts/", CUSTOMER), STATUS, None))
+    demand = """
+        <urn:test:shape> a sh:NodeShape ;
+            sh:targetClass sem:Entity ;
+            sh:property [ sh:path sem:status ; sh:minCount 1 ; sh:message "needs a status" ] ;
+        """
+    rule = """
+            sh:rule [ a sh:TripleRule ; sh:subject sh:this ;
+                      sh:predicate sem:status ; sh:object "active" ] ;
+        """
+
+    without = validate.shacl(graph, shapes_from(demand + "."))
+    with_rule = validate.shacl(graph, shapes_from(demand + rule + "."))
+
+    assert [issue.location for issue in without] == [str(iri("concepts/", CUSTOMER))]
+    assert with_rule == ()
+
+
+def test_a_local_shape_may_not_reference_a_core_shape(instance: Path) -> None:
+    """The first thing an adopter tries after being refused, and it never works: local
+    shapes are validated on their own graph, which does not hold the core ones.
+
+    Refused rather than tolerated because the two ways it fails are both silent about the
+    cause — see the next test, which is where the reason is pinned.
+    """
+    local_shape(
+        instance,
+        "taxonomies.ttl",
+        """
+        ours:Taxonomies a sh:NodeShape ;
+            sh:target shp:TaxonomyValueTarget ;
+            sh:property [ sh:path skos:notation ; sh:minCount 1 ;
+                          sh:message "our taxonomy values carry a code" ] .
+        """,
+    )
+
+    (issue,) = additive(instance)
+
+    assert issue.severity is Severity.ERROR
+    assert "shp:TaxonomyValueTarget" in issue.message
+    assert "validated on their own" in issue.message
+
+
+@pytest.mark.parametrize(
+    ("written", "consequence"),
+    [
+        ("sh:node shp:Node", "matches every node, since an absent shape constrains nothing"),
+        ("sh:target shp:TaxonomyValueTarget", "aborts the validator with no file named"),
+    ],
+)
+def test_a_reference_to_a_core_shape_never_means_what_it_reads_as(
+    written: str, consequence: str
+) -> None:
+    """Why the reference is refused rather than left alone, shown rather than asserted.
+
+    One of these two silently passes everything and the other stops the run, and neither
+    is "the core rule also applies here" — which is what an author writing it believes.
+    """
+    shapes = shapes_from(f"ours:S a sh:NodeShape ; sh:targetClass sem:Entity ; {written} .")
+    graph = sample()
+    graph.remove((iri("concepts/", CUSTOMER), SKOS.prefLabel, None))
+
+    try:
+        found = validate.shacl(graph, shapes)
+    except validate.ValidationError as error:
+        # The abort, named rather than a traceback — and naming no file, which is what
+        # `check_shapes` has to supply.
+        assert "cannot be applied as SHACL" in str(error), consequence
+    else:
+        # The silence: the core rule this shape names is not enforced by naming it.
+        assert found == (), consequence
+
+
+def test_a_refused_file_is_not_applied_and_the_others_still_are(instance: Path) -> None:
+    """ "Rejected" means the rules do not run: reporting a shape as forbidden and then
+    obeying it would leave a verdict resting on a file the plane will not honour. One
+    steward's mistake must not switch off an organization's other rules, though.
+    """
+    local_shape(
+        instance,
+        "forbidden.ttl",
+        """
+        shp:Node sh:deactivated true .
+
+        ours:Refused a sh:NodeShape ;
+            sh:targetClass sem:Entity ;
+            sh:property [ sh:path skos:example ; sh:minCount 1 ;
+                          sh:message "the refused rule" ] .
+        """,
+    )
+    local_shape(
+        instance,
+        "allowed.ttl",
+        """
+        ours:Allowed a sh:NodeShape ;
+            sh:targetClass sem:Entity ;
+            sh:property [ sh:path skos:example ; sh:minCount 1 ;
+                          sh:message "the allowed rule" ] .
+        """,
+    )
+
+    found = check(instance)
+
+    # The refused file's rule targets sem:Entity and the fixture instance has entities
+    # with no skos:example, so it would fire on several nodes if the file were applied.
+    assert [issue.location for issue in found if "the refused rule" in issue.message] == []
+    assert [issue.location for issue in found if "the allowed rule" in issue.message]
+    assert [issue.location for issue in found if "core shape" in issue.message] == [
+        "shapes/local/forbidden.ttl"
+    ]
+
+
+def test_the_core_shapes_copied_and_relaxed_do_not_relax_anything(instance: Path) -> None:
+    """The likeliest attempt there is: ``core.ttl`` copied into ``shapes/local/`` and
+    edited. Every cardinality in the copy is made optional, and the core rule fires
+    anyway — the core shapes are the compiler's, and are applied from the package.
+    """
+    relaxed = (validate.SHAPES_DIR / "core.ttl").read_text(encoding="utf-8")
+    local_shape_file = instance / "shapes" / "local" / "core.ttl"
+    local_shape_file.parent.mkdir(parents=True, exist_ok=True)
+    local_shape_file.write_text(relaxed.replace("sh:minCount 1", "sh:minCount 0"), encoding="utf-8")
+    graph = sample()
+    graph.remove((iri("concepts/", CUSTOMER), SKOS.prefLabel, None))
+
+    found = validate.check_shapes(instance, base_iri=BASE, generated=graph, overlays=Graph())
+
+    assert [issue for issue in found if "skos:prefLabel" in issue.message]
+    assert {issue.location for issue in found if "core shape" in issue.message} == {
+        "shapes/local/core.ttl"
+    }
+
+
+# ------------------------------------------ a local shape that is not usable as SHACL
+
+
+NOT_USABLE_SHACL = {
+    "a property shape with no path": """
+        ours:S a sh:NodeShape ; sh:targetClass sem:Entity ;
+            sh:property [ sh:minCount 1 ] .
+    """,
+    "two paths on one property shape": """
+        ours:S a sh:NodeShape ; sh:targetClass sem:Entity ;
+            sh:property [ sh:path skos:prefLabel ; sh:path skos:definition ; sh:minCount 1 ] .
+    """,
+    "a pattern that is not a regex": """
+        ours:S a sh:NodeShape ; sh:targetClass sem:Entity ;
+            sh:property [ sh:path skos:prefLabel ; sh:pattern "((" ] .
+    """,
+    "a select that is not a query": """
+        ours:S a sh:NodeShape ; sh:targetClass sem:Entity ;
+            sh:sparql [ a sh:SPARQLConstraint ; sh:message "no" ;
+                        sh:select "SELECT ?this WHERE { this is not sparql }" ] .
+    """,
+}
+"""Turtle that parses, is perfectly additive, and is not usable as SHACL.
+
+Every one of these is an ordinary mistake in a hand-written shapes file, and they raise
+out of three different libraries — pyshacl, ``re`` and pyparsing. None of them is a thing
+this project can enumerate its way out of, which is why the guard is broad.
+"""
+
+
+@pytest.mark.parametrize("turtle", NOT_USABLE_SHACL.values(), ids=list(NOT_USABLE_SHACL))
+def test_a_local_shape_that_is_not_usable_shacl_is_a_finding(instance: Path, turtle: str) -> None:
+    """Check 1 catches Turtle that does not parse; this is Turtle that does.
+
+    An adopter writes these files by hand (spec 4.2), so being wrong about SHACL is an
+    ordinary state for one to be in — and every one of them reached an operator as a
+    traceback from inside a library before this.
+    """
+    local_shape(instance, "broken.ttl", turtle)
+
+    found = [issue for issue in check(instance) if issue.location == "shapes/local/broken.ttl"]
+
+    assert [issue.severity for issue in found] == [Severity.ERROR]
+    assert "cannot be applied as SHACL" in found[0].message
+    # Rendered as one bullet and pasted into a pull request body (spec 6.2): a newline
+    # from a library's message would silently end the list it is in.
+    assert "\n" not in found[0].message
+
+
+def test_the_local_shape_that_cannot_be_applied_is_the_one_named(instance: Path) -> None:
+    """A validator says "these shapes are broken" about the whole graph it was handed,
+    and its message often names nothing at all. The file is what a steward opens."""
+    local_shape(instance, "broken.ttl", NOT_USABLE_SHACL["a property shape with no path"])
+    local_shape(
+        instance,
+        "works.ttl",
+        """
+        ours:Works a sh:NodeShape ;
+            sh:targetClass sem:Entity ;
+            sh:property [ sh:path skos:example ; sh:minCount 1 ;
+                          sh:message "the working rule" ] .
+        """,
+    )
+
+    found = check(instance)
+
+    assert [issue.location for issue in found if "cannot be applied" in issue.message] == [
+        "shapes/local/broken.ttl"
+    ]
+    # The files that do load are validated in the same pass, so one run still reports
+    # everything (spec 6.1) rather than one broken file hiding the rest.
+    assert [issue for issue in found if "the working rule" in issue.message]
+
+
+def test_shapes_that_only_break_together_are_reported_against_the_directory(
+    instance: Path,
+) -> None:
+    """Each file is usable SHACL on its own; the two of them are not.
+
+    The second adds a path to a property shape the first one defines, and a property shape
+    may have only one — so neither file is wrong by itself and their union is. No single
+    file is the answer, so the honest location is the directory rather than whichever file
+    happened to be read second.
+    """
+    local_shape(
+        instance,
+        "one.ttl",
+        """
+        ours:Entities a sh:NodeShape ; sh:targetClass sem:Entity ; sh:property ours:Labelled .
+        ours:Labelled a sh:PropertyShape ; sh:path skos:prefLabel ; sh:minCount 1 .
+        """,
+    )
+    local_shape(instance, "two.ttl", "ours:Labelled sh:path skos:definition .")
+
+    found = [issue for issue in check(instance) if "cannot be applied" in issue.message]
+
+    assert [issue.location for issue in found] == ["shapes/local"]
+    assert all(issue.severity is Severity.ERROR for issue in found)
+
+
+def test_the_fixture_instance_has_no_local_shapes_and_that_is_ordinary(instance: Path) -> None:
+    assert not (instance / "shapes" / "local").exists()
+    assert validate.read_local_shape_files(instance) == {}
+    assert validate.check_additive({}) == ()
+
+
+REFUSALS = {
+    "shapes/local/b.ttl": "sem:status rdfs:range xsd:integer .",
+    "shapes/local/a.ttl": "shp:Node sh:deactivated true .\nsem:Entity a sh:NodeShape .",
+}
+
+
+def refusal_order() -> str:
+    """Every refusal the two files above produce, in the order they are reported."""
+    files = {name: shapes_from(turtle) for name, turtle in REFUSALS.items()}
+    return "\n".join(str(issue) for issue in validate.check_additive(files))
+
+
+_REFUSAL_ORDER_SCRIPT = """
+import sys
+
+sys.path.insert(0, "tests")
+from test_validate import refusal_order
+
+sys.stdout.write(refusal_order())
+"""
+
+
+def test_refusals_are_reported_in_a_fixed_order() -> None:
+    """CI reads these, so their order is part of them (spec 6.1).
+
+    Refusals are collected in a set — one file can break the rule twice, and two files can
+    break it identically — so without the explicit sort they come out following string
+    hashing. Three issues in a set agree with chance one time in six, which is why this is
+    asserted across processes rather than in one: the same trap the core shapes' own
+    ordering test fell into.
+    """
+    first = _in_a_subprocess(_REFUSAL_ORDER_SCRIPT, "0")
+    second = _in_a_subprocess(_REFUSAL_ORDER_SCRIPT, "12345")
+    third = _in_a_subprocess(_REFUSAL_ORDER_SCRIPT, "98765")
+
+    assert first == second == third
+    # Guards the guard: three identical empty outputs would also pass the line above.
+    assert first.count("\n") == 2
+    assert first.index("a.ttl") < first.rindex("a.ttl") < first.index("b.ttl")
+
+
+def test_refusals_are_reported_once(instance: Path) -> None:
+    for name, turtle in REFUSALS.items():
+        local_shape(instance, Path(name).name, turtle)
+
+    found = additive(instance)
+
+    assert len(found) == len(set(found)) == 3
 
 
 # ------------------------------------------------------------------ the run itself
@@ -923,15 +1442,24 @@ sys.stdout.write("\\n".join(str(issue) for issue in checked(graph)))
 """
 
 
-def _issue_order_in_a_subprocess(hash_seed: str) -> str:
+def _in_a_subprocess(script: str, hash_seed: str) -> str:
+    """Run ``script`` under a given ``PYTHONHASHSEED``.
+
+    Out of process because that is the only way to vary the seed, and the seed is the only
+    way to test a promise about ordering: everything here is collected in sets.
+    """
     completed = subprocess.run(
-        [sys.executable, "-c", _ORDER_SCRIPT],
+        [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         env={**os.environ, "PYTHONHASHSEED": hash_seed},
         check=True,
     )
     return completed.stdout
+
+
+def _issue_order_in_a_subprocess(hash_seed: str) -> str:
+    return _in_a_subprocess(_ORDER_SCRIPT, hash_seed)
 
 
 def test_the_order_is_the_same_on_every_machine() -> None:
