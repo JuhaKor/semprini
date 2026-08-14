@@ -1932,6 +1932,7 @@ done and green.
   instance; re-running init where `namespace.lock` exists refuses; a socket guard
   asserts init makes **no** network calls; the generated tree matches §4.2 exactly.
   **Depends:** F2
+  **Merged — [PR #16](https://github.com/JuhaKor/semprini/pull/16).**
   **Step 3's empty `merges.csv`** is `lifecycle.MergeRegister().save(root)` — the one
   writer of that file, since every row in it is a steward's decision (E1). A missing file
   is a legal empty register, so this is about the tree matching §4.2, not about a run
@@ -1967,6 +1968,19 @@ done and green.
   now deliberately not today's, with a comment saying why, and a second test pins the lock
   with the two versions set to different numbers. Worth writing down because neither test
   looked weak: both asserted a specific value and both were right.
+
+  **Review found four defects, all of them in the templates rather than in the scaffold —
+  the files this repository's suite never executes.** Fixed in the same PR, and the lesson
+  generalizes to every task that ships something into an instance: `compile.yml` failed on
+  any week the compile changed nothing, because `create-pull-request` validates `body-path`
+  before it looks for a commit and no report is written when nothing moved; `validate.yml`
+  never ran on a compile pull request, since GitHub fires no `pull_request` event for one
+  opened with `GITHUB_TOKEN`, so against the protected main `init` recommends its required
+  check could never report; the config template told adopters to set `token_env`, which
+  both bundled adapters refuse outright; and `### Ontology 0.1.0` had been dropped from the
+  changelog. The first two are now a conditional pull request step and a `semprini check`
+  step inside `compile.yml`, both written into §6.2. Final state: **918 tests green, 38
+  mutations, all caught.**
 
   Decisions, for later sessions:
   - **Everything `init` materializes lives inside the package** — `src/semprini/templates/instance/`
