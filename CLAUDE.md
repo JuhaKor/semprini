@@ -46,6 +46,39 @@ The technical account follows underneath — verification, decisions taken, note
 needs. That part is for whoever writes the next task; the summary is for everyone else, and it is
 the part that survives into the repository's history through the PR.
 
+## Mutation batteries — use `tools/mutate.py`, don't write a new script
+
+Every task here is verified by breaking the implementation on purpose and demanding the suite
+notices, because a test looks identical whether or not it is asserting anything. **That runner
+exists and lives in the repository — do not write another one in the scratchpad.** A per-session
+script is thrown away, has to be rebuilt from nothing next time, edits `src/` in place (so an
+interrupted run leaves a broken source file behind), runs one mutation at a time, and sits at a
+path containing a session id, which is why it asks for approval on every invocation.
+
+```bash
+python tools/mutate.py f3_validate --list      # check the anchors only; seconds, no tests run
+python tools/mutate.py f3_validate             # the battery, 8 workers
+python tools/mutate.py f3_validate --rounds 2  # repeat, to defeat a set-ordering fluke
+python tools/mutate.py f3_validate --only sorted
+```
+
+A battery is **data**, one module per task in `tools/mutations/`, defining `TESTS` and
+`MUTATIONS` — `(description, path, old, new)`, where `old` is a verbatim fragment of the file it
+anchors to and must appear in it exactly once. Add the new task's battery as a file there; that
+is the whole cost of keeping it, and it is what lets a later session re-run F3's checks rather
+than take the note in `TASKS.md` on trust.
+
+Two things the runner does that a hand-rolled one usually does not. It copies the tree per worker
+and mutates the copy, so the repository is never edited and mutations run in parallel; and it
+**refuses to start unless each worker proves it imports `semprini` from its own copy**, since the
+virtualenv's `.pth` points at the real `src` and a worker with the wrong `PYTHONPATH` would report
+every mutation as a survivor. `--list` runs first and fails loudly: anchors rot when the code is
+refactored, and `NOT APPLIED` is a finding about the battery, not about the code.
+
+Batteries are **not** in CI, deliberately — they rot by design, and a rotted anchor blocking every
+unrelated PR would get them deleted within a month. They are an on-demand tool for the session
+that writes or refactors the code they anchor to.
+
 ## The `sem:` namespace is registered and live
 
 Spec §11 #1 is **resolved**. `https://w3id.org/semprini/ontology#` resolves: an RDF `Accept` gets the
