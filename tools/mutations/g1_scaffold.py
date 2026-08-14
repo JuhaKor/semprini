@@ -10,6 +10,13 @@ that opens a socket is not a plausible alternative implementation of anything; t
 earns its keep against a later change, not against this code. And the platform-newline
 mutation is written as an explicit CRLF rather than as ``newline=None``, which would fail
 only on Windows and would report a survivor on the CI that runs Linux.
+
+One assertion here is deliberately uncovered: that `compile.yml` validates *before* it
+opens the pull request. Moving one step past another is a single replacement only if the
+anchor spans every line between them — twenty lines of prose comments, which is the kind of
+anchor that rots on the next wording change and teaches a later session to distrust the
+battery. Deleting the step is mutated instead, and the ordering rides along as a cheap
+invariant the test states without the battery proving it bites.
 """
 
 from __future__ import annotations
@@ -20,6 +27,7 @@ SCAFFOLD = "src/semprini/scaffold.py"
 CLI = "src/semprini/cli.py"
 CONFIG_TEMPLATE = "src/semprini/templates/instance/config/semprini.yaml"
 WORKFLOW = "src/semprini/workflows/github/validate.yml"
+COMPILE_WORKFLOW = "src/semprini/workflows/github/compile.yml"
 
 # (description, file, old, new). `old` is a verbatim fragment of the file it anchors to and
 # is never reformatted or rewrapped — a line over the limit is silenced with a per-line
@@ -167,9 +175,33 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "the compile workflow opens a pull request with no report in it",
-        "src/semprini/workflows/github/compile.yml",
+        COMPILE_WORKFLOW,
         "          body-path: generated/.report.md",
         "",
+    ),
+    (
+        "the pull request is opened whether or not a report was written",
+        COMPILE_WORKFLOW,
+        "        if: hashFiles('generated/.report.md') != ''\n",
+        "",
+    ),
+    (
+        "the compile output is proposed without being validated",
+        COMPILE_WORKFLOW,
+        "      - run: semprini check --base ${{ github.sha }}",
+        "",
+    ),
+    (
+        "the config template shows a credential setting no adapter accepts",
+        CONFIG_TEMPLATE,
+        "# Credentials are NEVER written into this file.",
+        "# Credentials are NEVER written into this file. Name one: `token_env: MY_API_TOKEN`.",
+    ),
+    (
+        "the printed next steps show the same setting",
+        SCAFFOLD,
+        """                "No credentials are needed: every adapter this version ships reads files that",""",  # noqa: E501
+        """                "Add 'token_env: MY_API_TOKEN' to each source, and a secret of that name.",""",  # noqa: E501
     ),
     (
         "the workflows install the latest plane version rather than this one",

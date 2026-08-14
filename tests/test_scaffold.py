@@ -12,7 +12,9 @@ from __future__ import annotations
 import datetime
 import re
 import socket
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 import pytest
 import yaml
@@ -269,6 +271,75 @@ def test_the_compile_workflow_opens_a_pull_request_carrying_the_report(
 
     assert "body-path: generated/.report.md" in text
     assert "branch: compile/" in text
+
+
+Step = dict[str, Any]
+
+
+def compile_steps(root: Path) -> list[Step]:
+    document = yaml.safe_load(
+        (root / ".github" / "workflows" / "compile.yml").read_text(encoding="utf-8")
+    )
+    steps: list[Step] = document["jobs"]["compile"]["steps"]
+    return steps
+
+
+def step_index(steps: list[Step], predicate: Callable[[Step], bool]) -> int:
+    return next(index for index, step in enumerate(steps) if predicate(step))
+
+
+def test_the_compile_workflow_guards_the_report_it_describes_itself_with(
+    bootstrapped: Path,
+) -> None:
+    """A run that changed nothing writes no report (spec 5.6), and create-pull-request
+    rejects a `body-path` naming a file that is not there — a check it makes on every
+    invocation, before it looks for a commit to open a pull request for. Ungated, the weeks
+    where nothing moved are the ones the scheduled job fails on."""
+    steps = compile_steps(bootstrapped)
+    (opener,) = [step for step in steps if "create-pull-request" in step.get("uses", "")]
+
+    assert opener["with"]["body-path"] in opener["if"]
+
+
+def test_the_compile_workflow_validates_what_it_is_about_to_propose(
+    bootstrapped: Path,
+) -> None:
+    """GitHub fires no `pull_request` event for a pull request opened with GITHUB_TOKEN,
+    so validate.yml never runs on a compile PR — and against the protected main that
+    `init` tells an adopter to set up, its required check would never report. Without this
+    step the compiler's own output is the one diff in an instance nobody validated (6.2).
+    """
+    steps = compile_steps(bootstrapped)
+
+    checked = step_index(steps, lambda step: step.get("run", "").startswith("semprini check"))
+    proposed = step_index(steps, lambda step: "create-pull-request" in step.get("uses", ""))
+    # A check after the pull request is opened validates nothing anyone is waiting on.
+    assert checked < proposed
+
+
+def test_nothing_it_writes_advertises_a_setting_every_adapter_refuses(
+    bootstrapped: Path,
+) -> None:
+    """`token_env` configures nothing today: both bundled adapters read files that are
+    already in the repository, and each rejects the key rather than accept a credential it
+    would never reach for. An adopter who copies guidance setting it meets exit code 2 on
+    their first run, so no template, README, workflow or printed next step may show it
+    being assigned until an adapter that calls an API ships.
+
+    The assignment form is what is banned, not the name: saying that the key is refused is
+    exactly what these files should do, and `token_env: SOMETHING` is the copyable line
+    that turns that into a first run nobody can complete."""
+    written = [path for path in sorted(bootstrapped.rglob("*")) if path.is_file()]
+    documents = [path for path in written if path.suffix in {".yaml", ".yml", ".md"}]
+    assert documents  # the glob finding nothing would pass every assertion below
+
+    for path in documents:
+        assert "token_env:" not in path.read_text(encoding="utf-8"), path
+
+    rendered = scaffold.create(
+        bootstrapped.parent / "other", base_iri=BASE_IRI, org=ORG, today=TODAY
+    )
+    assert not any("token_env:" in line for line in rendered.summary())
 
 
 def test_the_local_shapes_readme_names_every_refusal(bootstrapped: Path) -> None:

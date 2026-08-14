@@ -254,6 +254,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   requests are steps it prints rather than performs.
 - A source tree cannot bootstrap an instance: the scaffold pins the plane version in two
   workflows and in a manifest, and `0.0.0+source` identifies no release (§4.3, §7).
+- **The scheduled compile stays quiet when nothing moved, and validates itself when
+  something did.** A week with no changes writes no report and now opens no pull request
+  instead of failing on the missing file. And because GitHub fires no `pull_request` event
+  for a pull request opened with `GITHUB_TOKEN`, `validate.yml` never runs on a compile
+  PR — so `compile.yml` runs `semprini check` itself, before proposing anything. On a main
+  protected the way `init` recommends, an instance that wants the required check to report
+  on the pull request itself gives the action a PAT or app token instead.
+
+### Ontology 0.1.0
 
 #### Added
 

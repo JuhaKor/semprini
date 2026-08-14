@@ -32,17 +32,33 @@ jobs:
       - run: pip install semprini==%%version%%
 
       - run: semprini run
-        # Credentials reach the compiler as environment variables, named by each source's
-        # `token_env` in config/semprini.yaml — never written into that file. Add one line
-        # per configured source, and the matching repository secret:
+        # No adapter shipped with this version needs a credential: both read files already
+        # in the repository. When one that calls an API does, it will name an environment
+        # variable in config/semprini.yaml — never the value — and this step gains one line
+        # per source pointing that name at a repository secret:
         #
         # env:
-        #   ELLIE_API_TOKEN: ${{ secrets.ELLIE_API_TOKEN }}
+        #   SOME_API_TOKEN: ${{ secrets.SOME_API_TOKEN }}
+
+      # The compile PR is opened with GITHUB_TOKEN, and GitHub fires no `pull_request`
+      # event for those — so validate.yml does not run on it, and on a protected main the
+      # required check would never report. Running the same command here is what keeps the
+      # compiler's own output from being the one diff in this instance nobody validated.
+      # Give create-pull-request a PAT or app token instead if you would rather the check
+      # run on the pull request itself; then this step is redundant and can go.
+      #
+      # `--base` is the commit this run started from: nothing has been committed yet, so
+      # that is exactly the ID map as it stood before the compile (spec 6.1 check 6).
+      - run: semprini check --base ${{ github.sha }}
 
       - id: date
         run: echo "value=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - uses: peter-evans/create-pull-request@v7
+        # A run that changed nothing writes no report, and the action rejects a `body-path`
+        # naming a file that is not there — before it looks for a commit to open a PR for.
+        # Without this guard the quiet weeks are the ones that go red.
+        if: hashFiles('generated/.report.md') != ''
         with:
           branch: compile/${{ steps.date.outputs.value }}
           title: "Compile ${{ steps.date.outputs.value }}"

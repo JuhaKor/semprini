@@ -1,8 +1,10 @@
 # This instance's configuration (Semprini spec 5.1).
 #
-# Credentials are NEVER written into this file. A source names an environment variable —
-# `token_env: ELLIE_API_TOKEN` — and the value is read from the environment at fetch time;
-# a token pasted in here is refused with exit code 2, before anything is fetched.
+# Credentials are NEVER written into this file. No adapter shipped with this version asks
+# for one — both read files already in the repository, and `token_env` on either is exit
+# code 2 rather than a setting that quietly does nothing. When an adapter that calls an API
+# arrives, a source will name an environment variable and the value will be read from the
+# environment at fetch time; a token pasted in here is refused before anything is fetched.
 #
 # An unknown key is an error rather than an extra, so a misspelling fails the run instead
 # of quietly doing something else.

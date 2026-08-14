@@ -1407,9 +1407,15 @@ Each instance has two workflows, both thin:
   a single-commit checkout, which is several CI platforms' default, silently turns the
   append-only comparison off — or passes `--base` explicitly.
 - **`compile.yml`** — on a schedule and on manual dispatch: install the pinned plane
-  version, run `semprini run`, and if `generated/` or `mappings/` changed, open a PR (branch
-  `compile/<date>`) with `generated/.report.md` as the description. It never pushes to
-  main.
+  version, run `semprini run`, run `semprini check` on what it produced, and if `generated/`
+  or `mappings/` changed, open a PR (branch `compile/<date>`) with `generated/.report.md` as
+  the description. It never pushes to main. Two consequences of the platform, not of the
+  design: a run that changed nothing writes no report (§5.6), so the PR step is conditional
+  on that file existing rather than allowed to fail on its absence; and where the CI
+  platform fires no pull-request event for a PR its own token opened — GitHub does not —
+  `validate.yml` does not run on a compile PR, which is why `compile.yml` validates before
+  it proposes. An instance that gives the PR step a credential of its own gets the check on
+  the PR itself and may drop the step.
 
 Branch protection on an instance's main: PRs only, validation must pass, at least one
 review.

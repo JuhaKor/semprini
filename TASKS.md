@@ -2017,7 +2017,14 @@ done and green.
     it names a branch rather than checking anything, but a guard written as "install, run,
     open a PR, nothing else" will see it. The alternative, `gh pr create` in a `run:` block,
     is more logic in YAML and no third-party action; the trade was made for fewer lines,
-    not for fewer dependencies.
+    not for fewer dependencies. **Two more things for that guard to judge**, both added
+    after review: the `if: hashFiles('generated/.report.md') != ''` guarding the pull
+    request step, and a `semprini check --base ${{ github.sha }}` step before it. The first
+    is unavoidable — create-pull-request validates `body-path` on every invocation, so
+    without it the weeks where nothing changed are the weeks the job fails. The second is
+    there because a pull request opened with `GITHUB_TOKEN` fires no `pull_request` event,
+    so `validate.yml` never runs on a compile PR and its required check never reports; both
+    go away for an instance that gives the action a PAT, and the file says so.
   - `semprini init` does **not** run `git init` and creates no remote (§11 #8, resolved).
     Both are printed as next steps, along with branch protection and the Actions setting
     that lets the scheduled compile open a pull request at all — which is the kind of thing
