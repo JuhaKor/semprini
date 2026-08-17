@@ -2258,6 +2258,9 @@ done and green.
   existing objects and never drop ID-map rows (asserted, not assumed); post-migration
   `semprini check` passes including drift.
   **Depends:** F2
+  **Merged — [PR #18](https://github.com/JuhaKor/semprini/pull/18).** CI green on 3.12 and 3.14
+  and on the wheel job; 3.12 is the supported floor and cannot be checked on the development
+  machine, so the runner is the only place this package has been exercised on it.
   **Done.** 1015 tests green (61 of them G3's); ruff, ruff format and mypy (strict) clean; the
   wheel still installs into a bare venv with pip and `semprini migrate` runs from it. Forty-five
   mutations were checked against the suite, over two rounds — the snapshot taken after the steps
