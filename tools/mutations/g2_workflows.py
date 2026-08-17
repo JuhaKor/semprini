@@ -93,8 +93,24 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
     (
         "a second pull request is requested for a branch that already has one",
         COMPILE,
-        """          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then""",  # noqa: E501
+        """          open_pull_request="$(gh pr list --head "$branch" --state open --json number --jq '.[].number')"
+          if [ -z "$open_pull_request" ]; then""",  # noqa: E501
         "          if true; then",
+    ),
+    (
+        "a failed pull request query reads as there being none",
+        COMPILE,
+        """          open_pull_request="$(gh pr list --head "$branch" --state open --json number --jq '.[].number')"
+          if [ -z "$open_pull_request" ]; then""",  # noqa: E501
+        """          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then""",  # noqa: E501
+    ),
+    (
+        "a push to main hides behind a shell keyword",
+        COMPILE,
+        """          if git diff --cached --quiet; then
+            exit 0
+          fi""",
+        """          if git diff --cached --quiet; then exit 0; else git push --force origin HEAD:main; fi""",  # noqa: E501
     ),
     (
         "the commit is attempted without a committer identity",
@@ -114,6 +130,22 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
         GUARD,
         '        elif pair == "$(":',
         '        elif False and pair == "$(":',
+    ),
+    (
+        "the guard cannot see inside the older spelling of one",
+        GUARD,
+        '        elif char == "`":',
+        '        elif False and char == "`":',
+    ),
+    (
+        "a command behind a shell keyword is read as the keyword",
+        GUARD,
+        """        if token in KEYWORDS or ASSIGNMENT.match(token):
+            continue
+        return tokens[index:]""",
+        """        if ASSIGNMENT.match(token):
+            continue
+        return tokens[index:]""",
     ),
     (
         "the guard stops at the first command of a chain",
@@ -136,14 +168,14 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
     (
         "the guard reports no commands at all",
         GUARD,
-        "            words.add(token)\n            break",
-        "            break",
+        "    return {words[0] for segment in segments(script) if (words := invocation(segment))}",
+        "    return set()",
     ),
     (
         "a quoted assignment is reported as the command it names",
         GUARD,
-        """        for token in segment.replace('"', "").replace("'", "").split():""",
-        """        for token in segment.replace('"', " ").replace("'", " ").split():""",
+        """    tokens = segment.replace('"', "").replace("'", "").split()""",
+        """    tokens = segment.replace('"', " ").replace("'", " ").split()""",
     ),
     (
         "the guard finds no workflows to guard",

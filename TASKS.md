@@ -2117,15 +2117,16 @@ done and green.
   `WORKFLOW_PLATFORM` are untouched.
 
   **Done so far — the replacement and the guard have landed; the scratch run has not.**
-  943 tests green (25 of them the guard's); ruff, ruff format and mypy (strict) clean.
-  Eighteen mutations were checked against the suite, twice — a third-party action back in a
-  shipped workflow, an action floating on a branch rather than a pinned major, a second tool
-  reading `generated/` in the pull request step, a python one-liner deciding whether to
+  947 tests green (29 of them the guard's); ruff, ruff format and mypy (strict) clean.
+  Twenty-two mutations were checked against the suite, twice — a third-party action back in
+  a shipped workflow, an action floating on a branch rather than a pinned major, a second
+  tool reading `generated/` in the pull request step, a python one-liner deciding whether to
   propose, a step that neither installs the plane nor invokes it, a push straight to main,
-  an empty staging area left to fail, a second dispatch in one day left to fail on the push,
-  a second pull request requested for a branch that already has one, a commit attempted with
-  no committer identity, a shell syntax error, and seven against the guard's own shell
-  reader — and each fails it.
+  a push to main hidden behind a shell keyword, an empty staging area left to fail, a second
+  dispatch in one day left to fail on the push, a second pull request requested for a branch
+  that already has one, a failed pull request query read as there being none, a commit
+  attempted with no committer identity, a shell syntax error, and nine against the guard's
+  own shell reader — and each fails it.
   - **`compile.yml` now opens its pull request with `git` and `gh`**, in one step of roughly
     twenty lines. `peter-evans/create-pull-request` is gone, and with it the project's only
     dependency on a repository nobody here controls. Three of those lines exist for what the
@@ -2156,6 +2157,32 @@ done and green.
     §6.2 gained the dispatched-twice-in-one-day case beside the empty-staging-area one.
   - G1's battery had one anchor in `compile.yml` (`body-path:`) and it was updated in the
     same change; both batteries are green.
+
+  **Review found six issues; all are fixed**, with a test and a mutation each. Two were in
+  the guard itself, which is worse than a defect in the workflow would have been — a guard
+  that passes everything looks exactly like one that works:
+  - **A push to `main` behind any shell keyword was invisible.** The protected-branch test
+    read a segment's raw words while the command extractor stepped over keywords and
+    assignments, so `if ...; then git push --force origin HEAD:main; fi` produced a segment
+    beginning `then`: the assertion skipped it, and the allowlist test saw only `git`. Both
+    readers now go through one `invocation()`. Two readers of the same text, one of which
+    normalizes it, was one reader too many.
+  - **Backtick command substitution was a fourth way in.** The module enumerated the ways a
+    second tool could reach a runner without being the first word on a line, and listed
+    three; `` git commit -m `curl ...` `` reported only `git`.
+
+  The rest were narrower. The action pattern accepted only `@vN`, so pinning to a commit
+  SHA — the stronger pin, and the answer to the moving-tag problem that removed the
+  third-party action in the first place — would have failed the rule meant to encourage it.
+  `gh pr list` was tested inline inside `[ -z ... ]`, where `set -e` cannot see it fail, so
+  an API blip read as "no pull request is open" and would have been answered with a
+  duplicate `gh pr create`; the query is captured on its own line now. And two comments
+  claimed more than they delivered: `if: hashFiles('generated/.report.md')` stops doing
+  anything once the first compile pull request merges — the report is a tracked file from
+  then on, and the empty-staging check is what keeps the quiet weeks green — and the force
+  push silently discards a commit a steward pushed onto a compile branch by hand. Both now
+  say so, and `compile.yml` gained a `concurrency:` group, since two runs racing for one
+  dated branch would force-push over each other.
 
   **Remaining: the scratch instance run**, which is what makes this task's verification real
   rather than textual — `permissions:`, `GH_TOKEN` against the live API, and the repository

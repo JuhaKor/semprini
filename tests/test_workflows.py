@@ -51,8 +51,10 @@ KEYWORDS = frozenset(
     {"if", "then", "elif", "else", "fi", "while", "until", "do", "done", "case", "esac", "!"}
 )
 
-ACTION = re.compile(r"^actions/[a-z0-9-]+@v\d+$")
-"""A first-party action, pinned to a major version. Spec 6.3 forbids any other."""
+ACTION = re.compile(r"^actions/[a-z0-9-]+@(v\d+|[0-9a-f]{40})$")
+"""A first-party action, pinned to a major version or to a commit. Spec 6.3 forbids any
+other. The commit form is the stronger pin and the answer to the moving-tag problem that
+removed the third-party action, so the rule must not be the thing standing in its way."""
 
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
@@ -87,8 +89,9 @@ def segments(script: str) -> list[str]:
     """Split a shell script at every point a new command can begin.
 
     Not a shell parser, and not trying to be one: it tracks quoting far enough to see a
-    command substitution — including one inside double quotes, which is where a second tool
-    would hide most easily — and treats `;`, `|`, `&`, parentheses and newlines as breaks.
+    command substitution in either spelling — including one inside double quotes, which is
+    where a second tool would hide most easily — and treats `;`, `|`, `&`, parentheses and
+    newlines as breaks.
     A line continued with a backslash is joined, since that is one command; a comment is
     dropped here rather than downstream, because prose that happens to contain a semicolon
     would otherwise arrive as a command nobody wrote.
@@ -113,6 +116,10 @@ def segments(script: str) -> list[str]:
         elif pair == "$(":
             flush()
             index += 2
+        elif char == "`":
+            # The older spelling of the same thing, and active inside double quotes too.
+            flush()
+            index += 1
         elif char == '"':
             quote = None if quote == '"' else '"'
             current.append(char)
@@ -138,23 +145,30 @@ def segments(script: str) -> list[str]:
     return [segment for segment in found if segment.strip()]
 
 
-def command_words(script: str) -> set[str]:
-    """Every command this script invokes.
+def invocation(segment: str) -> list[str]:
+    """The command a segment runs, and its arguments.
 
     A leading keyword or variable assignment is stepped over and whatever comes next is the
     command. Quotes are removed rather than treated as boundaries, so that a quoted
     assignment stays one word — `branch="compile/$today"` runs nothing. Erring towards
-    *more* words than the shell would actually run is the safe direction for a rule about
-    what may execute in an adopter's repository.
+    *more* commands than the shell would actually run is the safe direction for a rule
+    about what may execute in an adopter's repository.
+
+    Every reader of a segment goes through here. A caller that looked at the raw words
+    instead would see `then git push ...` and not recognize the push, which is exactly how
+    a rule about what may run gets bypassed by a line someone reformatted.
     """
-    words: set[str] = set()
-    for segment in segments(script):
-        for token in segment.replace('"', "").replace("'", "").split():
-            if token in KEYWORDS or ASSIGNMENT.match(token):
-                continue
-            words.add(token)
-            break
-    return words
+    tokens = segment.replace('"', "").replace("'", "").split()
+    for index, token in enumerate(tokens):
+        if token in KEYWORDS or ASSIGNMENT.match(token):
+            continue
+        return tokens[index:]
+    return []
+
+
+def command_words(script: str) -> set[str]:
+    """Every command this script invokes."""
+    return {words[0] for segment in segments(script) if (words := invocation(segment))}
 
 
 def opens_a_pull_request(platform: str, step: Step) -> bool:
@@ -238,9 +252,9 @@ def test_no_workflow_pushes_to_a_protected_branch(platform: str, path: Path) -> 
     created and proposes it, which is what leaves a steward the review."""
     for step in steps(path):
         for segment in segments(step.get("run", "")):
-            words = segment.split()
+            words = invocation(segment)
             if words[:2] == ["git", "push"]:
-                assert '"$branch"' in words, segment
+                assert "$branch" in words, segment
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="no shell to parse with")
@@ -269,9 +283,11 @@ def test_the_pull_request_step_is_a_script_a_shell_can_parse(platform: str, path
     [
         ("semprini run", {"semprini"}),
         ("pip install semprini==0.1.0", {"pip"}),
-        # The three ways a second tool could reach a runner without being the first word on
-        # a line. A guard that missed any of them would pass the workflow that used it.
+        # The ways a second tool could reach a runner without being the first word on a
+        # line. A guard that missed any of them would pass the workflow that used it.
         ('today="$(curl https://example.invalid)"', {"curl"}),
+        ("git commit -m `curl https://example.invalid`", {"git", "curl"}),
+        ("if git diff --quiet; then curl https://example.invalid; fi", {"git", "curl"}),
         ("git add generated && jq . generated/.manifest.json", {"git", "jq"}),
         ("gh pr create \\\n  --body-file generated/.report.md", {"gh"}),
         ("if git diff --cached --quiet; then\n  exit 0\nfi", {"git", "exit"}),

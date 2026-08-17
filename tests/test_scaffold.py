@@ -315,7 +315,10 @@ def test_the_compile_workflow_survives_being_dispatched_twice_in_one_day(
     (opener,) = [step for step in compile_steps(bootstrapped) if proposes(step)]
 
     assert "git push --force" in opener["run"]
-    assert "gh pr list" in opener["run"]
+    # Captured, not tested inline: `set -e` cannot see a command substitution that fails
+    # inside `[ -z ... ]`, so a transient API error and "there is no pull request" would be
+    # the same empty string, and the answer to a blip would be a duplicate `gh pr create`.
+    assert 'open_pull_request="$(gh pr list' in opener["run"]
 
 
 def test_the_compile_workflow_gives_the_commit_an_author(bootstrapped: Path) -> None:
