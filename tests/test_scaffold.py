@@ -333,9 +333,9 @@ def test_the_compile_workflow_gives_the_commit_an_author(bootstrapped: Path) -> 
 def test_the_compile_workflow_validates_what_it_is_about_to_propose(
     bootstrapped: Path,
 ) -> None:
-    """GitHub fires no `pull_request` event for a pull request opened with GITHUB_TOKEN,
-    so validate.yml never runs on a compile PR — and against the protected main that
-    `init` tells an adopter to set up, its required check would never report. Without this
+    """GitHub does not run a workflow on a pull request opened with GITHUB_TOKEN: the
+    `pull_request` run is created and parked as `action_required` with no jobs, so on a
+    compile PR `validate.yml` is a pending check rather than a passing one. Without this
     step the compiler's own output is the one diff in an instance nobody validated (6.2).
     """
     steps = compile_steps(bootstrapped)

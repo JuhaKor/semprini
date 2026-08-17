@@ -2184,17 +2184,52 @@ done and green.
   say so, and `compile.yml` gained a `concurrency:` group, since two runs racing for one
   dated branch would force-push over each other.
 
-  **Remaining: the scratch instance run**, which is what makes this task's verification real
-  rather than textual — `permissions:`, `GH_TOKEN` against the live API, and the repository
-  setting that lets Actions open a pull request at all, none of which any test here can
-  reach. It also puts a report through a real pull request body, which C2 escapes pipes and
-  newlines for and nothing has ever checked end to end. Steps, for whoever runs it:
-  bootstrap `juhakor/semprini-scratch-instance` from this branch's wheel, substitute the
-  pinned `git+https://github.com/JuhaKor/semprini@<sha>` install for
-  `pip install semprini==%%version%%` (§11 #3 — the real line stays untested until G5),
-  commit a source that produces a change, dispatch `compile`, and confirm the pull request
-  carries the report. Then dispatch it a second time the same day and confirm it updates
-  that pull request rather than failing.
+  **The scratch instance run — done, on `JuhaKor/semprini-scratch-instance`.** Bootstrapped
+  by `semprini init` from this branch's wheel, with the two synthetic sources of
+  `tests/fixtures/acme/` and the pinned `pip install semprini==0.1.0` substituted for
+  `pip install git+https://github.com/JuhaKor/semprini@710777a`, since nothing is published
+  yet (§11 #3). **The real install line therefore remains untested until G5** — say so, do
+  not imply it was covered. The guard was run against the substituted files as well, since
+  the claim that the substitution keeps them legal is about a file this suite never sees.
+  What the runner established that no test here can:
+  1. **The pull request opens, and its body is the report byte for byte** — 2787 bytes,
+     compared against `generated/.report.md` on the branch. C2's pipe and newline escaping
+     survives a real pull request body, which nothing had ever checked. The first compile
+     proposed 46 new nodes across three Turtle files plus the ID map.
+  2. **A `permissions:` block escalates over a read-only default.** The repository's
+     `default_workflow_permissions` is `read`; the workflow asks for `contents: write` and
+     `pull-requests: write` and gets them, so an adopter does not have to change that
+     setting. The one they do have to change is
+     `can_approve_pull_request_reviews`, which `init` already prints.
+  3. **The re-dispatch path works as designed.** A second dispatch the same day force-pushed
+     (`+ d70c4dd...773c8b8 (forced update)`) and found the open pull request, so it updated
+     it in place and asked for no second one.
+  4. **A no-op compile is green and silent.** After merging the first pull request, a third
+     dispatch changed nothing, exited at the empty staging area and opened nothing — the
+     case that was *red* before G1's review. It also confirmed this task's own finding 5:
+     the step was **not** skipped, because `generated/.report.md` is a committed file from
+     the first merge onward, so `if: hashFiles(...)` is true and the staging check is the
+     only thing keeping quiet weeks green.
+  5. **Check 6 resolves on the default shallow checkout.** `semprini check --base
+     ${{ github.sha }}` inside `compile.yml` reported `6. identity: ok` rather than "not
+     run", so only `validate.yml` needs `fetch-depth: 0`.
+  6. **The output is byte-identical across platforms.** The runner's `generated/` was
+     recompiled on this Windows machine and `git status` came back empty — §5.5 rule 5's
+     claim, checked end to end for the first time. And 3.12, the supported floor, is what
+     the runner used; this machine has only 3.14.
+
+  **One spec claim was wrong, and the scratch run is what caught it.** §6.2, `compile.yml`'s
+  comment, the CHANGELOG and a test docstring all said GitHub *fires no `pull_request`
+  event* for a pull request its own token opened. It does fire one: the run is created with
+  actor `github-actions[bot]` and parked, `conclusion: action_required`, with **no jobs** —
+  run `32021357478` on the scratch instance. The conclusion built on it is unchanged and
+  better supported: `validate.yml` does not report on a compile pull request, so
+  `compile.yml` validates before it proposes. But what a steward sees on that pull request
+  is a check that is **pending**, not one that is missing, and all four places now say so.
+  **Not yet measured:** whether a pending `action_required` check blocks the merge where
+  `validate` is a required check. That needs branch protection on the scratch instance, and
+  it is the one thing left before this box is ticked. Do not write the merge-blocking claim
+  down until it has been run.
 
 - [ ] **G3 · Versioning, drift and migrations**
   **Spec:** §7

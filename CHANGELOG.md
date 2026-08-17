@@ -256,11 +256,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   workflows and in a manifest, and `0.0.0+source` identifies no release (§4.3, §7).
 - **The scheduled compile stays quiet when nothing moved, and validates itself when
   something did.** A week with no changes writes no report and now opens no pull request
-  instead of failing on the missing file. And because GitHub fires no `pull_request` event
-  for a pull request opened with `GITHUB_TOKEN`, `validate.yml` never runs on a compile
-  PR — so `compile.yml` runs `semprini check` itself, before proposing anything. On a main
-  protected the way `init` recommends, an instance that wants the required check to report
-  on the pull request itself gives the pull-request step a PAT or app token instead.
+  instead of failing on the missing file. And because GitHub does not run a workflow on a
+  pull request opened with `GITHUB_TOKEN` — it creates the `pull_request` run and parks it
+  as `action_required` with no jobs, so the check is pending rather than absent —
+  `compile.yml` runs `semprini check` itself, before proposing anything. On a main
+  protected the way `init` recommends, an instance that wants the check to run on the pull
+  request itself gives the pull-request step a PAT or app token instead.
 - **No third-party CI action ships into an instance** (§6.3). The scheduled compile opens
   its pull request with `git` and GitHub's own `gh`, not with
   `peter-evans/create-pull-request` — the only dependency this project had on a repository

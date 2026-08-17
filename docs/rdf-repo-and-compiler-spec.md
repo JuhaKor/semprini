@@ -1414,11 +1414,16 @@ Each instance has two workflows, both thin:
   so the PR step is conditional on that file existing rather than allowed to fail on its
   absence, and must tolerate an empty staging area; the branch is named after the date, so a
   workflow dispatched twice in one day meets its own branch and its own open PR, and updates
-  both rather than failing; and where the CI platform fires no
-  pull-request event for a PR its own token opened — GitHub does not —
-  `validate.yml` does not run on a compile PR, which is why `compile.yml` validates before
-  it proposes. An instance that gives the PR step a credential of its own gets the check on
-  the PR itself and may drop the step.
+  both rather than failing; and a CI platform will not run a workflow on a PR its own token
+  opened, so `validate.yml` does not report on a compile PR, which is why `compile.yml`
+  validates before it proposes.
+
+  On GitHub the mechanism is not the one usually described. The `pull_request` run **is**
+  created — measured on a scratch instance, actor `github-actions[bot]` — and is parked with
+  conclusion `action_required` and no jobs, rather than never existing. A compile PR
+  therefore carries a check that is present and pending rather than absent, which is what a
+  steward sees on it. An instance that gives the PR step a credential of its own gets the
+  check run on the PR itself and may drop the step.
 
 Branch protection on an instance's main: PRs only, validation must pass, at least one
 review.
