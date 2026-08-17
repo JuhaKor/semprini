@@ -44,29 +44,55 @@ jobs:
       # event for those — so validate.yml does not run on it, and on a protected main the
       # required check would never report. Running the same command here is what keeps the
       # compiler's own output from being the one diff in this instance nobody validated.
-      # Give create-pull-request a PAT or app token instead if you would rather the check
-      # run on the pull request itself; then this step is redundant and can go.
+      # Give the step below a PAT or app token instead if you would rather the check run on
+      # the pull request itself; then this step is redundant and can go.
       #
       # `--base` is the commit this run started from: nothing has been committed yet, so
       # that is exactly the ID map as it stood before the compile (spec 6.1 check 6).
       - run: semprini check --base ${{ github.sha }}
 
-      - id: date
-        run: echo "value=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
-
-      - uses: peter-evans/create-pull-request@v7
-        # A run that changed nothing writes no report, and the action rejects a `body-path`
-        # naming a file that is not there — before it looks for a commit to open a PR for.
-        # Without this guard the quiet weeks are the ones that go red.
+      # The one platform-specific step, and the only shell in either workflow (spec 6.3).
+      # It uses git and GitHub's own CLI rather than a third-party action: a shipped
+      # workflow runs in every instance with write access to that organization's graph, and
+      # an action referenced by a moving tag is code that changes without a diff anyone
+      # reviews. Three of these lines are not obvious, and each is commented below.
+      - name: Open a pull request
+        # A run that changed nothing writes no report (spec 5.6), and the report is what
+        # describes the pull request. Ungated, the quiet weeks are the ones the scheduled
+        # job goes red on.
         if: hashFiles('generated/.report.md') != ''
-        with:
-          branch: compile/${{ steps.date.outputs.value }}
-          title: "Compile ${{ steps.date.outputs.value }}"
-          # The run's own report is the description: what is new, what changed, what was
-          # deprecated, and which warnings were raised. A run that changed nothing does not
-          # rewrite it — and produces no commit, so no pull request is opened either.
-          body-path: generated/.report.md
-          commit-message: "Compile ${{ steps.date.outputs.value }}"
-          add-paths: |
-            generated
-            mappings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Handed to the shell as data rather than pasted into the script: a `${{ }}`
+          # expression is substituted before the shell ever parses the line.
+          BASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          today="$(date -u +%Y-%m-%d)"
+          branch="compile/$today"
+
+          # A runner has no committer identity of its own and `git commit` refuses without
+          # one. This is the account the run is already acting as.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git switch --create "$branch"
+          git add generated mappings
+
+          # Nothing staged means the compile changed nothing after all: no commit, no pull
+          # request, and a green run rather than a failed one.
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+
+          git commit --message "Compile $today"
+          # Dispatched a second time on one day, the branch is already on the remote and
+          # its pull request is open; force-pushing updates that pull request in place.
+          git push --force origin "$branch"
+
+          # ...and asking for a second pull request on the same branch is an error, so ask
+          # only when there is none.
+          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base "$BASE_BRANCH" --head "$branch" \
+              --title "Compile $today" --body-file generated/.report.md
+          fi

@@ -2116,8 +2116,58 @@ done and green.
   `gitlab/` that is not there. G2 therefore adds no platform: `WORKFLOW_DIRS` and
   `WORKFLOW_PLATFORM` are untouched.
 
-  **The workflow files still carry the action** — this entry is the decision, not the
-  change. G2's first commit is the replacement plus the guard.
+  **Done so far — the replacement and the guard have landed; the scratch run has not.**
+  943 tests green (25 of them the guard's); ruff, ruff format and mypy (strict) clean.
+  Eighteen mutations were checked against the suite, twice — a third-party action back in a
+  shipped workflow, an action floating on a branch rather than a pinned major, a second tool
+  reading `generated/` in the pull request step, a python one-liner deciding whether to
+  propose, a step that neither installs the plane nor invokes it, a push straight to main,
+  an empty staging area left to fail, a second dispatch in one day left to fail on the push,
+  a second pull request requested for a branch that already has one, a commit attempted with
+  no committer identity, a shell syntax error, and seven against the guard's own shell
+  reader — and each fails it.
+  - **`compile.yml` now opens its pull request with `git` and `gh`**, in one step of roughly
+    twenty lines. `peter-evans/create-pull-request` is gone, and with it the project's only
+    dependency on a repository nobody here controls. Three of those lines exist for what the
+    action did invisibly, and each has both a test and a mutation: an empty staging area
+    (`git diff --cached --quiet`), a runner with no committer identity (`git config user.*`),
+    and a workflow dispatched twice in one day, which meets its own branch and its own open
+    pull request (`git push --force` plus a `gh pr list` check).
+  - **The §6.3 guard is `tests/test_workflows.py`**, and it reads the shipped templates
+    rather than a bootstrapped instance — so a platform directory added by a later port is
+    guarded by the fact of existing. `PLATFORM_CLI` there is the second half of
+    `scaffold.WORKFLOW_DIRS`'s seam: a `gitlab/` directory must name `glab` or the guard
+    fails, rather than silently being held to GitHub's CLI.
+  - **The guard has its own tests, and they are the load-bearing ones.** It works by
+    extracting every command word from a `run:` block, and an extractor that quietly
+    returned nothing would pass every workflow ever written while looking identical from the
+    test names. `test_the_guard_sees_the_command_in` pins the ways a second tool could reach
+    a runner without being the first word on a line — inside `$(...)`, inside double quotes,
+    after `&&`, past a line continuation — and the two ways the guard could report a command
+    nobody wrote, which is what would get it worked around later. Seven of the eighteen
+    mutations are aimed there.
+  - **`bash -n` parses the pull request step in the suite.** This is the one place in the
+    project where shell ships to somebody else, nothing here executes it, and an adopter
+    meets a missing `fi` as a red job weeks later. The test skips where no shell is
+    installed, which is worth knowing before reading a survivor in that battery.
+  - **Two spec edits**, both because the code now enforces them: §6.3 admits `date` in the
+    pull-request step — the `compile/<date>` branch name of §6.2 requires one and no CI
+    platform provides it — and says the rule is mechanically enforced by the plane's suite;
+    §6.2 gained the dispatched-twice-in-one-day case beside the empty-staging-area one.
+  - G1's battery had one anchor in `compile.yml` (`body-path:`) and it was updated in the
+    same change; both batteries are green.
+
+  **Remaining: the scratch instance run**, which is what makes this task's verification real
+  rather than textual — `permissions:`, `GH_TOKEN` against the live API, and the repository
+  setting that lets Actions open a pull request at all, none of which any test here can
+  reach. It also puts a report through a real pull request body, which C2 escapes pipes and
+  newlines for and nothing has ever checked end to end. Steps, for whoever runs it:
+  bootstrap `juhakor/semprini-scratch-instance` from this branch's wheel, substitute the
+  pinned `git+https://github.com/JuhaKor/semprini@<sha>` install for
+  `pip install semprini==%%version%%` (§11 #3 — the real line stays untested until G5),
+  commit a source that produces a change, dispatch `compile`, and confirm the pull request
+  carries the report. Then dispatch it a second time the same day and confirm it updates
+  that pull request rather than failing.
 
 - [ ] **G3 · Versioning, drift and migrations**
   **Spec:** §7

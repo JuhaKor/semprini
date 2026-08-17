@@ -260,7 +260,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   for a pull request opened with `GITHUB_TOKEN`, `validate.yml` never runs on a compile
   PR — so `compile.yml` runs `semprini check` itself, before proposing anything. On a main
   protected the way `init` recommends, an instance that wants the required check to report
-  on the pull request itself gives the action a PAT or app token instead.
+  on the pull request itself gives the pull-request step a PAT or app token instead.
+- **No third-party CI action ships into an instance** (§6.3). The scheduled compile opens
+  its pull request with `git` and GitHub's own `gh`, not with
+  `peter-evans/create-pull-request` — the only dependency this project had on a repository
+  nobody here controls, and one that ran in every adopter's instance with write access to
+  their `generated/` and `mappings/`, pinned to a moving tag whose code could change
+  without a diff anyone reviewed. The cost is about fifteen lines of shell in that one
+  step, which handles what the action did invisibly: an empty staging area, a runner with
+  no committer identity, and a workflow dispatched twice in one day meeting its own open
+  pull request.
+- The rule is now mechanical. The plane's suite reads the shipped workflow files and
+  refuses any step that is not a checkout, a language setup, the pinned `pip install`, a
+  `semprini` subcommand, or the single pull-request step — which may invoke nothing but
+  `git`, the platform CLI and `date`. An adopter porting to GitLab or Azure DevOps
+  therefore ports a file rather than reimplementing behaviour, which is the claim §6.3
+  makes.
+- **v1 ships GitHub workflow definitions only**, deliberately (§6.3). A port costs one
+  directory and one line in `scaffold.WORKFLOW_DIRS`, but a definition nobody can run
+  against a real instance is untested template text; the first adopter on another platform
+  contributes one.
 
 ### Ontology 0.1.0
 

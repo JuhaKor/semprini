@@ -176,8 +176,8 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
     (
         "the compile workflow opens a pull request with no report in it",
         COMPILE_WORKFLOW,
-        "          body-path: generated/.report.md",
-        "",
+        '--title "Compile $today" --body-file generated/.report.md',
+        '--title "Compile $today" --body "Compiled."',
     ),
     (
         "the pull request is opened whether or not a report was written",

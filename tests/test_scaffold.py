@@ -262,17 +262,6 @@ def test_the_workflows_are_valid_yaml(bootstrapped: Path) -> None:
         assert list(document["jobs"])
 
 
-def test_the_compile_workflow_opens_a_pull_request_carrying_the_report(
-    bootstrapped: Path,
-) -> None:
-    """Spec 6.2: the run report is the pull request's description, and the workflow never
-    pushes to main. What a steward reviews is the report beside the diff it describes."""
-    text = (bootstrapped / ".github" / "workflows" / "compile.yml").read_text(encoding="utf-8")
-
-    assert "body-path: generated/.report.md" in text
-    assert "branch: compile/" in text
-
-
 Step = dict[str, Any]
 
 
@@ -288,17 +277,54 @@ def step_index(steps: list[Step], predicate: Callable[[Step], bool]) -> int:
     return next(index for index, step in enumerate(steps) if predicate(step))
 
 
+def proposes(step: Step) -> bool:
+    return "gh pr create" in step.get("run", "")
+
+
+def test_the_compile_workflow_opens_a_pull_request_carrying_the_report(
+    bootstrapped: Path,
+) -> None:
+    """Spec 6.2: the run report is the pull request's description, on a `compile/<date>`
+    branch. What a steward reviews is the report beside the diff it describes."""
+    (opener,) = [step for step in compile_steps(bootstrapped) if proposes(step)]
+
+    assert "--body-file generated/.report.md" in opener["run"]
+    assert 'branch="compile/$today"' in opener["run"]
+
+
 def test_the_compile_workflow_guards_the_report_it_describes_itself_with(
     bootstrapped: Path,
 ) -> None:
-    """A run that changed nothing writes no report (spec 5.6), and create-pull-request
-    rejects a `body-path` naming a file that is not there — a check it makes on every
-    invocation, before it looks for a commit to open a pull request for. Ungated, the weeks
-    where nothing moved are the ones the scheduled job fails on."""
-    steps = compile_steps(bootstrapped)
-    (opener,) = [step for step in steps if "create-pull-request" in step.get("uses", "")]
+    """A run that changed nothing writes no report (spec 5.6) and leaves nothing to commit,
+    and both of those would otherwise be a failure: `gh pr create` has no `--body-file` to
+    read, and `git commit` exits non-zero on an empty staging area. Ungated, the weeks where
+    nothing moved are the ones the scheduled job fails on."""
+    (opener,) = [step for step in compile_steps(bootstrapped) if proposes(step)]
 
-    assert opener["with"]["body-path"] in opener["if"]
+    assert "generated/.report.md" in opener["if"]
+    assert "git diff --cached --quiet" in opener["run"]
+
+
+def test_the_compile_workflow_survives_being_dispatched_twice_in_one_day(
+    bootstrapped: Path,
+) -> None:
+    """The branch is named after the date, so the second run of a day finds its own branch
+    on the remote with a pull request already open against it. A plain push is rejected and
+    a second `gh pr create` is an error; force-pushing updates the pull request in place,
+    which is the behaviour the third-party action used to provide invisibly."""
+    (opener,) = [step for step in compile_steps(bootstrapped) if proposes(step)]
+
+    assert "git push --force" in opener["run"]
+    assert "gh pr list" in opener["run"]
+
+
+def test_the_compile_workflow_gives_the_commit_an_author(bootstrapped: Path) -> None:
+    """A runner has no committer identity configured, and `git commit` refuses without one
+    — the third run in this file's history to fail on something the action did for us."""
+    (opener,) = [step for step in compile_steps(bootstrapped) if proposes(step)]
+
+    assert "git config user.name" in opener["run"]
+    assert "git config user.email" in opener["run"]
 
 
 def test_the_compile_workflow_validates_what_it_is_about_to_propose(
@@ -312,7 +338,7 @@ def test_the_compile_workflow_validates_what_it_is_about_to_propose(
     steps = compile_steps(bootstrapped)
 
     checked = step_index(steps, lambda step: step.get("run", "").startswith("semprini check"))
-    proposed = step_index(steps, lambda step: "create-pull-request" in step.get("uses", ""))
+    proposed = step_index(steps, proposes)
     # A check after the pull request is opened validates nothing anyone is waiting on.
     assert checked < proposed
 
