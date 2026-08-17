@@ -2060,6 +2060,7 @@ done and green.
   on §6.3. Run both against a scratch instance repository on GitHub and confirm a compile
   PR body carries the run report.
   **Depends:** G1
+  **Merged — [PR #17](https://github.com/JuhaKor/semprini/pull/17).**
   **G1 already delivered both files**, at `src/semprini/workflows/github/`, materialized
   into `.github/workflows/` and pinned to the plane version — inside the package, since a
   scaffold at the repository root is absent from the wheel `init` runs from. What is left
@@ -2116,8 +2117,7 @@ done and green.
   `gitlab/` that is not there. G2 therefore adds no platform: `WORKFLOW_DIRS` and
   `WORKFLOW_PLATFORM` are untouched.
 
-  **Done so far — the replacement and the guard have landed; the scratch run has not.**
-  947 tests green (29 of them the guard's); ruff, ruff format and mypy (strict) clean.
+  **Done.** 947 tests green (29 of them the guard's); ruff, ruff format and mypy (strict) clean.
   Twenty-two mutations were checked against the suite, twice — a third-party action back in
   a shipped workflow, an action floating on a branch rather than a pinned major, a second
   tool reading `generated/` in the pull request step, a python one-liner deciding whether to
@@ -2184,8 +2184,12 @@ done and green.
   say so, and `compile.yml` gained a `concurrency:` group, since two runs racing for one
   dated branch would force-push over each other.
 
-  **The scratch instance run — done, on `JuhaKor/semprini-scratch-instance`.** Bootstrapped
-  by `semprini init` from this branch's wheel, with the two synthetic sources of
+  **The scratch instance run — done, on `JuhaKor/semprini-scratch-instance`.** *(That
+  repository has since been reset: it is private again and holds one commit, a fresh
+  instance pinned to `66ea15e`, with the ruleset dormant and the Actions setting still on.
+  Nothing in it is evidence — this entry is. **G5 and H1 can reuse it**; re-point the
+  install line at a current sha, or at the published version once there is one.)*
+  Bootstrapped by `semprini init` from this branch's wheel, with the two synthetic sources of
   `tests/fixtures/acme/` and the pinned `pip install semprini==0.1.0` substituted for
   `pip install git+https://github.com/JuhaKor/semprini@710777a`, since nothing is published
   yet (§11 #3). **The real install line therefore remains untested until G5** — say so, do
