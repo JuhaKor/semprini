@@ -254,25 +254,65 @@ def test_matching_versions_do_not_drift() -> None:
 
 
 @pytest.mark.parametrize(
-    ("running", "expected"),
+    ("running", "expected", "advises"),
     [
-        ({"compiler": "0.2.0"}, "compiler 0.1.0"),
-        ({"ontology": "0.2.0"}, "ontology 0.1.0"),
+        # The command always names the *compiler* version installed, which is the version a
+        # migration is performed by (spec 7) — so an ontology-only drift, where the compilers
+        # agree, is resolved by running the installed one rather than by installing anything.
+        ({"compiler": "0.2.0"}, "compiler 0.1.0", "semprini migrate --to 0.2.0"),
+        ({"ontology": "0.2.0"}, "ontology 0.1.0", "semprini migrate --to 0.1.0"),
     ],
 )
-def test_a_newer_running_version_is_drift(running: dict[str, str], expected: str) -> None:
-    """An upgrade is a separate "recompile with <version>" pull request, never a reflow
-    mixed into a content change (spec 7)."""
+def test_a_newer_running_version_is_drift(
+    running: dict[str, str], expected: str, advises: str
+) -> None:
+    """An upgrade is a separate, reviewable pull request, never a reflow mixed into a content
+    change (spec 7). The message names the command that resolves it."""
     versions = {"compiler": "0.1.0", "ontology": "0.1.0", **running}
 
     issues = manifest().check_versions(**versions)
 
     assert len(issues) == 1
     assert expected in issues[0].message
+    assert advises in issues[0].message
 
 
 def test_both_versions_can_drift_at_once() -> None:
     assert len(manifest().check_versions(compiler="0.2.0", ontology="0.2.0")) == 2
+
+
+def test_drift_the_other_way_does_not_advise_a_migration() -> None:
+    """The instance is *ahead* of the installed release, and migrating back is refused.
+
+    Reachable, and ordinary: it is what a pull request looks like between the commit that
+    migrated the instance and the workflow pin being updated — CI installs the old version and
+    check 3 fires in reverse. Advising `semprini migrate --to <the older version>` there would
+    name a command that exits 1 saying it cannot move backwards (spec 7), which is worse than
+    saying nothing, because the operator has no way to know the advice was the wrong half of a
+    branch.
+    """
+    issues = Manifest(compiler_version="0.2.0", ontology_version="0.2.0", files={}).check_versions(
+        compiler="0.1.0", ontology="0.1.0"
+    )
+
+    assert len(issues) == 2
+    for issue in issues:
+        assert "migrate" not in issue.message
+        assert "install semprini==0.2.0" in issue.message
+        assert "the pinned version in the workflow is the stale value" in issue.message
+
+
+def test_a_version_that_cannot_be_ordered_gets_no_instruction() -> None:
+    # A hand-edited manifest, or a compiler running from a source tree: there is no telling
+    # which of the two is newer, so the message states the requirement and stops rather than
+    # guessing at a direction and dressing the guess as an instruction.
+    issues = Manifest(
+        compiler_version="nightly", ontology_version="0.1.0", files={}
+    ).check_versions(compiler="0.1.0", ontology="0.1.0")
+
+    assert len(issues) == 1
+    assert "the two must agree" in issues[0].message
+    assert "migrate" not in issues[0].message
 
 
 def test_drift_is_checked_against_the_running_versions_by_default() -> None:

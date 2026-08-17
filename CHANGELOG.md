@@ -21,7 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `semprini version`, reporting the compiler and ontology versions.
 - The exit-code contract of §5.1: `0` success · `1` validation or compile failure ·
   `2` configuration or namespace-lock error · `3` a configured source was unreachable.
-  Every other subcommand parses its arguments and exits `1` pending its own task.
+  One mapping from error to code serves every subcommand.
 - Apache-2.0 (`LICENSE`) for code and CC BY 4.0 (`LICENSE-DOCS`) for the ontology,
   shapes and specification, © Datakor Consulting Oy.
 - The canonical Turtle serializer of §5.5 (`semprini.serialize`): fixed prefix block,
@@ -286,6 +286,62 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   directory and one line in `scaffold.WORKFLOW_DIRS`, but a definition nobody can run
   against a real instance is untested template text; the first adopter on another platform
   contributes one.
+- **`semprini migrate --to <version>` — an upgrade an adopter can review** (§7). Until now
+  the drift check told an instance it had not been brought to the running release and there
+  was nothing on the far side of it. There is now: the migration rewrites what is committed
+  into what the new release would have written, restamps the manifest and writes a migration
+  report saying what it did. `generated/` and `mappings/id-map.csv` are its only inputs — it
+  **never reads the sources**, so the diff is provably about the upgrade and cannot smuggle in
+  a content change. This completes the CLI: no subcommand is a stub any more.
+- Spec §7's promise about migrations is now **enforced rather than trusted**, since it is a
+  promise about code a future release has not written. After the steps run and before
+  anything is written: the set of subjects in `generated/` must be unchanged, every
+  `dcterms:modified` must be unchanged, the ID map must gain no row, lose none, have none
+  rewritten and come back in the same order, and every file produced must be a `.ttl` directly
+  inside `generated/`. A migration that breaks one of those is refused with nothing written,
+  and the comparison is taken as a snapshot before any step runs — an rdflib graph and an
+  `IdMap` are both mutable, and a step that edited what it was handed would otherwise be
+  compared against itself.
+- A migration **refuses to run against a `generated/` that disagrees with its manifest**: it
+  rewrites what the compiler wrote, and restamping a hand edit as the new release's output
+  would destroy the hash that would have caught it.
+- `--to` must name the installed compiler version. A release's migrations exist only in that
+  release and the manifest records what wrote the files, so a partial migration has no version
+  to record — and naming the version catches a workflow that pinned one and installed another
+  before anything is rewritten. Downgrades are refused.
+- A release that changes no output ships no migration step, and the command is then a
+  re-serialization and a restamp — which is what clears drift for a patch upgrade without
+  touching a source or a credential. Migrating an instance that is already current writes
+  nothing, so a workflow may call it unconditionally.
+- **A recompile is not a substitute for a migration**, and this is the reason migrations exist
+  at all rather than being a convenience: nodes no source reports any more are re-emitted
+  verbatim from the previous run's output (§3.5), so a recompile carries their *old* statements
+  forward. A term rename performed by recompiling would reach every active node and miss every
+  deprecated one.
+- `generated/.report.md` after a migration is a **migration report** — versions upgraded from
+  and to, the steps that ran, what happened to each file, and that identity was preserved.
+  §5.6's rule is unchanged and now applied consistently: the committed report describes
+  whatever last produced the files beside it.
+- The drift check's message now says `run semprini migrate --to <version>` where it used to
+  say "recompile the instance". The difference matters to whoever reads it: a recompile needs
+  the sources and a credential, and on the one kind of release where the two look
+  interchangeable, they are not. **The advice branches on which way the drift points**: an
+  instance already migrated to a newer release than the one installed — which is what a pull
+  request looks like between the migration commit and the workflow pin being updated — is told
+  to install or pin the recorded version, because migrating backwards is refused.
+- The copied metamodel is compared as **bytes** when deciding whether an upgrade has anything
+  to do, not only by recorded version, because check 7 compares it that way. A release that
+  edited `sem.ttl` without moving its `owl:versionInfo` would otherwise leave every instance
+  failing the one check `semprini migrate` is the only cure for, with the command answering
+  "nothing to migrate".
+- A migration writes `mappings/id-map.csv` **before** `generated/`, the opposite of a compile's
+  order and for a stated reason: a compile writes files first because it mints, and a migration
+  mints nothing, while the manifest travels with the files — a crash between the two calls in
+  the other order would leave an instance already recording the new version, which the next
+  invocation reads as nothing to migrate.
+- The instance README gained an **Upgrading the compiler** section, since a command nobody is
+  told about is a command nobody runs — and the state it resolves is one an adopter would
+  otherwise be tempted to fix by hand-editing `generated/`.
 
 ### Ontology 0.1.0
 

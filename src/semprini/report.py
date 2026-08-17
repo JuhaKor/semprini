@@ -43,6 +43,7 @@ __all__ = [
     "RunReport",
     "SourceSummary",
     "create",
+    "table",
 ]
 
 REPORT_FILE = ".report.md"
@@ -207,13 +208,13 @@ class RunReport:
 
     def _contents(self) -> list[str]:
         lines = ["## Contents", ""]
-        lines += _table(
+        lines += table(
             ("Class", "Objects"),
             [(count.term, str(count.objects)) for count in self.classes],
             empty="This run compiled nothing.",
         )
         lines += [""]
-        lines += _table(
+        lines += table(
             ("File", "Nodes", "Triples"),
             [(f"`{c.name}`", str(c.subjects), str(c.triples)) for c in self.files],
             empty="No files were written.",
@@ -227,7 +228,7 @@ class RunReport:
 
     def _changes(self) -> list[str]:
         lines = ["## Changes", ""]
-        lines += _table(
+        lines += table(
             ("Change", "Nodes"),
             [
                 ("New", str(len(self.new))),
@@ -282,7 +283,7 @@ class RunReport:
 
     def _sources(self) -> list[str]:
         lines = ["## Sources", ""]
-        lines += _table(
+        lines += table(
             ("Source", "Adapter", "Objects", "Notes"),
             [(s.name, f"`{s.adapter}`", str(s.objects), s.note) for s in self.sources],
             empty="No per-source summary was recorded.",
@@ -307,7 +308,13 @@ def _more(total: int) -> list[str]:
     return ["", f"…and {total - LISTING_LIMIT} more."]
 
 
-def _table(header: Sequence[str], rows: Sequence[Sequence[str]], *, empty: str = "") -> list[str]:
+def table(header: Sequence[str], rows: Sequence[Sequence[str]], *, empty: str = "") -> list[str]:
+    """One Markdown table, every cell escaped (:func:`_cell`).
+
+    Public because the migration report renders tables too (spec 7), and a second
+    implementation would be a second answer to "what happens to a label holding a
+    pipe" — in a file that is pasted verbatim into a pull request description.
+    """
     if not rows and empty:
         return [empty]
     return [

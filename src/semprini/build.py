@@ -25,7 +25,7 @@ files, and nothing else.
 from __future__ import annotations
 
 import datetime
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -63,8 +63,11 @@ __all__ = [
     "CarriedNode",
     "OutputFile",
     "build",
+    "ontology_file",
     "read_previous",
     "read_previous_files",
+    "remove",
+    "stale",
     "statements_by_subject",
     "unchanged",
     "union_of",
@@ -335,6 +338,64 @@ def unchanged(files: Sequence[OutputFile], repo_root: Path | None = None) -> boo
     return True
 
 
+def stale(
+    files: Sequence[OutputFile], repo_root: Path | None = None, *, keep: Collection[str] = ()
+) -> tuple[str, ...]:
+    """Files in ``generated/`` that were not among ``files`` (spec 4.3).
+
+    ``generated/`` is machine-owned and overwritten wholesale, so anything left over is
+    output of a run that no longer describes the instance — a scheme whose objects are now
+    written to a differently named file, or a directory somebody added by hand. Left in
+    place it would be loaded by every consumer that reads the directory from Git, and would
+    fail the manifest's own unrecorded-file check (spec 6.1 check 2) on the next PR.
+
+    Walked recursively, and compared by path relative to ``generated/``: the directory is
+    flat by spec, so a nested file is by definition not this run's, and anything reading
+    the tree would still read it.
+
+    ``keep`` names files that are written on their own terms and are therefore never stale even
+    when this caller did not produce them. Both callers pass ``.report.md``, for two different
+    reasons that arrive at the same rule: a compile that changed nothing writes no report (spec
+    5.6) and has not thereby stopped producing the one that is committed, and a migration writes
+    its report *after* asking this question, so listing it would delete what it then wrote.
+    """
+    root = Path.cwd() if repo_root is None else Path(repo_root)
+    directory = root / GENERATED_DIR
+    if not directory.is_dir():
+        return ()
+    produced = {file.name for file in files} | set(keep)
+    return tuple(
+        name
+        for path in sorted(directory.rglob("*"))
+        if path.is_file() and (name := path.relative_to(directory).as_posix()) not in produced
+    )
+
+
+def remove(names: Sequence[str], repo_root: Path | None = None) -> None:
+    """Delete named files from ``generated/``, then any directory their removal emptied."""
+    root = Path.cwd() if repo_root is None else Path(repo_root)
+    directory = root / GENERATED_DIR
+    for name in names:
+        (directory / name).unlink()
+    for path in sorted(directory.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        if path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+
+
+def ontology_file() -> OutputFile:
+    """The pinned metamodel as one of ``generated/``'s files, copied verbatim (spec 4.2).
+
+    Copied, never re-serialized: ``sem.ttl`` is hand-written and its term comments are the
+    vocabulary's published documentation, which the canonical serializer would strip
+    (spec 5.5 governs an instance's own output, not this document).
+
+    Public because a compile is not the only thing that writes it: a migration refreshes
+    the copy from the metamodel the upgraded plane carries (spec 7), and two places
+    composing this file could disagree about whether it is copied or rendered.
+    """
+    return OutputFile(name=ONTOLOGY_FILE, text=ONTOLOGY_PATH.read_text(encoding="utf-8"))
+
+
 def write_all(files: Sequence[OutputFile], repo_root: Path | None = None) -> tuple[Path, ...]:
     """Write every file into ``<repo_root>/generated/``.
 
@@ -517,13 +578,8 @@ class _Builder:
     # ------------------------------------------------------------------ file partitioning
 
     def _ontology(self) -> OutputFile:
-        """The pinned metamodel, copied verbatim (spec 4.2).
-
-        Copied, never re-serialized: ``sem.ttl`` is hand-written and its term comments are
-        the vocabulary's published documentation, which the canonical serializer would
-        strip (spec 5.5 rule 5 governs an instance's own output, not this).
-        """
-        return OutputFile(name=ONTOLOGY_FILE, text=ONTOLOGY_PATH.read_text(encoding="utf-8"))
+        """The pinned metamodel, copied verbatim (spec 4.2) — see :func:`ontology_file`."""
+        return ontology_file()
 
     def _file_name(self, object_: SemanticObject, schemes: Mapping[str, _SchemeEntry]) -> str:
         if isinstance(object_, Scheme):

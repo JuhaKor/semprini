@@ -6,6 +6,7 @@ on them, so each one is pinned by a test.
 
 from __future__ import annotations
 
+import argparse
 import io
 import shutil
 import subprocess
@@ -16,11 +17,19 @@ import pytest
 from semprini import cli, compiler_version, ontology_version
 from semprini.cli import ExitCode, main
 
-# Stub subcommands, with the arguments each requires, until its own task lands.
-# `adapters` left this list in D1, `run` in E2, `init` in G1; `version` was never in it.
-STUB_INVOCATIONS = [
-    ["migrate", "--to", "0.2.0"],
-]
+SUBCOMMANDS = {"init", "run", "check", "migrate", "adapters", "version"}
+"""Spec 5.1's whole CLI surface — and, since G3, with no stub left among them.
+
+Subcommands stopped being stubs one task at a time: `adapters` in D1, `run` in E2, `check`
+in F2, `init` in G1, `migrate` in G3. `cli._UNIMPLEMENTED` and the test that walked it are
+gone with the last of them."""
+
+
+def _subcommands(parser: argparse.ArgumentParser) -> set[str]:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return set(action.choices)
+    raise AssertionError("the parser declares no subcommands")
 
 
 def test_version_reports_both_version_numbers(capsys: pytest.CaptureFixture[str]) -> None:
@@ -65,18 +74,30 @@ def test_missing_required_argument_exits_2() -> None:
     assert raised.value.code == ExitCode.CONFIG
 
 
-@pytest.mark.parametrize("argv", STUB_INVOCATIONS, ids=lambda argv: " ".join(argv))
-def test_unimplemented_commands_exit_1(
-    argv: list[str], instance: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # Exit 1, not 2: the invocation is well formed, the feature is absent. Run inside a
-    # valid instance, since the commands that read one now validate its configuration
-    # first and would exit 2 on a missing config/semprini.yaml (spec 5.1).
-    assert main(argv) == ExitCode.FAILURE
+def test_the_declared_surface_is_the_one_the_spec_lists() -> None:
+    # A seventh subcommand arriving without a spec edit is caught here, and so is a
+    # subcommand quietly disappearing — an adopter's CI invokes these by name (spec 6.3).
+    assert _subcommands(cli.build_parser()) == SUBCOMMANDS
 
-    err = capsys.readouterr().err
-    assert "not implemented" in err
-    assert argv[0] in err
+
+@pytest.mark.parametrize("command", sorted(SUBCOMMANDS))
+def test_no_subcommand_reports_itself_unimplemented(
+    command: str, instance: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every subcommand does something. G3 was the last stub (spec 5.1).
+
+    Invoked for real inside the fixture instance rather than inspected, because "not a stub"
+    is a claim about what running it does. Each is given the arguments it requires and is
+    asked only not to report itself absent; what each one *does* is its own task's tests.
+    """
+    required = {
+        "init": ["--base-iri", "https://semantics.example.com/", "--org", "acme", "--dir", "new"],
+        "migrate": ["--to", compiler_version()],
+    }
+
+    main([command, *required.get(command, [])])
+
+    assert "not implemented" not in capsys.readouterr().err
 
 
 def test_output_degrades_rather_than_failing_on_a_narrow_console() -> None:

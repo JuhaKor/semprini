@@ -50,6 +50,27 @@ semprini adapters   # which source adapters are installed
 Both workflows in `.github/workflows/` pin the plane version above. Upgrading the compiler
 is a deliberate edit to those files, reviewed like any other change.
 
+### Upgrading the compiler
+
+`semprini check` fails after an upgrade until this repository is brought to the new version,
+and it says so: *"generated/ was compiled with compiler X, but Y is running"*. That is
+deliberate — it stops a new release's reflow from arriving mixed into somebody's content
+change. Bring it over in its own pull request:
+
+```sh
+pip install semprini==<new version>
+semprini migrate --to <new version>    # the same version; it refuses any other
+```
+
+The migration rewrites `generated/` into what the new release would have written, **without
+reading your sources**, so the diff is about the upgrade and nothing else. It will not mint an
+IRI, lose an ID-map row or move a `dcterms:modified` date — it refuses rather than do any of
+those — and `generated/.report.md` becomes a migration report saying what it did. Review the
+diff, run `semprini check`, then update the pinned version in both workflow files.
+
+Most releases change no output, and then the migration is only a restamp. Either way, run it:
+it is the same command, and being wrong about which kind of release you are on costs nothing.
+
 ## Reviewing a compile pull request
 
 The scheduled compile opens one when — and only when — something moved. Its description is

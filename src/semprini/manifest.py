@@ -34,7 +34,7 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
 
-from semprini import UNINSTALLED_VERSION, compiler_version, ontology_version
+from semprini import UNINSTALLED_VERSION, compiler_version, ontology_version, version_parts
 from semprini.build import GENERATED_DIR, OutputFile
 from semprini.model import Issue, IssueError, Severity
 from semprini.report import REPORT_FILE
@@ -44,6 +44,7 @@ __all__ = [
     "Manifest",
     "ManifestError",
     "digest",
+    "is_generated_file_name",
 ]
 
 MANIFEST_FILE = ".manifest.json"
@@ -101,7 +102,7 @@ class Manifest:
         # these out first, with the offending key named; this catches every other way one
         # could arrive.
         for name in self.files:
-            if not _is_generated_file_name(name):
+            if not is_generated_file_name(name):
                 raise ManifestError(
                     [Issue(Severity.ERROR, f"not a file name in generated/: {name!r}", str(name))]
                 )
@@ -320,25 +321,60 @@ class Manifest:
         """Compare the recorded versions with the running ones (spec 6.1 check 3, 7).
 
         Drift is not a defect in the output — the committed files are exactly what the
-        recorded version produced. It is a statement that the instance has not been
-        recompiled since the plane was upgraded, which is a separate, reviewable PR
-        precisely so that an upgrade's reflow never arrives mixed into a content change.
+        recorded version produced. It is a statement that the instance has not been brought
+        to the running release, which is a separate, reviewable PR precisely so that an
+        upgrade's reflow never arrives mixed into a content change.
+
+        The message names ``semprini migrate`` rather than "recompile", which is what it said
+        before that command existed (G3). The difference matters to whoever reads it: a
+        recompile needs the sources and a credential, and for an object no source reports any
+        more it carries the *old* statements forward (spec 3.5, 7) — so on the one kind of
+        release where it seems interchangeable, it is not.
+
+        **Which way the drift points decides the advice**, and getting that wrong is worse than
+        saying nothing. An instance already migrated to a newer release, checked by CI that
+        still pins the old one, drifts *backwards* — and telling that operator to migrate to the
+        installed version names a command that is refused, since migrations only ever move
+        forward (spec 7). It is a reachable state and an ordinary one: it is what a pull request
+        looks like between the migration commit and the workflow pin being updated.
         """
         running = {
             "compiler": compiler_version() if compiler is None else compiler,
             "ontology": ontology_version() if ontology is None else ontology,
         }
         recorded = {"compiler": self.compiler_version, "ontology": self.ontology_version}
+        advice = _advice(recorded["compiler"], running["compiler"])
         return tuple(
             Issue(
                 Severity.ERROR,
                 f"generated/ was compiled with {which} {recorded[which]}, but {running[which]} "
-                f"is running; recompile the instance in its own PR (spec 7)",
+                f"is running; {advice} (spec 7)",
                 f"{MANIFEST_FILE}#{which}_version",
             )
             for which in ("compiler", "ontology")
             if recorded[which] != running[which]
         )
+
+
+def _advice(recorded: str, running: str) -> str:
+    """What to do about drift, given which of the two compiler versions is the newer.
+
+    Three answers, because there are three states and only one of them is the upgrade
+    everybody pictures. Ahead of the installed release, the instance does not need migrating —
+    the *pin* is stale, and migrating backwards is refused. Unorderable versions (a hand-edited
+    manifest, a compiler running from a source tree) get the one sentence that is true either
+    way rather than a guess dressed as an instruction.
+    """
+    here, there = version_parts(running), version_parts(recorded)
+    if here is None or there is None:
+        return "the two must agree before this instance can be committed"
+    if here < there:
+        return (
+            f"the installed release is older than the one that compiled generated/, and a "
+            f"migration only ever moves forward; install semprini=={recorded} — if this is CI, "
+            f"the pinned version in the workflow is the stale value"
+        )
+    return f"run `semprini migrate --to {running}` in its own PR"
 
 
 def _present(directory: Path) -> list[str]:
@@ -378,7 +414,7 @@ def _files(document: Mapping[str, Any], issues: list[Issue]) -> Mapping[str, str
     hashes: dict[str, str] = {}
     for name, recorded in value.items():
         location = f"files.{name}"
-        if not _is_generated_file_name(name):
+        if not is_generated_file_name(name):
             # A recorded name is used as a path segment under generated/, so a
             # hand-edited manifest holding "../../secrets" would have verification read
             # and hash a file outside the machine-owned directory it is meant to bound
@@ -401,8 +437,13 @@ def _files(document: Mapping[str, Any], issues: list[Issue]) -> Mapping[str, str
     return hashes
 
 
-def _is_generated_file_name(name: Any) -> bool:
-    """Whether ``name`` names a file directly inside ``generated/`` and nothing else."""
+def is_generated_file_name(name: Any) -> bool:
+    """Whether ``name`` names a file directly inside ``generated/`` and nothing else.
+
+    Public because more than one thing composes a path under ``generated/`` from a name
+    it was handed: the manifest from its own keys, and a migration from the file names a
+    step returned (spec 7). Both are refused the same way, in one definition.
+    """
     if not isinstance(name, str) or not name or name in {".", ".."}:
         return False
     # Both separators, whatever the platform: a manifest written on one machine is

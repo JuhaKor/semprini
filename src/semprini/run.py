@@ -228,7 +228,7 @@ def run(
         if lock is not None:
             merges.save(root)
             lock.save(root)
-        _remove(stale, root)
+        build.remove(stale, root)
 
     return RunResult(
         files=files,
@@ -364,36 +364,8 @@ def _rebased_term(term: Node, old_base: str, new_base: str) -> Node:
 def _stale(files: Sequence[OutputFile], root: Path) -> tuple[str, ...]:
     """Files in ``generated/`` that this run did not produce (spec 4.3).
 
-    ``generated/`` is machine-owned and overwritten wholesale, so anything left over is
-    output of a run that no longer describes the instance — a scheme whose objects are now
-    written to a differently named file, or a directory somebody added by hand. Left in
-    place it would be loaded by every consumer that reads the directory from Git, and would
-    fail the manifest's own unrecorded-file check (spec 6.1 check 2) on the next PR.
-
-    Walked recursively, and compared by path relative to ``generated/``: the directory is
-    flat by spec, so a nested file is by definition not this run's, and anything reading
-    the tree would still read it.
-
-    ``.report.md`` is never stale. It is written on different terms — only when something
-    moved (spec 5.6) — so a run that produced no report has not stopped producing the one
-    that is committed.
+    ``.report.md`` is the one file kept regardless. It is written on different terms — only
+    when something moved (spec 5.6) — so a run that produced no report has not thereby
+    stopped producing the one that is committed.
     """
-    directory = root / build.GENERATED_DIR
-    if not directory.is_dir():
-        return ()
-    produced = {file.name for file in files} | {report.REPORT_FILE}
-    return tuple(
-        name
-        for path in sorted(directory.rglob("*"))
-        if path.is_file() and (name := path.relative_to(directory).as_posix()) not in produced
-    )
-
-
-def _remove(stale: Sequence[str], root: Path) -> None:
-    """Delete the stale files, then any directory their removal emptied."""
-    directory = root / build.GENERATED_DIR
-    for name in stale:
-        (directory / name).unlink()
-    for path in sorted(directory.rglob("*"), key=lambda item: len(item.parts), reverse=True):
-        if path.is_dir() and not any(path.iterdir()):
-            path.rmdir()
+    return build.stale(files, root, keep=(report.REPORT_FILE,))
