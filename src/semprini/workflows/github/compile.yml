@@ -17,6 +17,13 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  # Two runs would race for one dated branch and force-push over each other. Queued rather
+  # than cancelled: a compile that has already opened its pull request should not be
+  # interrupted half way through doing so.
+  group: compile
+  cancel-in-progress: false
+
 jobs:
   compile:
     runs-on: ubuntu-latest
@@ -40,33 +47,72 @@ jobs:
         # env:
         #   SOME_API_TOKEN: ${{ secrets.SOME_API_TOKEN }}
 
-      # The compile PR is opened with GITHUB_TOKEN, and GitHub fires no `pull_request`
-      # event for those — so validate.yml does not run on it, and on a protected main the
-      # required check would never report. Running the same command here is what keeps the
-      # compiler's own output from being the one diff in this instance nobody validated.
-      # Give create-pull-request a PAT or app token instead if you would rather the check
-      # run on the pull request itself; then this step is redundant and can go.
+      # The compile PR is opened with GITHUB_TOKEN, and GitHub will not run a workflow on a
+      # pull request its own token opened. What it does instead — measured, not assumed — is
+      # create the `pull_request` run and park it as `action_required` with no jobs, so it
+      # contributes no check to the pull request and validate.yml reports nothing there. On
+      # a protected main that leaves the pull request unmergeable until someone opens the
+      # run from the Actions tab and approves it. Running the same command here is what
+      # makes that a click rather than a judgement — and what keeps the compiler's own
+      # output from being the one diff in this instance nobody validated. Give the step
+      # below a PAT or app token instead if you would rather the check run on the pull
+      # request itself; then this step is redundant and can go.
       #
       # `--base` is the commit this run started from: nothing has been committed yet, so
       # that is exactly the ID map as it stood before the compile (spec 6.1 check 6).
       - run: semprini check --base ${{ github.sha }}
 
-      - id: date
-        run: echo "value=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
-
-      - uses: peter-evans/create-pull-request@v7
-        # A run that changed nothing writes no report, and the action rejects a `body-path`
-        # naming a file that is not there — before it looks for a commit to open a PR for.
-        # Without this guard the quiet weeks are the ones that go red.
+      # The one platform-specific step, and the only shell in either workflow (spec 6.3).
+      # It uses git and GitHub's own CLI rather than a third-party action: a shipped
+      # workflow runs in every instance with write access to that organization's graph, and
+      # an action referenced by a moving tag is code that changes without a diff anyone
+      # reviews. Three of these lines are not obvious, and each is commented below.
+      - name: Open a pull request
+        # A run that changed nothing writes no report (spec 5.6), and the report is what
+        # describes the pull request. This covers the instance that has never compiled
+        # anything: once a compile pull request has merged, the report is a committed file
+        # and this condition is true every week thereafter. What keeps the quiet weeks
+        # green from then on is the empty staging area below.
         if: hashFiles('generated/.report.md') != ''
-        with:
-          branch: compile/${{ steps.date.outputs.value }}
-          title: "Compile ${{ steps.date.outputs.value }}"
-          # The run's own report is the description: what is new, what changed, what was
-          # deprecated, and which warnings were raised. A run that changed nothing does not
-          # rewrite it — and produces no commit, so no pull request is opened either.
-          body-path: generated/.report.md
-          commit-message: "Compile ${{ steps.date.outputs.value }}"
-          add-paths: |
-            generated
-            mappings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Handed to the shell as data rather than pasted into the script: a `${{ }}`
+          # expression is substituted before the shell ever parses the line.
+          BASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          today="$(date -u +%Y-%m-%d)"
+          branch="compile/$today"
+
+          # A runner has no committer identity of its own and `git commit` refuses without
+          # one. This is the account the run is already acting as.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git switch --create "$branch"
+          git add generated mappings
+
+          # Nothing staged means the compile changed nothing after all: no commit, no pull
+          # request, and a green run rather than a failed one.
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+
+          git commit --message "Compile $today"
+          # Dispatched a second time on one day, the branch is already on the remote and
+          # its pull request is open. This commit is built on the default branch rather
+          # than on that one, so only a force-push lands it, and the pull request updates
+          # in place. The cost: a commit pushed onto a compile branch by hand is discarded
+          # by the next dispatch that day, so make corrections on a branch of your own and
+          # merge it into the compile pull request.
+          git push --force origin "$branch"
+
+          # ...and asking for a second pull request on the same branch is an error, so ask
+          # only when there is none. Captured on its own line so that a failed API call
+          # stops the run: inside the test below, an error and an answer of "none" are the
+          # same empty string, and the retryable blip would turn into a red job.
+          open_pull_request="$(gh pr list --head "$branch" --state open --json number --jq '.[].number')"
+          if [ -z "$open_pull_request" ]; then
+            gh pr create --base "$BASE_BRANCH" --head "$branch" \
+              --title "Compile $today" --body-file generated/.report.md
+          fi

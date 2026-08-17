@@ -1412,11 +1412,24 @@ Each instance has two workflows, both thin:
   the description. It never pushes to main. Two consequences of the platform, not of the
   design: a run that changed nothing writes no report (§5.6) and leaves nothing to commit,
   so the PR step is conditional on that file existing rather than allowed to fail on its
-  absence, and must tolerate an empty staging area; and where the CI platform fires no
-  pull-request event for a PR its own token opened — GitHub does not —
-  `validate.yml` does not run on a compile PR, which is why `compile.yml` validates before
-  it proposes. An instance that gives the PR step a credential of its own gets the check on
-  the PR itself and may drop the step.
+  absence, and must tolerate an empty staging area; the branch is named after the date, so a
+  workflow dispatched twice in one day meets its own branch and its own open PR, and updates
+  both rather than failing; and a CI platform will not run a workflow on a PR its own token
+  opened, so `validate.yml` does not report on a compile PR, which is why `compile.yml`
+  validates before it proposes.
+
+  On GitHub the mechanism is not the one usually described, and the consequence is sharper.
+  Measured on a scratch instance: the `pull_request` run **is** created — actor
+  `github-actions[bot]` — and is parked with conclusion `action_required` and no jobs, so it
+  contributes no check run to the PR at all. Where `validate` is a required check, the PR is
+  therefore not merely lacking a verdict but **unmergeable** (`mergeable_state: blocked`)
+  until a human opens that run and approves it, at which point it executes, passes and the
+  PR goes clean. So on a protected main every compile PR costs one click. The instance
+  README says so, since it looks like a fault and is not; `compile.yml` has already run the
+  same check on the same files, which is what makes the click a click rather than a
+  judgement. An instance that gives the PR step a credential of its own — a PAT or an app
+  token — gets the check run on the PR itself, merges without the click, and may drop the
+  step.
 
 Branch protection on an instance's main: PRs only, validation must pass, at least one
 review.
@@ -1440,8 +1453,12 @@ the package, run a command, and (for `compile.yml`) open a PR. Consequences:
   action.** A shipped workflow runs in every instance with write access to `generated/`
   and `mappings/`, and an action referenced by a moving tag is code that changes without
   a diff anyone reviews, which is what this design refuses everywhere else. The price is
-  roughly a dozen lines of shell in that one step; it does nothing but `git` and the
-  platform CLI, and a workflow may contain no other logic.
+  roughly a dozen lines of shell in that one step; it runs nothing but `git`, the platform
+  CLI, and the shell's own `date` — which the `compile/<date>` branch name of 6.2 requires
+  and no CI platform provides — and a workflow may contain no other logic. This is a
+  mechanical rule, not a preference: every step in a shipped workflow is a checkout, a
+  language setup, the pinned install, a `semprini` subcommand, or that one step, and the
+  plane's test suite reads the shipped files and enforces exactly that.
 
 ---
 

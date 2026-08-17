@@ -2051,7 +2051,7 @@ done and green.
     that lets the scheduled compile open a pull request at all — which is the kind of thing
     an adopter discovers from a failing job three weeks later.
 
-- [ ] **G2 · Workflow templates and CI portability**
+- [x] **G2 · Workflow templates and CI portability**
   **Spec:** §6.2, §6.3
   **Deliver:** `workflows/` templates for `compile.yml` and `validate.yml`, materialized
   by `init`.
@@ -2116,8 +2116,135 @@ done and green.
   `gitlab/` that is not there. G2 therefore adds no platform: `WORKFLOW_DIRS` and
   `WORKFLOW_PLATFORM` are untouched.
 
-  **The workflow files still carry the action** — this entry is the decision, not the
-  change. G2's first commit is the replacement plus the guard.
+  **Done so far — the replacement and the guard have landed; the scratch run has not.**
+  947 tests green (29 of them the guard's); ruff, ruff format and mypy (strict) clean.
+  Twenty-two mutations were checked against the suite, twice — a third-party action back in
+  a shipped workflow, an action floating on a branch rather than a pinned major, a second
+  tool reading `generated/` in the pull request step, a python one-liner deciding whether to
+  propose, a step that neither installs the plane nor invokes it, a push straight to main,
+  a push to main hidden behind a shell keyword, an empty staging area left to fail, a second
+  dispatch in one day left to fail on the push, a second pull request requested for a branch
+  that already has one, a failed pull request query read as there being none, a commit
+  attempted with no committer identity, a shell syntax error, and nine against the guard's
+  own shell reader — and each fails it.
+  - **`compile.yml` now opens its pull request with `git` and `gh`**, in one step of roughly
+    twenty lines. `peter-evans/create-pull-request` is gone, and with it the project's only
+    dependency on a repository nobody here controls. Three of those lines exist for what the
+    action did invisibly, and each has both a test and a mutation: an empty staging area
+    (`git diff --cached --quiet`), a runner with no committer identity (`git config user.*`),
+    and a workflow dispatched twice in one day, which meets its own branch and its own open
+    pull request (`git push --force` plus a `gh pr list` check).
+  - **The §6.3 guard is `tests/test_workflows.py`**, and it reads the shipped templates
+    rather than a bootstrapped instance — so a platform directory added by a later port is
+    guarded by the fact of existing. `PLATFORM_CLI` there is the second half of
+    `scaffold.WORKFLOW_DIRS`'s seam: a `gitlab/` directory must name `glab` or the guard
+    fails, rather than silently being held to GitHub's CLI.
+  - **The guard has its own tests, and they are the load-bearing ones.** It works by
+    extracting every command word from a `run:` block, and an extractor that quietly
+    returned nothing would pass every workflow ever written while looking identical from the
+    test names. `test_the_guard_sees_the_command_in` pins the ways a second tool could reach
+    a runner without being the first word on a line — inside `$(...)`, inside double quotes,
+    after `&&`, past a line continuation — and the two ways the guard could report a command
+    nobody wrote, which is what would get it worked around later. Seven of the eighteen
+    mutations are aimed there.
+  - **`bash -n` parses the pull request step in the suite.** This is the one place in the
+    project where shell ships to somebody else, nothing here executes it, and an adopter
+    meets a missing `fi` as a red job weeks later. The test skips where no shell is
+    installed, which is worth knowing before reading a survivor in that battery.
+  - **Two spec edits**, both because the code now enforces them: §6.3 admits `date` in the
+    pull-request step — the `compile/<date>` branch name of §6.2 requires one and no CI
+    platform provides it — and says the rule is mechanically enforced by the plane's suite;
+    §6.2 gained the dispatched-twice-in-one-day case beside the empty-staging-area one.
+  - G1's battery had one anchor in `compile.yml` (`body-path:`) and it was updated in the
+    same change; both batteries are green.
+
+  **Review found six issues; all are fixed**, with a test and a mutation each. Two were in
+  the guard itself, which is worse than a defect in the workflow would have been — a guard
+  that passes everything looks exactly like one that works:
+  - **A push to `main` behind any shell keyword was invisible.** The protected-branch test
+    read a segment's raw words while the command extractor stepped over keywords and
+    assignments, so `if ...; then git push --force origin HEAD:main; fi` produced a segment
+    beginning `then`: the assertion skipped it, and the allowlist test saw only `git`. Both
+    readers now go through one `invocation()`. Two readers of the same text, one of which
+    normalizes it, was one reader too many.
+  - **Backtick command substitution was a fourth way in.** The module enumerated the ways a
+    second tool could reach a runner without being the first word on a line, and listed
+    three; `` git commit -m `curl ...` `` reported only `git`.
+
+  The rest were narrower. The action pattern accepted only `@vN`, so pinning to a commit
+  SHA — the stronger pin, and the answer to the moving-tag problem that removed the
+  third-party action in the first place — would have failed the rule meant to encourage it.
+  `gh pr list` was tested inline inside `[ -z ... ]`, where `set -e` cannot see it fail, so
+  an API blip read as "no pull request is open" and would have been answered with a
+  duplicate `gh pr create`; the query is captured on its own line now. And two comments
+  claimed more than they delivered: `if: hashFiles('generated/.report.md')` stops doing
+  anything once the first compile pull request merges — the report is a tracked file from
+  then on, and the empty-staging check is what keeps the quiet weeks green — and the force
+  push silently discards a commit a steward pushed onto a compile branch by hand. Both now
+  say so, and `compile.yml` gained a `concurrency:` group, since two runs racing for one
+  dated branch would force-push over each other.
+
+  **The scratch instance run — done, on `JuhaKor/semprini-scratch-instance`.** Bootstrapped
+  by `semprini init` from this branch's wheel, with the two synthetic sources of
+  `tests/fixtures/acme/` and the pinned `pip install semprini==0.1.0` substituted for
+  `pip install git+https://github.com/JuhaKor/semprini@710777a`, since nothing is published
+  yet (§11 #3). **The real install line therefore remains untested until G5** — say so, do
+  not imply it was covered. The guard was run against the substituted files as well, since
+  the claim that the substitution keeps them legal is about a file this suite never sees.
+  What the runner established that no test here can:
+  1. **The pull request opens, and its body is the report byte for byte** — 2787 bytes,
+     compared against `generated/.report.md` on the branch. C2's pipe and newline escaping
+     survives a real pull request body, which nothing had ever checked. The first compile
+     proposed 46 new nodes across three Turtle files plus the ID map.
+  2. **A `permissions:` block escalates over a read-only default.** The repository's
+     `default_workflow_permissions` is `read`; the workflow asks for `contents: write` and
+     `pull-requests: write` and gets them, so an adopter does not have to change that
+     setting. The one they do have to change is
+     `can_approve_pull_request_reviews`, which `init` already prints.
+  3. **The re-dispatch path works as designed.** A second dispatch the same day force-pushed
+     (`+ d70c4dd...773c8b8 (forced update)`) and found the open pull request, so it updated
+     it in place and asked for no second one.
+  4. **A no-op compile is green and silent.** After merging the first pull request, a third
+     dispatch changed nothing, exited at the empty staging area and opened nothing — the
+     case that was *red* before G1's review. It also confirmed this task's own finding 5:
+     the step was **not** skipped, because `generated/.report.md` is a committed file from
+     the first merge onward, so `if: hashFiles(...)` is true and the staging check is the
+     only thing keeping quiet weeks green.
+  5. **Check 6 resolves on the default shallow checkout.** `semprini check --base
+     ${{ github.sha }}` inside `compile.yml` reported `6. identity: ok` rather than "not
+     run", so only `validate.yml` needs `fetch-depth: 0`.
+  6. **The output is byte-identical across platforms.** The runner's `generated/` was
+     recompiled on this Windows machine and `git status` came back empty — §5.5 rule 5's
+     claim, checked end to end for the first time. And 3.12, the supported floor, is what
+     the runner used; this machine has only 3.14.
+
+  **One spec claim was wrong, and the scratch run is what caught it.** §6.2, `compile.yml`'s
+  comment, the CHANGELOG and a test docstring all said GitHub *fires no `pull_request`
+  event* for a pull request its own token opened. It does fire one: the run is created with
+  actor `github-actions[bot]` and parked, `conclusion: action_required`, with **no jobs** —
+  run `32021357478` on the scratch instance. The conclusion built on it is unchanged and
+  better supported: `validate.yml` does not report on a compile pull request, so
+  `compile.yml` validates before it proposes. But what a steward sees on that pull request
+  is a check that is **pending**, not one that is missing, and all four places now say so.
+  **Now measured, on a protected main.** The scratch instance was made public (branch
+  protection is not available on a private repository on this account) and given a ruleset:
+  pull requests required, `check` from `validate.yml` required, zero approvals. Then, in
+  order: a steward-style source edit on a branch went `BLOCKED` → `CLEAN` when its check
+  passed, which is the control case; a compile pull request opened by the workflow
+  (`#3`) came up with **an empty check rollup — zero check runs on the head commit** and
+  `mergeable_state: blocked`, so the parked run contributes nothing and the PR cannot be
+  merged; approving that run (`POST /actions/runs/<id>/approve`, or the Actions tab) made it
+  execute, pass, and the PR went `CLEAN`. So **on a protected main every compile pull
+  request costs one click**, and that is now in §6.2, in the workflow comment, in the
+  CHANGELOG and — the place a steward will actually meet it — in the instance README, which
+  says what to do and that `compile.yml` has already run the same check on the same files,
+  so the approval is a click rather than a judgement. The escape is a PAT or app token on
+  the pull-request step, which is written down in all four.
+
+  **What that sequence is really evidence for:** the inference held, and it was still right
+  to refuse to write it down. The mechanism it would have been written on top of — "no
+  event fires" — was wrong, and a spec sentence explaining a real behaviour by a wrong
+  mechanism survives until someone acts on the explanation rather than the behaviour.
 
 - [ ] **G3 · Versioning, drift and migrations**
   **Spec:** §7
@@ -2214,14 +2341,14 @@ be deferred without stalling the build.
 - ~~**F3, G3 and D3 are the three tasks most likely to overrun.**~~ Two of the three are
   done. **G3 is the one left**, and its hard core is unchanged: proving that a migration
   preserves identity, rather than asserting it.
-- **G1 done: the plane can now create the thing it compiles.** An organization with the
-  wheel installed gets a complete instance repository, and it is green from the first
-  command — `semprini check` passes on it and a run against it writes nothing. **G2 next**,
-  and it grew a little: both workflows exist and are materialized, but the PR step is
-  being rewritten to drop `peter-evans/create-pull-request` — the project's only
-  third-party CI dependency, and one that shipped into every instance — in favour of `git`
-  plus `gh pr create`, which §6.3 now requires. What is left is that replacement, the
-  mechanical §6.3 guard around it, and a run against `semprini-scratch-instance` on GitHub
-  rather than against a container, since every defect these files have produced so far was
-  a GitHub runtime behaviour no container reproduces. G1's question about the one shell
-  line is answered: it moves inside the PR step.
+- ~~**G1 done: the plane can now create the thing it compiles.**~~ Done, and **G2 with it,
+  which completes Phase G's CI half.** No third-party code ships into an adopter's CI any
+  more, the §6.3 rule is enforced mechanically against the files that ship rather than
+  intended in prose, and — for the first time in this project — both workflows have been
+  run against a real instance on GitHub. That run is where the value was: it proved the
+  report survives a real pull request body, that a no-op compile is green and silent, and
+  that output is byte-identical between the Linux runner and a Windows laptop; and it
+  falsified a mechanism this repository had asserted in four places since G1. **G3 next**,
+  and it is the one task left that the sequencing notes have called a likely overrun since
+  the beginning: its hard core is proving that a migration preserves identity rather than
+  asserting it.
