@@ -2250,7 +2250,7 @@ done and green.
   event fires" — was wrong, and a spec sentence explaining a real behaviour by a wrong
   mechanism survives until someone acts on the explanation rather than the behaviour.
 
-- [ ] **G3 · Versioning, drift and migrations**
+- [x] **G3 · Versioning, drift and migrations**
   **Spec:** §7
   **Deliver:** `src/semprini/migrate/`, the migration registry, and `semprini migrate --to`.
   **Verify:** a synthetic output-affecting change ships a migration that takes the
@@ -2258,6 +2258,141 @@ done and green.
   existing objects and never drop ID-map rows (asserted, not assumed); post-migration
   `semprini check` passes including drift.
   **Depends:** F2
+  **Done.** 1007 tests green (55 of them G3's); ruff, ruff format and mypy (strict) clean; the
+  wheel still installs into a bare venv with pip and `semprini migrate` runs from it. Thirty-six
+  mutations were checked against the suite, over two rounds — the snapshot taken after the steps
+  rather than before, the snapshot holding the ID map itself rather than a copy of its rows, a
+  minted IRI tolerated, a dropped node tolerated, a moved `dcterms:modified` tolerated, the date
+  compared per file rather than over the union, the ID map not held to being append-only, an
+  appended row tolerated, only the first violation reported, a file name escaping `generated/`,
+  a file that is not Turtle, the ontology copy rewritten by a step, a serializer refusal escaping
+  as a traceback, a step returning the wrong type, a step's exception escaping unnamed, steps run
+  newest first, the already-applied step run again, a step beyond the target run anyway, two
+  steps for one release resolved by taking one, a downgrade performed, versions compared as
+  strings, any version string accepted, a step shipping with no summary, `--to` free to name any
+  version, the manifest restamped with the old versions, an ontology version that moved alone
+  read as nothing to do, no up-to-date case at all, `generated/` migrated without being checked
+  against its manifest, the ontology copy left as the previous release wrote it, the report
+  deleted as stale after being written, stale output left behind, the ID map not saved, no report
+  written, the report treated as stale by whoever did not produce it, `generated/` scanned one
+  level deep, and the ontology re-serialized rather than copied — and each fails it.
+
+  **Two of those survived the first run, and both were real test gaps**, not battery noise.
+  Nothing had constructed a step that **mutated the ID map it was handed** — the easier of the
+  two ways past a naive comparison, since `IdMap.append` is public and the map has no removal
+  method at all; and nothing had constructed an instance whose **ontology version alone** had
+  drifted, which is the one drift no other command can clear. Both now have a test.
+
+  **Decisions taken** (all implemented and now in the spec):
+  - **A migration reads `generated/` and the ID map, never the sources.** That is what makes the
+    diff provably about the upgrade: the command has no way to bring in a content change even
+    when the release would also compile the sources differently. Two consequences are now
+    written into §7, because both are the kind of thing that gets re-decided wrongly by whoever
+    touches this next. *A migration is not a recompile* — the next scheduled compile reconciles
+    content, in its own pull request. And **a recompile is not a migration**, which is the reason
+    this module exists rather than being a convenience: a node no source reports any more is
+    re-emitted verbatim from the previous run's file (§3.5), so a recompile carries its *old*
+    statements forward — a term rename done by recompiling reaches every active node and misses
+    every deprecated one.
+  - **One version per step, and the range rule:** a step declares the release that introduced
+    its change and runs when the instance was compiled with something older
+    (`recorded < version <= target`). The alternative — a step declaring both ends of a hop —
+    forces the shipped steps into an unbroken chain, and a patch release nobody wrote a step for
+    then becomes a gap that stalls every adopter sitting on it. Under this rule a patch release
+    costs nothing and an adopter three releases behind runs three steps in order.
+  - **`--to` must be the installed compiler version.** Not a choice of how far to go: the steps
+    live in the package, and the manifest records the release that wrote the files, so a partial
+    migration has no version to record. Requiring the operator to name it is the point — a
+    workflow that pinned one version and installed another is caught before a byte is rewritten.
+    Downgrades are refused; steps are written in one direction only.
+  - **A release that changes no output still has something to do.** With no step in range the
+    command re-serializes the committed graphs, refreshes the copied metamodel and restamps the
+    manifest — which clears the drift check without touching a source or a credential. Migrating
+    an instance already current writes nothing, so a workflow may call it unconditionally.
+  - **Four refusals, and they are the task.** §7's promise is about code a future release has not
+    written, so it is checked after the steps run and before anything is written: the subject set
+    of `generated/` unchanged; every `dcterms:modified` unchanged; the ID map append-only *and*
+    gaining no row; every produced file a `.ttl` directly inside `generated/`. B4's
+    `check_append_only` is **called, not re-derived**, as that task asked — which is also what
+    leaves a step able to edit the `note` column and nothing else, and there is a test for that
+    one legal edit so the guard is not mistaken for "the map must be identical".
+  - **The comparison is a snapshot, taken before any step runs.** The one thing here that could
+    have been wrong silently: an rdflib graph and an `IdMap` are both mutable, so a step that
+    edited what it was handed rather than returning something new would leave all four refusals
+    comparing an object with itself, and every one of them would pass on a migration that had
+    just minted an IRI. `InstanceState.with_graphs()` exists so a step replaces rather than
+    edits, but the guard does not depend on a step using it.
+  - **`dcterms:modified` is never touched.** The date records when the instance's *knowledge* of
+    an object changed; how that knowledge is written down is not knowledge. A migration that
+    refreshed the dates would put every node in the diff and hide what it actually did.
+  - **A migration refuses a `generated/` that disagrees with its manifest.** It rewrites what the
+    compiler wrote, and restamping somebody's hand edit as the new release's output would
+    destroy the hash that would have caught it (§4.3).
+  - **`.report.md` becomes a migration report**, and §5.6 now says so. Its rule was already "the
+    committed report is the report of whatever produced the files beside it"; a compile report
+    left in place would name a release that has not written a byte in the directory and would
+    state a version the manifest beside it contradicts. §5.6's own §4.3 interaction is unchanged:
+    the report is still not hashed.
+  - **`migrate` writes; `check` judges.** The command deliberately runs none of §6.1's checks —
+    they are `semprini check`'s, CI runs them on the resulting pull request, and a migration
+    reporting them would be answering for its own work. The consequence is recorded as a test:
+    a step that returns the state untouched is a migration that did not do what its summary
+    says, nothing here can know that, and what stops it is the shapes refusing the result.
+  - **`migrate/` is three modules**: `steps.py` is data (what this release ships), `registry.py`
+    resolves which of it an upgrade needs, `apply.py` is the only part that touches a disk.
+    §4.1 now lists them.
+
+  **`MIGRATIONS` is empty, and that is the deliverable.** Nothing has been released, so no
+  instance in existence was compiled by an earlier version of this compiler and a step "from" a
+  version nobody ran would be fiction. `steps.py` documents how to add one and the three things
+  to know first; `test_this_release_ships_no_migration` fails the moment one lands, so adding it
+  is deliberate. The vN→vN+1 proof runs a **test-only** step through the real registry: a copy of
+  the fixture instance doctored to what a fictional 0.0.9 writing `sem:legacyStatus` would have
+  left, migrated to the installed release, landing **byte-identical to the committed fixture** —
+  compared against a file this repository already trusts rather than against a golden file the
+  migration itself produced, since the second proves only that it is repeatable. Say it that way
+  in any release note: the machinery is exercised end to end, and no real upgrade has been
+  performed by it, because there is no real upgrade yet.
+
+  **Three small seams opened in other modules**, each because a second copy would have been the
+  alternative: `build.stale()` / `build.remove()` (a run and a migration both own `generated/`
+  wholesale — `run._stale` now passes `keep=(REPORT_FILE,)`, and the `.report.md` exemption
+  rationale stayed at that call site), `build.ontology_file()` (both write the verbatim copy),
+  `report.table()` (both render Markdown tables, and C2 bounded pipe- and newline-escaping at
+  the render points — a migration report with its own renderer would have been a second answer
+  to what happens to a `|`), and `manifest.is_generated_file_name()` (both compose a path under
+  `generated/` from a name they were handed). `tests/test_run.py`'s ordering test now patches
+  `build.remove` rather than `run._remove`.
+
+  **The CLI surface is complete**, and `cli._UNIMPLEMENTED` is gone with it — `migrate` was the
+  last stub. The dispatch tail is now an `AssertionError`, so a subcommand added without a
+  dispatch fails loudly rather than exiting non-zero with no explanation, and
+  `tests/test_cli.py` asserts the declared surface *and* invokes every subcommand to check that
+  none reports itself absent.
+
+  **Two adopter-facing texts changed**, and they matter more than the module: check 3's message
+  now says `run semprini migrate --to <version>` where it said "recompile the instance", and the
+  instance README gained an **Upgrading the compiler** section. A command nobody is told about
+  is a command nobody runs, and the state it resolves — drift red, no way forward that does not
+  touch the sources — is one an adopter would otherwise fix by hand-editing `generated/`.
+
+  Notes for later sessions:
+  - **`X.Y.Z` only.** A version that cannot be compared is refused rather than guessed at,
+    including `0.0.0+source` — C2's rule that a source tree identifies no release, reaching the
+    one other place that records which release wrote an instance's files. A release candidate
+    therefore cannot be a migration target; **G5 owns** deciding whether that matters, and the
+    escape is cheap (an rc adopter migrates to the final release).
+  - **A migration does not touch `mappings/merges.csv` or `mappings/namespace.lock`.** The
+    register's rows name IRIs, which no migration moves; the lock records what the instance
+    bootstrapped against, and §3.4.4 makes upgrading the metamodel the manifest's business.
+    Moving a base IRI remains `run --force-namespace-change`.
+  - **The `note`-column allowance is the only legal ID-map edit today.** A future metamodel
+    migration that reclassified objects would need the `kind` column and would be refused —
+    deliberately: that is a change to this guard, in a release whose CHANGELOG says so, not
+    something a step gets to do quietly.
+  - Nothing in this task ran a migration against a real instance on GitHub, unlike G2. The
+    scratch instance is the place to do it if G5 wants that evidence, and the honest version of
+    the claim until then is "exercised end to end in the suite".
 
 - [ ] **G4 · Project documentation**
   **Spec:** §8, §9.2, §5.2
@@ -2342,9 +2477,10 @@ be deferred without stalling the build.
 - ~~**B1 before everything downstream.**~~ Done. Determinism could not be retrofitted:
   once an instance holds generated files, every serializer change becomes a migration
   (§7). It now is one — a change to `serialize.py`'s output is a major bump.
-- ~~**F3, G3 and D3 are the three tasks most likely to overrun.**~~ Two of the three are
-  done. **G3 is the one left**, and its hard core is unchanged: proving that a migration
-  preserves identity, rather than asserting it.
+- ~~**F3, G3 and D3 are the three tasks most likely to overrun.**~~ All three are done. G3's
+  hard core turned out to be exactly where it was expected: proving that a migration preserves
+  identity rather than asserting it. The proof is a snapshot taken before any step runs, and
+  the mutation that shows why is a one-line reordering.
 - ~~**G1 done: the plane can now create the thing it compiles.**~~ Done, and **G2 with it,
   which completes Phase G's CI half.** No third-party code ships into an adopter's CI any
   more, the §6.3 rule is enforced mechanically against the files that ship rather than
@@ -2352,7 +2488,13 @@ be deferred without stalling the build.
   run against a real instance on GitHub. That run is where the value was: it proved the
   report survives a real pull request body, that a no-op compile is green and silent, and
   that output is byte-identical between the Linux runner and a Windows laptop; and it
-  falsified a mechanism this repository had asserted in four places since G1. **G3 next**,
-  and it is the one task left that the sequencing notes have called a likely overrun since
-  the beginning: its hard core is proving that a migration preserves identity rather than
-  asserting it.
+  falsified a mechanism this repository had asserted in four places since G1.
+- ~~**G3 next.**~~ Done, and **the compiler is now feature-complete**: every subcommand of §5.1
+  does something, and an adopter can bootstrap an instance, compile it, validate it and carry it
+  across a plane upgrade without leaving the CLI. What is left in Phase G is documentation and
+  release, not capability. **G4 next** — and note that G4's verification ("a fresh reader can
+  install, bootstrap and compile using only the README") is now the first task in the project
+  whose subject is a reader rather than a test, so budget for actually walking it.
+  G5 inherits two things beyond its own scope: A2's known gap (every released
+  `/ontology/X.Y.Z/` must keep resolving), and the question of whether a release candidate
+  needs to be a migration target, which G3 refused by requiring `X.Y.Z`.

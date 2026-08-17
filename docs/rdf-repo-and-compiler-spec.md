@@ -413,7 +413,10 @@ semprini/
 │   ├── serialize.py               # canonical Turtle serializer (5.5)
 │   ├── validate.py                # SHACL + structural checks (6.1)
 │   ├── testing.py                 # the adapter contract, as a check authors run (5.2)
-│   ├── migrate/                   # version-to-version migrations (7)
+│   ├── migrate/
+│   │   ├── steps.py               # the migrations this release ships, in release order (7)
+│   │   ├── registry.py            # which of them one upgrade needs (7)
+│   │   └── apply.py               # `semprini migrate` — the only part that writes (7)
 │   ├── adapters/
 │   │   ├── base.py                # BaseAdapter — the plugin contract (5.2)
 │   │   ├── discovery.py           # entry-point discovery (5.2)
@@ -535,7 +538,8 @@ instance as a diff hunk nobody could account for.
   carried forward by lifecycle (5.4) and so *is* produced. `.report.md` is the exception —
   it is written only when something moved (5.6), so a run that produced no report has not
   stopped producing the committed one. Removing a file counts as a change, so the run that
-  does it rewrites the report.
+  does it rewrites the report. A migration (7) is held to the same rule: it writes every
+  file of the directory and removes what it no longer produces.
 - **An instance commits a `.gitattributes` pinning `eol=lf`, and it is not optional.**
   Generated files are written with LF (5.5 rule 5) and compared byte for byte (6.1 check
   7), so a clone on a machine with `core.autocrlf=true` — the Windows default — rewrites
@@ -571,6 +575,7 @@ semprini run       [--source <name>] [--dry-run]                  # fetch, compi
                    [--force-namespace-change]                     # move the base IRI (3.4)
 semprini check     [--base <rev>]                                 # validate only, no writes
 semprini migrate   --to <version>                                 # apply migrations (7)
+                                                                  # <version> = the installed one
 semprini adapters                                                 # list discovered plugins
 semprini version                                                  # compiler + ontology versions
 ```
@@ -1193,6 +1198,14 @@ upgrade rewrites the report rather than leaving one that names an older release 
 manifest that names the new one; and a run that produced byte-identical files while
 *removing* stale output (4.3) has changed the instance and rewrites it too.
 
+A compile is not the only thing that writes this file. `semprini migrate` (7) replaces it
+with a **migration report** — versions upgraded from and to, the steps that ran, what
+happened to each file, and that no IRI was minted and no ID-map row lost. The rule is the
+same one stated above, applied consistently: the committed report describes whatever last
+produced the files beside it, and after a migration that is the migration. A compile report
+left in place would name a release that has not written a byte in the directory and would
+state a version the manifest next to it contradicts.
+
 ### 5.7 Bootstrapping an instance
 
 `semprini init --base-iri https://semantics.acme.com/ --org acme [--language en]`:
@@ -1491,6 +1504,52 @@ Both are recorded in `generated/.manifest.json` and enforced by the drift check 
 map) deterministically in one commit. An upgrade is therefore always reviewable: the
 adopter sees a migration diff, not an unexplained reflow. Migrations never mint new
 IRIs for existing objects and never remove ID-map rows.
+
+A migration reads `generated/` and `mappings/id-map.csv` and **never the sources**. That is
+what makes the diff provably about the upgrade: the command has no way to bring in a content
+change even if the release would also have compiled the sources differently. Two things
+follow, and both are contract rather than implementation:
+
+- **A migration is not a recompile.** If the new release emits different content from the
+  same sources, the next scheduled compile brings that in, in its own pull request.
+- **A recompile is not a migration.** A node no source reports any more is re-emitted verbatim
+  from the previous run's output (3.5), so recompiling carries its *old* statements forward
+  untouched. A term rename performed by recompiling would reach every active node and miss
+  every deprecated one — which is why a release that changes output ships a step rather than
+  telling adopters to run `semprini run`.
+
+`--to` must name the compiler version **installed**: a release's migrations exist only in
+that release, and the manifest records the release that wrote the files, so a partial
+migration has no version to record. Naming it is what catches a workflow that pinned one
+version and installed another, before anything is rewritten. A migration to an older version
+is refused — steps are written in one direction only.
+
+Each step declares the release that introduced its change and runs when the instance was
+compiled with something older, so an adopter three releases behind runs three steps in order
+and a patch release nobody wrote a step for is not a gap. A release that changes no output
+ships no step, and `semprini migrate` then re-serializes the committed graphs unchanged,
+refreshes the copied metamodel and restamps the manifest — which is what clears the drift
+check (6.1 check 3) without reading a source or a credential. Migrating an instance that is
+already current writes nothing.
+
+**Four things a migration may not do**, enforced after the steps run and before anything is
+written, because a promise about code a future release has not written yet is worth what
+checks it: the set of subjects in `generated/` must be unchanged (a migration changes what is
+said about the instance's objects, never which objects exist); every `dcterms:modified` must
+be unchanged (the date records when the instance's knowledge of an object changed, and how
+that knowledge is written down is not knowledge); the ID map must be append-only and must
+gain no row, which between them leave a step able to edit only the `note` column stewards
+own; and every file it produces must be a `.ttl` file directly inside `generated/`. Nothing is
+written unless all four hold, so a refused migration leaves the instance exactly as it was.
+A migration also **refuses to run against a `generated/` that disagrees with its manifest** —
+it rewrites what the compiler wrote, and restamping somebody's hand edit as the new release's
+output would destroy the hash that would have caught it.
+
+Because a migration writes and judges nothing, `generated/.report.md` becomes a **migration
+report** — what was upgraded from and to, which steps ran, what each file did, and that
+identity was preserved. The committed report always describes whatever last produced the
+files beside it (5.6); the next compile that changes anything replaces it. Whether the
+migrated instance is committable is `semprini check`'s answer, not the migration's.
 
 **Support policy.** The current major version receives fixes; the previous major
 receives migrations only. The metamodel namespace itself never changes — versioning

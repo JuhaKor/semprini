@@ -233,6 +233,20 @@ def test_the_arguments_reach_the_files_that_describe_the_instance(tmp_path: Path
     ) >= 1
 
 
+def test_the_readme_says_how_to_upgrade(bootstrapped: Path) -> None:
+    """The one place a steward meets `semprini migrate` (spec 7).
+
+    A command nobody is told about is a command nobody runs, and the state it exists to
+    resolve — check 3 red after a plane upgrade, with no way forward that does not touch the
+    sources — is one an adopter would otherwise fix by hand-editing `generated/`.
+    """
+    readme = (bootstrapped / "README.md").read_text(encoding="utf-8")
+
+    assert "semprini migrate --to" in readme
+    assert "without\nreading your sources" in readme
+    assert "generated/ was compiled with compiler" in readme
+
+
 def test_the_workflows_pin_the_plane_version(bootstrapped: Path) -> None:
     """Both of them, and the version that created the instance (spec 5.7 step 5).
 

@@ -461,5 +461,8 @@ def test_the_cli_still_reports_configuration_errors_with_their_key(
     assert "semprini:" in capsys.readouterr().err
 
 
-def test_the_adapters_command_is_no_longer_a_stub() -> None:
-    assert "adapters" not in cli._UNIMPLEMENTED
+def test_the_adapters_command_is_no_longer_a_stub(capsys: pytest.CaptureFixture[str]) -> None:
+    # Was `"adapters" not in cli._UNIMPLEMENTED`; that table is gone, since G3 implemented
+    # the last stub. `tests/test_cli.py` now asks this of every subcommand at once.
+    assert main(["adapters"]) == ExitCode.OK
+    assert "not implemented" not in capsys.readouterr().err

@@ -21,6 +21,7 @@ from semprini import (
     compiler_version,
     config,
     identity,
+    migrate,
     ontology_version,
     run,
     scaffold,
@@ -47,12 +48,6 @@ class ExitCode(IntEnum):
     UNREACHABLE = 3
     """A configured source was unreachable."""
 
-
-# Subcommands whose implementation lands in a later task. Listed with the task that
-# fills each one so that a stub is never mistaken for a missing feature.
-_UNIMPLEMENTED = {
-    "migrate": "task G3",
-}
 
 # Subcommands that operate on a configured instance, and therefore fail on a broken
 # configuration before doing anything else. `init` is excluded — it writes the
@@ -124,7 +119,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     migrate = subcommands.add_parser("migrate", help="apply migrations")
-    migrate.add_argument("--to", required=True, metavar="<version>")
+    migrate.add_argument(
+        "--to",
+        required=True,
+        metavar="<version>",
+        help=(
+            "the compiler version being upgraded to, which must be the one installed "
+            "(spec 7); a migration is performed by the release it upgrades to, so naming "
+            "it catches a workflow that pinned one version and installed another"
+        ),
+    )
 
     subcommands.add_parser("adapters", help="list discovered plugins")
     subcommands.add_parser("version", help="compiler + ontology versions")
@@ -271,6 +275,21 @@ def _check(arguments: argparse.Namespace, settings: config.InstanceConfig) -> in
     return ExitCode.OK if result.ok else ExitCode.FAILURE
 
 
+def _migrate(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
+    """``semprini migrate`` — rewrite what is committed for a new release (spec 5.1, 7).
+
+    Writes; the operator then reviews the diff and runs ``semprini check``, which is what
+    says whether the migrated instance is committable. This command deliberately does not
+    run those checks itself: they are ``semprini check``'s, CI already runs them on the
+    resulting pull request, and a migration that reported them would be answering for its
+    own work.
+    """
+    result = migrate.migrate(settings, to=arguments.to)
+    for line in result.summary():
+        _say(line)
+    return ExitCode.OK
+
+
 def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig:
     """Load the instance's configuration and check its namespace lock (exit code 2).
 
@@ -348,19 +367,18 @@ def _dispatch(arguments: argparse.Namespace) -> int:
         return _init(arguments)
 
     if arguments.command in _NEEDS_CONFIG:
-        # Deliberately ahead of the "not implemented" message below: a command that will
-        # read the instance owes the operator the configuration error now, with the key
-        # that caused it, rather than after the feature lands.
+        # A command that will read the instance owes the operator the configuration error
+        # first, with the key that caused it.
         settings = _load_config(arguments)
         if arguments.command == "run":
             return _run(arguments, settings)
         if arguments.command == "check":
             return _check(arguments, settings)
+        if arguments.command == "migrate":
+            return _migrate(arguments, settings)
 
-    task = _UNIMPLEMENTED[arguments.command]
-    print(
-        f"{_PROGRAM}: '{arguments.command}' is not implemented in "
-        f"{compiler_version()} (arrives in {task})",
-        file=sys.stderr,
-    )
-    return ExitCode.FAILURE
+    # Unreachable: argparse rejects any subcommand not declared above, and every declared
+    # one is dispatched. An assertion rather than a message about an unimplemented feature —
+    # there are none left — so that adding a subcommand and forgetting to dispatch it fails
+    # loudly instead of exiting non-zero with no explanation.
+    raise AssertionError(f"no dispatch for subcommand {arguments.command!r}")

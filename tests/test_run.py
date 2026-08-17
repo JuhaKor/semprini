@@ -527,18 +527,18 @@ def test_the_id_map_is_saved_before_stale_output_is_removed(
     recovers from, in exchange for a step that has nothing to do with identity.
     """
     order: list[str] = []
-    original_save, original_remove = IdMap.save, run._remove
+    original_save, original_remove = IdMap.save, build.remove
 
     def save(self: IdMap, repo_root: Path | None = None) -> Path:
         order.append("map")
         return original_save(self, repo_root)
 
-    def remove(stale: Any, root: Path) -> None:
+    def remove(stale: Any, root: Path | None = None) -> None:
         order.append("remove")
         original_remove(stale, root)
 
     monkeypatch.setattr(IdMap, "save", save)
-    monkeypatch.setattr(run, "_remove", remove)
+    monkeypatch.setattr(build, "remove", remove)
     (instance / build.GENERATED_DIR / "leftover.txt").write_text("stale", encoding="utf-8")
 
     compile_(instance)
