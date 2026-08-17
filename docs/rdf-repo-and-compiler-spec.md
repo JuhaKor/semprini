@@ -1418,12 +1418,18 @@ Each instance has two workflows, both thin:
   opened, so `validate.yml` does not report on a compile PR, which is why `compile.yml`
   validates before it proposes.
 
-  On GitHub the mechanism is not the one usually described. The `pull_request` run **is**
-  created — measured on a scratch instance, actor `github-actions[bot]` — and is parked with
-  conclusion `action_required` and no jobs, rather than never existing. A compile PR
-  therefore carries a check that is present and pending rather than absent, which is what a
-  steward sees on it. An instance that gives the PR step a credential of its own gets the
-  check run on the PR itself and may drop the step.
+  On GitHub the mechanism is not the one usually described, and the consequence is sharper.
+  Measured on a scratch instance: the `pull_request` run **is** created — actor
+  `github-actions[bot]` — and is parked with conclusion `action_required` and no jobs, so it
+  contributes no check run to the PR at all. Where `validate` is a required check, the PR is
+  therefore not merely lacking a verdict but **unmergeable** (`mergeable_state: blocked`)
+  until a human opens that run and approves it, at which point it executes, passes and the
+  PR goes clean. So on a protected main every compile PR costs one click. The instance
+  README says so, since it looks like a fault and is not; `compile.yml` has already run the
+  same check on the same files, which is what makes the click a click rather than a
+  judgement. An instance that gives the PR step a credential of its own — a PAT or an app
+  token — gets the check run on the PR itself, merges without the click, and may drop the
+  step.
 
 Branch protection on an instance's main: PRs only, validation must pass, at least one
 review.

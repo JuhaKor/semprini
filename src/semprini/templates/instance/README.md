@@ -57,3 +57,14 @@ The scheduled compile opens one when — and only when — something moved. Its 
 the run raised. The diff is the governance interface, so read it as prose: a renamed label
 is one changed line, and an object that a source deleted appears as a status change to
 `deprecated` rather than as a deletion.
+
+One thing to expect on a protected `main`, because it looks like a fault and is not.
+GitHub does not run a workflow on a pull request its own token opened: it creates the run
+and parks it, so `validate` reports nothing on a compile pull request and a required check
+that never reports leaves the pull request unmergeable. Open the run from the **Actions**
+tab and approve it, and the check runs and passes as usual. `compile.yml` has already run
+`semprini check` on exactly these files before proposing them, so the approval is a click
+rather than a judgement. To be rid of the click, give the pull-request step in
+`compile.yml` a token of its own — a PAT or a GitHub App installation token — in place of
+`${{ github.token }}`; the check then runs on the pull request itself, and the
+`semprini check` step in that workflow becomes redundant.

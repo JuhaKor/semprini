@@ -258,10 +258,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   something did.** A week with no changes writes no report and now opens no pull request
   instead of failing on the missing file. And because GitHub does not run a workflow on a
   pull request opened with `GITHUB_TOKEN` — it creates the `pull_request` run and parks it
-  as `action_required` with no jobs, so the check is pending rather than absent —
-  `compile.yml` runs `semprini check` itself, before proposing anything. On a main
-  protected the way `init` recommends, an instance that wants the check to run on the pull
-  request itself gives the pull-request step a PAT or app token instead.
+  as `action_required`, contributing no check to the pull request — `compile.yml` runs
+  `semprini check` itself, before proposing anything.
+- **On a protected main, a compile pull request costs one click**, and the instance README
+  now says so rather than leaving a steward to read it as a fault. The required check never
+  reports on a pull request the workflow's own token opened, which leaves it unmergeable
+  until someone approves the parked run from the Actions tab; it then runs and passes.
+  Because `compile.yml` has already run the same check on the same files, that approval is
+  a click and not a judgement. An instance that gives the pull-request step a PAT or app
+  token gets the check on the pull request itself and may drop that step.
 - **No third-party CI action ships into an instance** (§6.3). The scheduled compile opens
   its pull request with `git` and GitHub's own `gh`, not with
   `peter-evans/create-pull-request` — the only dependency this project had on a repository

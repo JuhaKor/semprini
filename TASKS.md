@@ -2051,7 +2051,7 @@ done and green.
     that lets the scheduled compile open a pull request at all — which is the kind of thing
     an adopter discovers from a failing job three weeks later.
 
-- [ ] **G2 · Workflow templates and CI portability**
+- [x] **G2 · Workflow templates and CI portability**
   **Spec:** §6.2, §6.3
   **Deliver:** `workflows/` templates for `compile.yml` and `validate.yml`, materialized
   by `init`.
@@ -2226,10 +2226,25 @@ done and green.
   better supported: `validate.yml` does not report on a compile pull request, so
   `compile.yml` validates before it proposes. But what a steward sees on that pull request
   is a check that is **pending**, not one that is missing, and all four places now say so.
-  **Not yet measured:** whether a pending `action_required` check blocks the merge where
-  `validate` is a required check. That needs branch protection on the scratch instance, and
-  it is the one thing left before this box is ticked. Do not write the merge-blocking claim
-  down until it has been run.
+  **Now measured, on a protected main.** The scratch instance was made public (branch
+  protection is not available on a private repository on this account) and given a ruleset:
+  pull requests required, `check` from `validate.yml` required, zero approvals. Then, in
+  order: a steward-style source edit on a branch went `BLOCKED` → `CLEAN` when its check
+  passed, which is the control case; a compile pull request opened by the workflow
+  (`#3`) came up with **an empty check rollup — zero check runs on the head commit** and
+  `mergeable_state: blocked`, so the parked run contributes nothing and the PR cannot be
+  merged; approving that run (`POST /actions/runs/<id>/approve`, or the Actions tab) made it
+  execute, pass, and the PR went `CLEAN`. So **on a protected main every compile pull
+  request costs one click**, and that is now in §6.2, in the workflow comment, in the
+  CHANGELOG and — the place a steward will actually meet it — in the instance README, which
+  says what to do and that `compile.yml` has already run the same check on the same files,
+  so the approval is a click rather than a judgement. The escape is a PAT or app token on
+  the pull-request step, which is written down in all four.
+
+  **What that sequence is really evidence for:** the inference held, and it was still right
+  to refuse to write it down. The mechanism it would have been written on top of — "no
+  event fires" — was wrong, and a spec sentence explaining a real behaviour by a wrong
+  mechanism survives until someone acts on the explanation rather than the behaviour.
 
 - [ ] **G3 · Versioning, drift and migrations**
   **Spec:** §7
@@ -2326,14 +2341,14 @@ be deferred without stalling the build.
 - ~~**F3, G3 and D3 are the three tasks most likely to overrun.**~~ Two of the three are
   done. **G3 is the one left**, and its hard core is unchanged: proving that a migration
   preserves identity, rather than asserting it.
-- **G1 done: the plane can now create the thing it compiles.** An organization with the
-  wheel installed gets a complete instance repository, and it is green from the first
-  command — `semprini check` passes on it and a run against it writes nothing. **G2 next**,
-  and it grew a little: both workflows exist and are materialized, but the PR step is
-  being rewritten to drop `peter-evans/create-pull-request` — the project's only
-  third-party CI dependency, and one that shipped into every instance — in favour of `git`
-  plus `gh pr create`, which §6.3 now requires. What is left is that replacement, the
-  mechanical §6.3 guard around it, and a run against `semprini-scratch-instance` on GitHub
-  rather than against a container, since every defect these files have produced so far was
-  a GitHub runtime behaviour no container reproduces. G1's question about the one shell
-  line is answered: it moves inside the PR step.
+- ~~**G1 done: the plane can now create the thing it compiles.**~~ Done, and **G2 with it,
+  which completes Phase G's CI half.** No third-party code ships into an adopter's CI any
+  more, the §6.3 rule is enforced mechanically against the files that ship rather than
+  intended in prose, and — for the first time in this project — both workflows have been
+  run against a real instance on GitHub. That run is where the value was: it proved the
+  report survives a real pull request body, that a no-op compile is green and silent, and
+  that output is byte-identical between the Linux runner and a Windows laptop; and it
+  falsified a mechanism this repository had asserted in four places since G1. **G3 next**,
+  and it is the one task left that the sequencing notes have called a likely overrun since
+  the beginning: its hard core is proving that a migration preserves identity rather than
+  asserting it.

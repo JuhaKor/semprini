@@ -49,12 +49,14 @@ jobs:
 
       # The compile PR is opened with GITHUB_TOKEN, and GitHub will not run a workflow on a
       # pull request its own token opened. What it does instead — measured, not assumed — is
-      # create the `pull_request` run and park it as `action_required` with no jobs, so
-      # validate.yml shows on the compile PR as a check that is pending rather than one that
-      # is missing. Running the same command here is what keeps the compiler's own output
-      # from being the one diff in this instance nobody validated. Give the step below a PAT
-      # or app token instead if you would rather the check run on the pull request itself;
-      # then this step is redundant and can go.
+      # create the `pull_request` run and park it as `action_required` with no jobs, so it
+      # contributes no check to the pull request and validate.yml reports nothing there. On
+      # a protected main that leaves the pull request unmergeable until someone opens the
+      # run from the Actions tab and approves it. Running the same command here is what
+      # makes that a click rather than a judgement — and what keeps the compiler's own
+      # output from being the one diff in this instance nobody validated. Give the step
+      # below a PAT or app token instead if you would rather the check run on the pull
+      # request itself; then this step is redundant and can go.
       #
       # `--base` is the commit this run started from: nothing has been committed yet, so
       # that is exactly the ID map as it stood before the compile (spec 6.1 check 6).
