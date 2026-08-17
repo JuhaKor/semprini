@@ -286,6 +286,64 @@ def test_a_release_that_changes_no_output_still_restamps(unmigrated_instance: Pa
 # ----------------------------------------------------------------------------- the report
 
 
+def test_the_id_map_is_written_before_the_files(
+    old_instance: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The opposite order to a run's, and deliberately (spec 5.4, 7).
+
+    A run writes the files first because it *mints*: ``generated/`` holding an IRI the map has
+    never heard of is a state only deleting ``generated/`` recovers from. A migration mints
+    nothing, so that hazard does not exist — and the other one does. The manifest is written
+    with the files, so a crash between the two calls would leave an instance already recording
+    the new version, and the next run of the command would answer "nothing to migrate": whatever
+    the step did to the map would be lost with no trace. In this order the same crash leaves an
+    unstamped manifest, which a re-run migrates as though nothing had happened.
+    """
+    order: list[str] = []
+    original_save, original_write = IdMap.save, build.write_all
+
+    def save(self: IdMap, repo_root: Path | None = None) -> Path:
+        order.append("map")
+        return original_save(self, repo_root)
+
+    def write_all(files: object, repo_root: Path | None = None) -> object:
+        order.append("files")
+        return original_write(files, repo_root)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IdMap, "save", save)
+    monkeypatch.setattr(build, "write_all", write_all)
+
+    migrate.migrate(settings_for(old_instance), to=_current(), migrations=(RENAME,))
+
+    assert order == ["map", "files"]
+
+
+def test_a_metamodel_that_moved_without_a_version_bump_is_still_something_to_do(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Check 7 compares the copied metamodel as **bytes**, so this guard has to as well.
+
+    A release that edited `sem.ttl` without moving its `owl:versionInfo` — a corrected term
+    comment, say — leaves every instance red on the one check `semprini migrate` is the only
+    cure for. Judged on the recorded version alone, the command would answer "nothing to
+    migrate" and there would be no way out. A hand edit cannot reach here: the manifest
+    verification refuses that first.
+    """
+    root = tmp_path / "acme"
+    shutil.copytree(FIXTURE_INSTANCE, root)
+    stale_copy = "# an earlier metamodel, same version\n"
+    (root / GENERATED_DIR / ONTOLOGY_FILE).write_text(stale_copy, encoding="utf-8", newline="\n")
+    _restamped(root, compiler=_current())
+    settings = settings_for(root)
+    assert not validate.check(settings).ok
+
+    result = migrate.migrate(settings, to=_current(), migrations=())
+
+    assert result.migrated
+    assert (root / GENERATED_DIR / ONTOLOGY_FILE).read_bytes() == committed(ONTOLOGY_FILE)
+    assert validate.check(settings).ok
+
+
 def test_an_instance_that_has_never_compiled_can_still_be_migrated(tmp_path: Path) -> None:
     """Bootstrap, then upgrade before the first compile — an ordinary sequence.
 
@@ -552,6 +610,56 @@ def test_a_step_may_write_in_the_note_column(old_instance: Path) -> None:
     reloaded = IdMap.load(old_instance)
     assert reloaded.rows[0].note == "annotated by the migration"
     assert reloaded.check_append_only(IdMap.load(FIXTURE_INSTANCE)) == ()
+    # And the report says so. It claimed the rows were untouched before this was reviewed,
+    # which on the one occasion it mattered would have contradicted the diff beside it.
+    written = (old_instance / GENERATED_DIR / REPORT_FILE).read_text(encoding="utf-8")
+    assert "except the `note` column of 1 row" in written
+
+
+def test_the_report_says_the_map_was_untouched_when_it_was(old_instance: Path) -> None:
+    migrate.migrate(settings_for(old_instance), to=_current(), migrations=(RENAME,))
+
+    written = (old_instance / GENERATED_DIR / REPORT_FILE).read_text(encoding="utf-8")
+    assert "none added, none removed, none reordered, none altered" in written
+
+
+def test_a_step_that_only_reorders_the_id_map_is_refused(old_instance: Path) -> None:
+    """Neither of the two checks above can see order, and the file's order is its history.
+
+    ``check_append_only`` looks a row up by its ref and the new-row check is a set difference,
+    so the same rows shuffled pass both — and would then be saved as a rewritten
+    ``mappings/id-map.csv``. A whole-file diff in the identity registry, in the one command
+    whose entire claim is that its diff is about nothing but the upgrade.
+    """
+
+    def shuffle(state: InstanceState) -> InstanceState:
+        reversed_rows = IdMap(tuple(reversed(state.id_map.rows)))
+        return InstanceState(graphs=_rename_legacy_status(state).graphs, id_map=reversed_rows)
+
+    before = (old_instance / ID_MAP_PATH).read_bytes()
+
+    with pytest.raises(MigrationError) as raised:
+        migrate.migrate(
+            settings_for(old_instance), to=_current(), migrations=(_step("shuffles", shuffle),)
+        )
+
+    assert "in a different order" in str(raised.value)
+    assert (old_instance / ID_MAP_PATH).read_bytes() == before
+
+
+def test_a_reordering_is_reported_once_not_twice(old_instance: Path) -> None:
+    # A removal changes the order too, and the check that knows what was removed says so
+    # better. Two issues about one edit would have an adopter looking for two problems.
+    def forget(state: InstanceState) -> InstanceState:
+        kept = IdMap(state.id_map.rows[:-1])
+        return InstanceState(graphs=_rename_legacy_status(state).graphs, id_map=kept)
+
+    with pytest.raises(MigrationError) as raised:
+        migrate.migrate(
+            settings_for(old_instance), to=_current(), migrations=(_step("forgets", forget),)
+        )
+
+    assert "in a different order" not in str(raised.value)
 
 
 def test_a_step_that_edits_what_it_was_handed_is_still_checked(old_instance: Path) -> None:

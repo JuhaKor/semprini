@@ -1274,8 +1274,10 @@ categories below. Steps, all blocking unless noted:
    files and stale output alike.
 3. **Version drift**: the compiler and ontology versions recorded in `.manifest.json`
    match the versions actually running. This makes a plane upgrade a deliberate,
-   separately reviewable "recompile with `<version>`" PR rather than a surprise reflow
-   of every file mixed into a content change (7).
+   separately reviewable `semprini migrate --to <version>` PR rather than a surprise reflow
+   of every file mixed into a content change (7). The finding names what to do about it, and
+   which of the two versions is the newer decides that: ahead of the installed release the
+   instance needs the *pin* changed, not a migration, since migrations only move forward.
 4. **Namespace lock**: `config/semprini.yaml`'s base IRI matches `mappings/namespace.lock`
    (3.4); every generated subject IRI falls under it. The two halves fail differently and
    deliberately: a base IRI disagreeing with the lock is exit `2` and aborts, because the
@@ -1537,13 +1539,27 @@ written, because a promise about code a future release has not written yet is wo
 checks it: the set of subjects in `generated/` must be unchanged (a migration changes what is
 said about the instance's objects, never which objects exist); every `dcterms:modified` must
 be unchanged (the date records when the instance's knowledge of an object changed, and how
-that knowledge is written down is not knowledge); the ID map must be append-only and must
-gain no row, which between them leave a step able to edit only the `note` column stewards
-own; and every file it produces must be a `.ttl` file directly inside `generated/`. Nothing is
-written unless all four hold, so a refused migration leaves the instance exactly as it was.
+that knowledge is written down is not knowledge); the ID map must gain no row, lose none, have
+none rewritten and come back in the same order — which between them leave a step able to write
+the `note` column stewards own and nothing else; and every file it produces must be a `.ttl`
+file directly inside `generated/`. Nothing is written unless all four hold, so a refused
+migration leaves the instance exactly as it was.
 A migration also **refuses to run against a `generated/` that disagrees with its manifest** —
 it rewrites what the compiler wrote, and restamping somebody's hand edit as the new release's
 output would destroy the hash that would have caught it.
+
+The ID map is written **before** the generated files, which is the opposite of a compile's
+order (5.4) and deliberate. A compile writes the files first because it mints, and `generated/`
+holding an IRI the map has never heard of is unrecoverable; a migration mints nothing, so that
+hazard cannot arise, while another one can — the manifest is written with the files, and a
+crash between the two would leave an instance already recording the new version, which the
+next invocation would read as nothing to migrate.
+
+Drift is reported with the direction it points in (6.1 check 3), because only one direction is
+an upgrade. An instance already migrated to a newer release than the one installed — what a
+pull request looks like between the migration commit and the workflow pin being updated —
+cannot be migrated backwards, so the check tells that operator to install or pin the recorded
+version instead of naming a command that would refuse itself.
 
 Because a migration writes and judges nothing, `generated/.report.md` becomes a **migration
 report** — what was upgraded from and to, which steps ran, what each file did, and that

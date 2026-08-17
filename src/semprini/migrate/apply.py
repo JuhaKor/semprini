@@ -29,9 +29,12 @@ run and before anything is written:
    about the instance's objects, never which objects exist;
 2. every ``dcterms:modified`` is unchanged — the date says when the instance's knowledge of
    an object changed, and how that knowledge is written down is not knowledge;
-3. the ID map is append-only *and* gained nothing —
-   :meth:`~semprini.identity.IdMap.check_append_only` plus a check for new rows, which
-   between them leave a step able to edit only the ``note`` column stewards own;
+3. the ID map gained no row, lost none, had none rewritten
+   (:meth:`~semprini.identity.IdMap.check_append_only`) and came back **in the same order** —
+   which between them leave a step able to write the ``note`` column stewards own and nothing
+   else. Order is checked because neither of the other two can see it: one looks a row up by
+   its ref and the other is a set difference, so the same rows shuffled would pass both and be
+   saved as a rewritten identity registry;
 4. every file name a step returned is a ``.ttl`` file directly inside ``generated/``.
 
 Widening any of those is a deliberate change to this module, in a release whose CHANGELOG
@@ -51,7 +54,7 @@ from rdflib.term import Node
 from semprini import build, compiler_version, manifest, ontology_version, report, serialize
 from semprini.build import GENERATED_DIR, ONTOLOGY_FILE, OutputFile
 from semprini.config import InstanceConfig
-from semprini.identity import IdMap
+from semprini.identity import ID_MAP_PATH, IdMap
 from semprini.manifest import MANIFEST_FILE, Manifest
 from semprini.migrate.registry import (
     InstanceState,
@@ -101,6 +104,13 @@ class MigrationReport:
     ontology_refreshed: bool
     id_map_rows: int
 
+    notes_changed: int = 0
+    """Rows whose ``note`` a step rewrote — the one ID-map column a migration may write.
+
+    Reported rather than assumed absent. The guards permit this one edit (spec 5.4 gives the
+    column to stewards, and the append-only check ignores it), so a report claiming the map was
+    untouched would contradict the diff beside it on the one occasion it mattered."""
+
     def render(self) -> str:
         lines = [
             "# Migration report",
@@ -144,9 +154,9 @@ class MigrationReport:
             "## Identity",
             "",
             f"`mappings/id-map.csv` holds {self.id_map_rows} "
-            f"{'row' if self.id_map_rows == 1 else 'rows'}, none of them removed, rewritten "
-            f"or added. No IRI was minted: a migration changes how this instance's objects "
-            f"are written, never which objects exist (spec 7).",
+            f"{'row' if self.id_map_rows == 1 else 'rows'}: none added, none removed, none "
+            f"reordered{self._notes()}. No IRI was minted — a migration changes how this "
+            f"instance's objects are written, never which objects exist (spec 7).",
             "",
             "## What this is not",
             "",
@@ -157,6 +167,15 @@ class MigrationReport:
             "",
         ]
         return "\n".join(lines)
+
+    def _notes(self) -> str:
+        if not self.notes_changed:
+            return ", none altered"
+        rows = "row" if self.notes_changed == 1 else "rows"
+        return (
+            f", and none altered except the `note` column of {self.notes_changed} {rows} — the "
+            f"one column of this file a migration may write, and stewards' to edit either way"
+        )
 
     def to_file(self) -> OutputFile:
         """The report as one of the migration's output files.
@@ -284,9 +303,21 @@ def migrate(
     steps = plan(
         MIGRATIONS if migrations is None else migrations, recorded=from_compiler, target=target
     )
-    if from_compiler == target and recorded.ontology_version == running_ontology:
+    if (
+        from_compiler == target
+        and recorded.ontology_version == running_ontology
+        and build.unchanged([build.ontology_file()], root)
+    ):
         # Idempotent, so that re-running one after a failure or a retry is safe, and so that
         # a workflow may call it unconditionally.
+        #
+        # The copied metamodel is compared as **bytes**, not only by recorded version, because
+        # check 7 does (spec 6.1): it holds `generated/ontology.ttl` against the packaged
+        # document verbatim. A release that edited `sem.ttl` without moving its version would
+        # otherwise leave every instance failing a check that this is the only command able to
+        # clear, with this one answering "nothing to migrate". A hand edit cannot reach here —
+        # the manifest verification above refuses it — so a difference means the *packaged*
+        # document moved.
         return MigrationResult(
             from_compiler=recorded.compiler_version,
             to_compiler=running_compiler,
@@ -315,14 +346,22 @@ def migrate(
         files=_changes(files, stale, root),
         ontology_refreshed=not build.unchanged([build.ontology_file()], root),
         id_map_rows=len(after.id_map),
+        notes_changed=_notes_changed(before.id_map, after.id_map),
     )
     files += (run_report.to_file(),)
 
-    build.write_all(files, root)
-    # The map immediately after the files it describes, and once — the order spec 5.4 needs
-    # and that :mod:`semprini.run` keeps for the same reason: generated/ holding IRIs the map
-    # does not know is a state only deleting generated/ recovers from.
+    # **The map first here, which is the opposite of what a run does**, and the reason is worth
+    # writing down because the divergence looks like a mistake. A run writes the files first
+    # because it *mints*: generated/ holding an IRI the map has never heard of is a state only
+    # deleting generated/ recovers from. A migration mints nothing — the subject set is
+    # invariant, checked above — so that hazard does not exist, and the other one does. The
+    # manifest is written with the files, so a crash between the two calls would leave an
+    # instance whose recorded version is already the new one, and the up-to-date test would then
+    # answer "nothing to migrate" on the re-run: whatever the step did to the map would be lost
+    # silently. In this order a crash leaves a saved map and an unstamped manifest, which the
+    # re-run migrates as though nothing had happened.
     after.id_map.save(root)
+    build.write_all(files, root)
     build.remove(stale, root)
 
     return MigrationResult(
@@ -439,8 +478,8 @@ def _check_identity(before: _Snapshot, after: InstanceState) -> None:
     )
 
     # B4's own definition of "this file was not edited", called rather than re-derived: it
-    # compares every column but `note`, the one stewards own. Between it and the new-row
-    # check below, a step is left able to edit that column and nothing else.
+    # compares every column but `note`, the one stewards own. Between it and the two checks
+    # below, a step is left able to edit that column and nothing else.
     issues.extend(after.id_map.check_append_only(before.id_map))
     known = {row.ref for row in before.id_map}
     issues.extend(
@@ -453,8 +492,35 @@ def _check_identity(before: _Snapshot, after: InstanceState) -> None:
         for ref in sorted(row.ref for row in after.id_map if row.ref not in known)
     )
 
+    # Order, which neither check above can see: one looks rows up by ref and the other is a set
+    # difference, so a step that returned the same rows shuffled passes both. It would then be
+    # saved as a rewritten `mappings/id-map.csv` — a whole-file diff in the identity registry,
+    # in the one command whose entire claim is that its diff is about nothing but the upgrade.
+    # The file's order is its history (spec 5.4: rows are in append order).
+    # Asked only when the rows are otherwise the same set: a removal or an addition changes the
+    # order too, and is already reported above by the check that knows what it was.
+    if {row.ref for row in after.id_map} == known and [row.ref for row in before.id_map] != [
+        row.ref for row in after.id_map
+    ]:
+        issues.append(
+            Issue(
+                Severity.ERROR,
+                "the ID map's rows came back in a different order; the file is append-only and "
+                "its order is the order they were appended in (spec 5.4)",
+                ID_MAP_PATH.as_posix(),
+            )
+        )
+
     if issues:
         raise MigrationError(issues)
+
+
+def _notes_changed(before: IdMap, after: IdMap) -> int:
+    """How many rows a step rewrote the ``note`` of. Reached only once the guards have passed,
+    so both maps are known to hold the same rows in the same order."""
+    return sum(
+        1 for row in after if (found := before.row(row.ref)) is not None and found.note != row.note
+    )
 
 
 def _subjects(graphs: Mapping[str, Graph]) -> frozenset[URIRef]:

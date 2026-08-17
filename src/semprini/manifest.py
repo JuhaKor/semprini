@@ -34,7 +34,7 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
 
-from semprini import UNINSTALLED_VERSION, compiler_version, ontology_version
+from semprini import UNINSTALLED_VERSION, compiler_version, ontology_version, version_parts
 from semprini.build import GENERATED_DIR, OutputFile
 from semprini.model import Issue, IssueError, Severity
 from semprini.report import REPORT_FILE
@@ -330,23 +330,51 @@ class Manifest:
         recompile needs the sources and a credential, and for an object no source reports any
         more it carries the *old* statements forward (spec 3.5, 7) — so on the one kind of
         release where it seems interchangeable, it is not.
+
+        **Which way the drift points decides the advice**, and getting that wrong is worse than
+        saying nothing. An instance already migrated to a newer release, checked by CI that
+        still pins the old one, drifts *backwards* — and telling that operator to migrate to the
+        installed version names a command that is refused, since migrations only ever move
+        forward (spec 7). It is a reachable state and an ordinary one: it is what a pull request
+        looks like between the migration commit and the workflow pin being updated.
         """
         running = {
             "compiler": compiler_version() if compiler is None else compiler,
             "ontology": ontology_version() if ontology is None else ontology,
         }
         recorded = {"compiler": self.compiler_version, "ontology": self.ontology_version}
+        advice = _advice(recorded["compiler"], running["compiler"])
         return tuple(
             Issue(
                 Severity.ERROR,
                 f"generated/ was compiled with {which} {recorded[which]}, but {running[which]} "
-                f"is running; run `semprini migrate --to {running['compiler']}` in its own PR "
-                f"(spec 7)",
+                f"is running; {advice} (spec 7)",
                 f"{MANIFEST_FILE}#{which}_version",
             )
             for which in ("compiler", "ontology")
             if recorded[which] != running[which]
         )
+
+
+def _advice(recorded: str, running: str) -> str:
+    """What to do about drift, given which of the two compiler versions is the newer.
+
+    Three answers, because there are three states and only one of them is the upgrade
+    everybody pictures. Ahead of the installed release, the instance does not need migrating —
+    the *pin* is stale, and migrating backwards is refused. Unorderable versions (a hand-edited
+    manifest, a compiler running from a source tree) get the one sentence that is true either
+    way rather than a guess dressed as an instruction.
+    """
+    here, there = version_parts(running), version_parts(recorded)
+    if here is None or there is None:
+        return "the two must agree before this instance can be committed"
+    if here < there:
+        return (
+            f"the installed release is older than the one that compiled generated/, and a "
+            f"migration only ever moves forward; install semprini=={recorded} — if this is CI, "
+            f"the pinned version in the workflow is the stale value"
+        )
+    return f"run `semprini migrate --to {running}` in its own PR"
 
 
 def _present(directory: Path) -> list[str]:

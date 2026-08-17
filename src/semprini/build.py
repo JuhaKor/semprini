@@ -353,10 +353,11 @@ def stale(
     flat by spec, so a nested file is by definition not this run's, and anything reading
     the tree would still read it.
 
-    ``keep`` names files that are written on their own terms and are therefore never stale
-    even when this caller did not produce them. One command passes it — a compile that
-    changed nothing writes no report (spec 5.6), and has not thereby stopped producing the
-    one that is committed.
+    ``keep`` names files that are written on their own terms and are therefore never stale even
+    when this caller did not produce them. Both callers pass ``.report.md``, for two different
+    reasons that arrive at the same rule: a compile that changed nothing writes no report (spec
+    5.6) and has not thereby stopped producing the one that is committed, and a migration writes
+    its report *after* asking this question, so listing it would delete what it then wrote.
     """
     root = Path.cwd() if repo_root is None else Path(repo_root)
     directory = root / GENERATED_DIR

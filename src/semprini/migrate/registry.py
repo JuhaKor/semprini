@@ -20,13 +20,13 @@ guessed at, because the guess decides whether an adopter's files are rewritten.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from rdflib import Graph
 
+from semprini import version_parts
 from semprini.identity import IdMap
 from semprini.model import Issue, IssueError, Severity
 
@@ -41,8 +41,6 @@ __all__ = [
 ]
 
 Version = tuple[int, int, int]
-
-_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 
 
 class MigrationError(IssueError):
@@ -134,8 +132,8 @@ def parse_version(text: str, *, what: str) -> Version:
     source tree identifies no release, so there is no telling what an instance would be
     being migrated *to* (spec 7).
     """
-    match = _VERSION.match(text)
-    if match is None:
+    parts = version_parts(text)
+    if parts is None:
         raise MigrationError(
             [
                 Issue(
@@ -147,8 +145,7 @@ def parse_version(text: str, *, what: str) -> Version:
                 )
             ]
         )
-    major, minor, patch = match.groups()
-    return int(major), int(minor), int(patch)
+    return parts
 
 
 def plan(

@@ -2258,8 +2258,8 @@ done and green.
   existing objects and never drop ID-map rows (asserted, not assumed); post-migration
   `semprini check` passes including drift.
   **Depends:** F2
-  **Done.** 1007 tests green (55 of them G3's); ruff, ruff format and mypy (strict) clean; the
-  wheel still installs into a bare venv with pip and `semprini migrate` runs from it. Thirty-six
+  **Done.** 1015 tests green (61 of them G3's); ruff, ruff format and mypy (strict) clean; the
+  wheel still installs into a bare venv with pip and `semprini migrate` runs from it. Forty-five
   mutations were checked against the suite, over two rounds — the snapshot taken after the steps
   rather than before, the snapshot holding the ID map itself rather than a copy of its rows, a
   minted IRI tolerated, a dropped node tolerated, a moved `dcterms:modified` tolerated, the date
@@ -2275,13 +2275,52 @@ done and green.
   against its manifest, the ontology copy left as the previous release wrote it, the report
   deleted as stale after being written, stale output left behind, the ID map not saved, no report
   written, the report treated as stale by whoever did not produce it, `generated/` scanned one
-  level deep, and the ontology re-serialized rather than copied — and each fails it.
+  level deep, and the ontology re-serialized rather than copied — and each fails it. The nine
+  from review are listed with the findings below.
 
   **Two of those survived the first run, and both were real test gaps**, not battery noise.
   Nothing had constructed a step that **mutated the ID map it was handed** — the easier of the
   two ways past a naive comparison, since `IdMap.append` is public and the map has no removal
   method at all; and nothing had constructed an instance whose **ontology version alone** had
   drifted, which is the one drift no other command can clear. Both now have a test.
+
+  **Review found six issues; all are fixed**, with a test and a mutation each (9 more mutations,
+  45/45 now caught, and `tests/test_manifest.py` joined the battery's `TESTS`). Two are worth
+  remembering:
+  - **The drift message I had just improved could advise a command guaranteed to be refused.**
+    Check 3's finding said `run semprini migrate --to <the running version>` unconditionally,
+    but migrations only move forward. The reachable state is not exotic — it is the *procedure
+    this task's own README section prescribes*: migrate, commit, and the pull request's CI still
+    installs the old pinned version, so check 3 fires in reverse and tells the operator to
+    migrate backwards, which exits 1. The advice now branches on which of the two versions is
+    the newer, and an unorderable version gets the one sentence true either way rather than a
+    guess dressed as an instruction. **A message is behaviour when it tells someone what to
+    run** — and the previous wording, "recompile the instance", was at least executable in that
+    state, so this was a regression introduced by an improvement.
+  - **The write order made one crash unrecoverable, and only in this command.** `write_all`
+    restamps the manifest, so a crash between it and `id_map.save()` left an instance already
+    recording the new version — and the up-to-date test then answers "nothing to migrate" on the
+    re-run, losing a step's ID-map edit silently. A compile has the same window and recovers,
+    because a re-run re-derives everything from the sources; a migration has no equivalent. Fixed
+    by writing the map **first**, which is safe here and is not for a compile: a compile writes
+    files first because it mints, and `generated/` holding an IRI the map has never heard of is
+    what that order exists to prevent. A migration mints nothing, so the hazard the order guards
+    against cannot arise while the one it creates can.
+
+  The rest were narrower, and three of them were claims that outran what the code enforced:
+  nothing held a step to preserving ID-map row **order** — `check_append_only` looks rows up by
+  ref and the new-row check is a set difference, so the same rows shuffled passed both and would
+  have been saved as a rewritten identity registry, in the one command whose whole claim is a
+  diff about nothing but the upgrade; the report asserted the rows were "none removed, rewritten
+  or added" while the guards deliberately permit a `note` edit, so on the one occasion it
+  mattered the committed, PR-facing report would have contradicted the diff beside it (it now
+  counts and names them); the up-to-date test compared recorded ontology *versions* while check 7
+  compares the copied metamodel as **bytes**, so a release that edited `sem.ttl` without moving
+  its version would have left every instance failing the one check this command is the only cure
+  for, with the command saying there was nothing to do; and `build.stale`'s docstring still said
+  "one command passes it" after this task made it two. Version parsing moved to
+  `semprini.version_parts()` in the process — the drift check needs the ordering too, and two
+  answers to "does 0.10.0 come after 0.9.0" would have shown up in exactly one of the two places.
 
   **Decisions taken** (all implemented and now in the spec):
   - **A migration reads `generated/` and the ID map, never the sources.** That is what makes the
@@ -2311,11 +2350,13 @@ done and green.
     an instance already current writes nothing, so a workflow may call it unconditionally.
   - **Four refusals, and they are the task.** §7's promise is about code a future release has not
     written, so it is checked after the steps run and before anything is written: the subject set
-    of `generated/` unchanged; every `dcterms:modified` unchanged; the ID map append-only *and*
-    gaining no row; every produced file a `.ttl` directly inside `generated/`. B4's
-    `check_append_only` is **called, not re-derived**, as that task asked — which is also what
-    leaves a step able to edit the `note` column and nothing else, and there is a test for that
-    one legal edit so the guard is not mistaken for "the map must be identical".
+    of `generated/` unchanged; every `dcterms:modified` unchanged; the ID map gaining no row,
+    losing none, having none rewritten and coming back in the same order; every produced file a
+    `.ttl` directly inside `generated/`. B4's `check_append_only` is **called, not re-derived**,
+    as that task asked — which is also what leaves a step able to write the `note` column and
+    nothing else, and there is a test for that one legal edit so the guard is not mistaken for
+    "the map must be identical". Order is checked separately because neither of the other two map
+    checks can see it (review finding; see above).
   - **The comparison is a snapshot, taken before any step runs.** The one thing here that could
     have been wrong silently: an rdflib graph and an `IdMap` are both mutable, so a step that
     edited what it was handed rather than returning something new would leave all four refusals
@@ -2354,8 +2395,9 @@ done and green.
   in any release note: the machinery is exercised end to end, and no real upgrade has been
   performed by it, because there is no real upgrade yet.
 
-  **Three small seams opened in other modules**, each because a second copy would have been the
-  alternative: `build.stale()` / `build.remove()` (a run and a migration both own `generated/`
+  **Four small seams opened in other modules**, each because a second copy would have been the
+  alternative: `semprini.version_parts()` (migrations order steps by version and the drift check
+  needs to know which of two versions is newer), `build.stale()` / `build.remove()` (a run and a migration both own `generated/`
   wholesale — `run._stale` now passes `keep=(REPORT_FILE,)`, and the `.report.md` exemption
   rationale stayed at that call site), `build.ontology_file()` (both write the verbatim copy),
   `report.table()` (both render Markdown tables, and C2 bounded pipe- and newline-escaping at

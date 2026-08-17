@@ -27,14 +27,18 @@ TESTS: tuple[str, ...] = (
     "tests/test_migrate.py",
     "tests/test_run.py",
     "tests/test_cli.py",
+    "tests/test_manifest.py",
 )
 """`test_run.py` because the stale-file and ontology-copy helpers moved into `build.py` for
 the migration to share, and a run is the other caller of both; `test_cli.py` for the surface,
-which G3 completed."""
+which G3 completed; `test_manifest.py` because the drift check's advice now branches on which
+way the drift points, and the wrong branch names a command that is refused."""
 
 APPLY = "src/semprini/migrate/apply.py"
 REGISTRY = "src/semprini/migrate/registry.py"
 BUILD = "src/semprini/build.py"
+MANIFEST = "src/semprini/manifest.py"
+PACKAGE = "src/semprini/__init__.py"
 
 # (description, file, old, new). `old` is a verbatim fragment of the file it anchors to and
 # appears in it exactly once.
@@ -95,8 +99,8 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
     (
         "only the first violation is reported",
         APPLY,
-        "    if issues:\n        raise MigrationError(issues)\n\n\ndef _subjects(",
-        "    if issues:\n        raise MigrationError(issues[:1])\n\n\ndef _subjects(",
+        "    if issues:\n        raise MigrationError(issues)\n\n\ndef _notes_changed(",
+        "    if issues:\n        raise MigrationError(issues[:1])\n\n\ndef _notes_changed(",
     ),
     # ----------------------------------------------------- what a step is allowed to write
     (
@@ -167,16 +171,16 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
         "    if False:",
     ),
     (
-        "versions are compared as strings, so 0.10.0 precedes 0.9.0",
-        REGISTRY,
-        "    return int(major), int(minor), int(patch)",
-        "    return major, minor, patch  # type: ignore[return-value]",
-    ),
-    (
         "any version string is accepted, including one identifying no release",
-        REGISTRY,
+        PACKAGE,
         r'_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")',
         r'_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")',
+    ),
+    (
+        "a version the shared parser could not order is used anyway",
+        REGISTRY,
+        "    if parts is None:",
+        "    if False:",
     ),
     (
         "a step ships without a summary, so the report says nothing about it",
@@ -200,14 +204,14 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
     (
         "an ontology version that moved on its own is read as nothing to do",
         APPLY,
-        "    if from_compiler == target and recorded.ontology_version == running_ontology:",
-        "    if from_compiler == target:",
+        "        and recorded.ontology_version == running_ontology\n",
+        "",
     ),
     (
         "there is no up-to-date case, so migrating twice rewrites the instance",
         APPLY,
-        "    if from_compiler == target and recorded.ontology_version == running_ontology:",
-        "    if False:",
+        "        from_compiler == target\n",
+        "        False\n",
     ),
     (
         "generated/ is migrated without first being checked against its manifest",
@@ -258,6 +262,61 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
         BUILD,
         '        for path in sorted(directory.rglob("*"))\n        if path.is_file() and (name := path.relative_to(directory).as_posix()) not in produced',  # noqa: E501
         '        for path in sorted(directory.glob("*"))\n        if path.is_file() and (name := path.relative_to(directory).as_posix()) not in produced',  # noqa: E501
+    ),
+    # ------------------------------------------------- what review found, and what now holds it
+    (
+        "a reordered ID map is tolerated",
+        APPLY,
+        "    if {row.ref for row in after.id_map} == known and [row.ref for row in before.id_map] != [",  # noqa: E501
+        "    if False and [row.ref for row in before.id_map] != [",
+    ),
+    (
+        "a reordering is reported twice when a row was also removed",
+        APPLY,
+        "    if {row.ref for row in after.id_map} == known and [row.ref for row in before.id_map] != [",  # noqa: E501
+        "    if [row.ref for row in before.id_map] != [",
+    ),
+    (
+        "the files are written before the map, so a crash loses a step's map edit for good",
+        APPLY,
+        "    after.id_map.save(root)\n    build.write_all(files, root)",
+        "    build.write_all(files, root)\n    after.id_map.save(root)",
+    ),
+    (
+        "the copied metamodel is judged by its recorded version rather than by its bytes",
+        APPLY,
+        "        and build.unchanged([build.ontology_file()], root)\n    ):",
+        "    ):",
+    ),
+    (
+        "the report claims the ID map was untouched when a step annotated it",
+        APPLY,
+        "        if not self.notes_changed:",
+        "        if True:",
+    ),
+    (
+        "drift backwards advises a migration, which is refused",
+        MANIFEST,
+        "    if here < there:",
+        "    if False:",
+    ),
+    (
+        "an unorderable version is given an instruction anyway",
+        MANIFEST,
+        "    if here is None or there is None:",
+        "    if False:",
+    ),
+    (
+        "the drift message reads the direction from the ontology pair, not the compiler's",
+        MANIFEST,
+        'advice = _advice(recorded["compiler"], running["compiler"])',
+        'advice = _advice(recorded["ontology"], running["ontology"])',
+    ),
+    (
+        "version ordering is shared but wrong, so 0.10.0 precedes 0.9.0 everywhere at once",
+        PACKAGE,
+        "    return int(major), int(minor), int(patch)",
+        "    return major, minor, patch  # type: ignore[return-value]",
     ),
     (
         "the ontology is re-serialized rather than copied",

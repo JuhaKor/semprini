@@ -296,11 +296,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spec §7's promise about migrations is now **enforced rather than trusted**, since it is a
   promise about code a future release has not written. After the steps run and before
   anything is written: the set of subjects in `generated/` must be unchanged, every
-  `dcterms:modified` must be unchanged, the ID map must be append-only and gain no row, and
-  every file produced must be a `.ttl` directly inside `generated/`. A migration that breaks
-  one of those is refused with nothing written, and the comparison is taken as a snapshot
-  before any step runs — an rdflib graph and an `IdMap` are both mutable, and a step that
-  edited what it was handed would otherwise be compared against itself.
+  `dcterms:modified` must be unchanged, the ID map must gain no row, lose none, have none
+  rewritten and come back in the same order, and every file produced must be a `.ttl` directly
+  inside `generated/`. A migration that breaks one of those is refused with nothing written,
+  and the comparison is taken as a snapshot before any step runs — an rdflib graph and an
+  `IdMap` are both mutable, and a step that edited what it was handed would otherwise be
+  compared against itself.
 - A migration **refuses to run against a `generated/` that disagrees with its manifest**: it
   rewrites what the compiler wrote, and restamping a hand edit as the new release's output
   would destroy the hash that would have caught it.
@@ -324,7 +325,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The drift check's message now says `run semprini migrate --to <version>` where it used to
   say "recompile the instance". The difference matters to whoever reads it: a recompile needs
   the sources and a credential, and on the one kind of release where the two look
-  interchangeable, they are not.
+  interchangeable, they are not. **The advice branches on which way the drift points**: an
+  instance already migrated to a newer release than the one installed — which is what a pull
+  request looks like between the migration commit and the workflow pin being updated — is told
+  to install or pin the recorded version, because migrating backwards is refused.
+- The copied metamodel is compared as **bytes** when deciding whether an upgrade has anything
+  to do, not only by recorded version, because check 7 compares it that way. A release that
+  edited `sem.ttl` without moving its `owl:versionInfo` would otherwise leave every instance
+  failing the one check `semprini migrate` is the only cure for, with the command answering
+  "nothing to migrate".
+- A migration writes `mappings/id-map.csv` **before** `generated/`, the opposite of a compile's
+  order and for a stated reason: a compile writes files first because it mints, and a migration
+  mints nothing, while the manifest travels with the files — a crash between the two calls in
+  the other order would leave an instance already recording the new version, which the next
+  invocation reads as nothing to migrate.
 - The instance README gained an **Upgrading the compiler** section, since a command nobody is
   told about is a command nobody runs — and the state it resolves is one an adopter would
   otherwise be tempted to fix by hand-editing `generated/`.
