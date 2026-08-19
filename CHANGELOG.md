@@ -11,7 +11,20 @@ the drift check (§6.1). A release that changes emitted output ships a migration
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+Releases are cut from this file: a version's entries move out of *Unreleased* into a dated
+`## [X.Y.Z]` heading in the release pull request, and `tools/release_check.py` refuses to
+publish a tag that has no such heading. The notes attached to the GitHub release are that
+section, so what is written here is what an adopter reads when deciding whether to upgrade.
+*Cutting a release* in `CONTRIBUTING.md` has the steps.
+
 ## [Unreleased]
+
+Nothing yet.
+
+## [0.1.0] — 2026-08-19
+
+The first release. Compiler 0.1.0 with ontology 0.1.0 — the two numbers move
+independently from here on.
 
 ### Compiler 0.1.0
 
@@ -361,6 +374,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   was packaged, installed and compiled into an instance rather than written from the interface
   alone. It says plainly that upstreaming is not expected: bundling is a maintenance commitment,
   not a privilege the interface withholds.
+- The two messages that tell an operator to install a particular version — the drift check's
+  and `migrate --to`'s — now name the download URL alongside the version. With no index, a
+  version number on its own is not something anybody can act on, and the person reading either
+  message is precisely the one with no README in front of them.
+- **Distribution as a GitHub release asset** (§11 #3, resolved). There is no package index:
+  each release attaches a wheel and an sdist to its tag, and an instance installs the wheel by
+  URL. `semprini init` writes that URL into both workflows and into the instance's README, with
+  the pinned version on a line of its own so that an upgrade is a one-word edit. The consequence
+  worth knowing: `pip install semprini` resolves nothing, by design, and a version this project
+  has not released is not installable by accident.
+- **`tools/release_check.py`**, which compares the tag against `pyproject.toml`, the installed
+  distribution, the changelog and the ontology archive, and `.github/workflows/release.yml`,
+  which runs it on the tag and publishes only if it passes. A release whose four version
+  statements disagree now fails on the tag instead of reaching an adopter as a 404.
+- **`tools/release_smoke.py`**, which installs nothing and assumes nothing: it runs the console
+  script of an installed wheel, bootstraps an instance with it, and reads back what that
+  instance pinned. CI runs it against the built wheel on every pull request, so a file left out
+  of the distribution or an entry point that does not resolve now fails here rather than in the
+  first repository somebody creates.
+- **`ontology-archive/`, and a site build that publishes every version it holds.** Until now the
+  site published only the current ontology version, so a bump would have deleted
+  `/ontology/0.1.0/` — a path w3id.org promises is permanent. Released versions are now frozen
+  copies that outlive the working tree, the current version's page links every published
+  version, and a frozen page is generated from its own document rather than today's.
+  A versioned path is published for an **archived** version and for nothing else: a version
+  bumped in the working tree is documented at `/ontology/`, which was never permanent, and gains
+  its own path when a release freezes it. Publishing one earlier would put a URL behind a
+  permanent identifier that a revert — or a second bump before the release — would delete.
+  The check that makes all of this stick is byte-identity between the archived copy and the
+  shipped ontology: **a released ontology can no longer be edited without releasing a new
+  version of it** — the suite fails until `owl:versionInfo` moves.
 
 ### Ontology 0.1.0
 

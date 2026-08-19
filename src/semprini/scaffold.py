@@ -31,7 +31,13 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from semprini import ONTOLOGY_PATH, UNINSTALLED_VERSION, compiler_version, ontology_version
+from semprini import (
+    ONTOLOGY_PATH,
+    UNINSTALLED_VERSION,
+    compiler_version,
+    ontology_version,
+    wheel_url,
+)
 from semprini.build import GENERATED_DIR, ONTOLOGY_FILE, OutputFile
 from semprini.config import (
     CONFIG_PATH,
@@ -240,6 +246,11 @@ def create(
         "org": org,
         "default_language": default_language,
         "version": version,
+        # The address the instance installs the plane from, since there is no package index
+        # to name it by (spec 11 #3). Rendered rather than written into the template, so the
+        # one definition of that URL stays in `semprini.wheel_url` — where the release notes
+        # and the release check read it too.
+        "wheel_url": wheel_url(version),
     }
     files = tuple(
         sorted(

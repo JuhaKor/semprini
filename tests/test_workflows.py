@@ -282,7 +282,14 @@ def test_the_pull_request_step_is_a_script_a_shell_can_parse(platform: str, path
     ("script", "expected"),
     [
         ("semprini run", {"semprini"}),
-        ("pip install semprini==0.1.0", {"pip"}),
+        # The shipped install line: a URL, because there is no package index (spec 11 #3),
+        # with the version in a shell variable so that one edit upgrades the file. A guard
+        # that stopped recognizing it would stop guarding the step that reaches the network.
+        (
+            'pip install "semprini @ https://github.com/JuhaKor/semprini/releases/download/'
+            'v${SEMPRINI_VERSION}/semprini-${SEMPRINI_VERSION}-py3-none-any.whl"',
+            {"pip"},
+        ),
         # The ways a second tool could reach a runner without being the first word on a
         # line. A guard that missed any of them would pass the workflow that used it.
         ('today="$(curl https://example.invalid)"', {"curl"}),

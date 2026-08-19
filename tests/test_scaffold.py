@@ -30,6 +30,7 @@ from semprini import (
     ontology_version,
     run,
     scaffold,
+    wheel_url,
 )
 from semprini.cli import ExitCode, main
 from semprini.scaffold import ScaffoldError
@@ -252,12 +253,43 @@ def test_the_workflows_pin_the_plane_version(bootstrapped: Path) -> None:
 
     An unpinned install would silently upgrade the compiler under an instance on some
     unrelated Monday, and a serialization change is a major version bump with a migration
-    (spec 7) — the diff would arrive as a rewritten `generated/` nobody asked for.
+    (spec 7) — the diff would arrive as a rewritten `generated/` nobody asked for. With no
+    package index in the picture (spec 11 #3) an unpinned install is not even possible: the
+    plane is fetched from a URL naming one release, so this test reads the URL the runner
+    would fetch rather than a version string that happens to appear in the file.
     """
-    pin = f"pip install semprini=={compiler_version()}"
+    version = compiler_version()
 
     for name in scaffold.WORKFLOWS:
-        assert pin in (bootstrapped / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        text = (bootstrapped / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        step = yaml.safe_load(text)["jobs"]["check" if name == "validate.yml" else "compile"][
+            "steps"
+        ]
+        (install,) = [one for one in step if "pip install" in one.get("run", "")]
+
+        # The one line an upgrade edits, and the only place this file says which version it
+        # wants. Two of them is a workflow somebody upgrades halfway.
+        assert install["env"] == {"SEMPRINI_VERSION": version}
+        assert text.count(version) == 1
+
+        # ...and what the runner ends up fetching, with the shell's job done here. A URL
+        # that names the right version in the tag and the wrong one in the filename reads
+        # correctly and 404s, so it is compared against the project's one definition of it.
+        expanded = install["run"].replace("${SEMPRINI_VERSION}", version)
+        assert wheel_url(version) in expanded
+
+
+def test_the_instance_readme_says_where_the_plane_comes_from(bootstrapped: Path) -> None:
+    """An adopter's first `pip install` is copied out of this file.
+
+    With no package index there is nothing they can guess at and nothing to fall back on if
+    the address is wrong, so the README carries the same URL the workflows do — rendered from
+    `semprini.wheel_url`, not written out a second time.
+    """
+    readme = (bootstrapped / "README.md").read_text(encoding="utf-8")
+
+    assert wheel_url(compiler_version()) in readme
+    assert "pip install semprini==" not in readme
 
 
 def test_the_workflows_are_valid_yaml(bootstrapped: Path) -> None:

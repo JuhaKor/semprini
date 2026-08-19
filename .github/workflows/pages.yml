@@ -4,16 +4,23 @@ name: Pages
 # https://w3id.org/semprini/ontology redirects here, so this site being live is what
 # makes the metamodel namespace resolve.
 #
-# The site is built from src/semprini/ontology/sem.ttl and never committed, so there is
-# no second copy of the ontology to drift from the first. All of the logic lives in
-# tools/build_site.py — spec 6.3 constrains the workflow templates instances port to
-# other CI systems, not this repository's own build.
+# The site is built from src/semprini/ontology/sem.ttl plus the frozen copies in
+# ontology-archive/, and never committed, so there is no second copy of the current
+# ontology to drift from the first. All of the logic lives in tools/build_site.py — spec
+# 6.3 constrains the workflow templates instances port to other CI systems, not this
+# repository's own build.
+#
+# Every version this has ever published must go on resolving: /ontology/X.Y.Z/ is a
+# permanent identifier w3id.org redirects to (task G5). That is why the archive is a
+# trigger path below and not merely an input — a release that freezes a version and does
+# not redeploy leaves the path it just promised returning a 404.
 
 on:
   push:
     branches: [main]
     paths:
       - src/semprini/ontology/sem.ttl
+      - ontology-archive/**
       - tools/build_site.py
       - .github/workflows/pages.yml
   workflow_dispatch:

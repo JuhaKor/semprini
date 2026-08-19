@@ -161,11 +161,77 @@ person needs to know.
 
 ### Update the changelog
 
-Add an entry to [`CHANGELOG.md`](CHANGELOG.md). Say which version it lands in, and mark whether
-the change is a patch, a minor addition or a major break.
+Add an entry to [`CHANGELOG.md`](CHANGELOG.md), under `## [Unreleased]`. Say which version it
+lands in, and mark whether the change is a patch, a minor addition or a major break.
 
 Major means an adopter has work to do. A change to the serialized output is major, and it must
 ship with a migration that carries existing instances across.
+
+## Cutting a release
+
+Only a maintainer does this. It is written down because a release here is permanent in a way
+most projects' releases are not: there is no package index, so the tag is the address instances
+install from, and the ontology it publishes is served at a URL this project promises will
+resolve for ever.
+
+Two version numbers move independently — the compiler and the ontology (§7). A release always
+moves the compiler. It moves the ontology only when `sem.ttl` changed.
+
+**1. Open a release pull request.** In one commit:
+
+- bump `version` in `pyproject.toml`;
+- move this release's entries out of `## [Unreleased]` into a dated `## [X.Y.Z] — YYYY-MM-DD`
+  heading, and leave *Unreleased* saying `Nothing yet.`;
+- if the ontology version changed, copy `src/semprini/ontology/sem.ttl` to
+  `ontology-archive/<new ontology version>/sem.ttl`. Never edit a directory already in there.
+
+Then check it, before anyone reviews it:
+
+```sh
+python tools/release_check.py v0.2.0
+```
+
+That compares the tag against `pyproject.toml`, the changelog and the ontology archive, and
+names whatever disagrees. Run it again after review, and merge.
+
+**2. Tag the merged commit.**
+
+```sh
+git switch main && git pull
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The tag has to be `vX.Y.Z`. The workflows an instance runs build their download URL out of it,
+so a tag spelled any other way is an install line that 404s.
+
+**3. The tag publishes itself.** `release.yml` runs the suite, builds the wheel and the sdist,
+installs the wheel into a bare virtual environment, runs `release_check.py` and
+`release_smoke.py` against that installation, and creates the GitHub release with the changelog
+section as its notes. Nothing is published if any of that fails.
+
+Merging step 1 also redeploys the site, which is what makes the new ontology version resolve at
+`https://w3id.org/semprini/ontology/X.Y.Z/`.
+
+**4. Prove the release exists, from outside.** Two commands, once:
+
+```sh
+pip install "semprini @ https://github.com/JuhaKor/semprini/releases/download/v0.2.0/semprini-0.2.0-py3-none-any.whl"
+curl -sI -H 'Accept: text/turtle' https://w3id.org/semprini/ontology/0.2.0/sem.ttl
+```
+
+Nothing in CI can check either one: the asset does not exist until the release is published, and
+the site is deployed by a different workflow. Check the *previous* ontology version still
+resolves too — that is the promise the archive exists to keep.
+
+### A released ontology is frozen
+
+Once `ontology-archive/X.Y.Z/` exists, `src/semprini/ontology/sem.ttl` cannot change under that
+same version number. The test suite fails until `owl:versionInfo` moves, because the archived
+copy and the shipped copy are compared byte for byte.
+
+This is deliberate, and it is the whole mechanism. Somebody may already have fetched the
+document at its permanent path and compared their instance against it. Changing a term needs a
+new version, a changelog entry and a decision — not a line edited in passing.
 
 ## Reporting a bug
 

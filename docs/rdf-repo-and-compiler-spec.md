@@ -565,8 +565,10 @@ instance as a diff hunk nobody could account for.
 
 A Python 3.12+ package distributed as **`semprini`** (import name `semprini`),
 using `rdflib` for graph construction, `openpyxl` for Excel, `requests` for HTTP
-sources, `pyshacl` for validation and `PyYAML` for configuration. It installs from PyPI
-(or a Git tag) and exposes a console script:
+sources, `pyshacl` for validation and `PyYAML` for configuration. It is published as a
+wheel attached to a tagged GitHub release rather than to a package index (11 #3), so an
+instance installs it by URL and no version that was never released is installable. It
+exposes a console script:
 
 ```
 semprini init      --base-iri <IRI> --org <slug> [--dir <path>]   # bootstrap an instance (5.7)
@@ -1567,6 +1569,19 @@ identity was preserved. The committed report always describes whatever last prod
 files beside it (5.6); the next compile that changes anything replaces it. Whether the
 migrated instance is committable is `semprini check`'s answer, not the migration's.
 
+**Publication.** A release is a tag (`vX.Y.Z`) carrying a wheel and an sdist; there is no
+package index (11 #3). The tag is therefore an address as well as a label — the workflows an
+instance runs build their install URL out of it — so a release's version is stated by the tag,
+by the package metadata, by the changelog and by the ontology archive, and a release whose
+statements disagree is refused rather than published.
+
+**Every ontology version that has resolved goes on resolving.** `/ontology/X.Y.Z/` is a
+permanent identifier, so a released version is published from a frozen copy taken at its
+release rather than from the working tree, and each version's documentation is generated from
+its own document. One consequence is load-bearing and mechanically enforced: **a released
+ontology version is immutable.** Changing a term means a new version — the frozen copy and the
+shipped document are compared byte for byte, and disagreement is a failure, not a diff.
+
 **Support policy.** The current major version receives fixes; the previous major
 receives migrations only. The metamodel namespace itself never changes — versioning
 happens inside the ontology document, so IRIs minted in 2026 still resolve unchanged.
@@ -1661,7 +1676,7 @@ Each deployment adopts these rules; they are what the CI checks enforce.
 |---|---|---|
 | ~~1~~ | ~~Register the `w3id.org/semprini` namespace (PR to the w3id.org repository); confirm the redirect target that will host the ontology~~ | **Resolved:** registered and live. `https://w3id.org/semprini/ontology` content-negotiates to the ontology document or to its documentation, and versioned paths resolve for each released version. Redirects point at the project's own published site, so resolution depends on no domain beyond w3id.org itself (3.1). Instances may now mint IRIs |
 | 2 | ~~Confirm Apache-2.0 / CC BY 4.0 (8), or choose AGPL for the code if hosted-service competition is a concern~~ | **Resolved:** Apache-2.0 + CC BY 4.0, copyright Datakor Consulting Oy (8) |
-| 3 | Distribution channel: PyPI, or Git tags only at first | PyPI once the interface is stable; Git tags until then |
+| ~~3~~ | ~~Distribution channel: PyPI, or Git tags only at first~~ | **Resolved:** tagged GitHub releases, each carrying a wheel and an sdist; no package index. The tag (`vX.Y.Z`) is the address: an instance's workflows install the wheel by URL, pinned to the version that created the instance (5.1, 6.2). A move to an index later changes the install line and nothing else — the version an instance pins is the same number either way |
 | 4 | Which adapters are bundled versus separately distributed (5.3) | Ellie and Excel bundled; all later adapters evaluated case by case |
 | 5 | ~~Default language tag(s); multilingual labels needed?~~ | **Resolved:** one `default_language` per instance, applied to every untagged label and definition; an already-tagged label keeps its tag (5.5 rule 6) |
 | 6 | Definition coverage: when the missing-definition warning becomes blocking | per instance, after pilot review |

@@ -85,3 +85,13 @@ jobs:
           rc=$?
           set -e
           [ $rc -eq 2 ]  # no arguments is a usage error (spec 5.1)
+
+      # What an adopter gets: bootstrap an instance from the installed wheel and read back
+      # what it pinned. Run here on every pull request, and again on the tag by
+      # release.yml, because the failures it catches — a missing package data file, an
+      # entry point that does not resolve — exist only in the built distribution and are
+      # invisible to the suite above.
+      - name: A new instance created by the wheel pins the wheel
+        run: |
+          export PATH="/tmp/bare/bin:$PATH"
+          /tmp/bare/bin/python tools/release_smoke.py "$(/tmp/bare/bin/python -c 'import semprini; print(semprini.compiler_version())')" dist

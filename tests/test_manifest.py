@@ -18,7 +18,13 @@ from pathlib import Path
 import pytest
 
 from sample import GOLDEN, VERSIONS, by_name, compile_
-from semprini import UNINSTALLED_VERSION, build, compiler_version, ontology_version
+from semprini import (
+    UNINSTALLED_VERSION,
+    build,
+    compiler_version,
+    ontology_version,
+    wheel_url,
+)
 from semprini.build import OutputFile
 from semprini.manifest import MANIFEST_FILE, Manifest, ManifestError, digest
 
@@ -298,7 +304,10 @@ def test_drift_the_other_way_does_not_advise_a_migration() -> None:
     assert len(issues) == 2
     for issue in issues:
         assert "migrate" not in issue.message
-        assert "install semprini==0.2.0" in issue.message
+        # The version *and* the address: with no package index (spec 11 #3) a version
+        # number on its own is not something an operator can act on.
+        assert "install semprini 0.2.0" in issue.message
+        assert wheel_url("0.2.0") in issue.message
         assert "the pinned version in the workflow is the stale value" in issue.message
 
 

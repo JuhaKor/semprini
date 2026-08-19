@@ -1,0 +1,77 @@
+name: Release
+
+# Publishes one release: a wheel and an sdist attached to the tag (task G5, spec 7, 11 #3).
+#
+# There is no package index. This workflow's assets are the only place the compiler can be
+# installed from, and the URL an instance's workflows fetch every week is built from the tag
+# below — so a tag published wrong is not a label to move, it is a broken install line in
+# somebody else's repository. Everything is therefore checked before `gh release create`
+# runs, and every check is a Python tool in tools/ that a maintainer can run first.
+#
+# The site that serves the ontology at its permanent path is deployed separately, by
+# pages.yml, when the release pull request merges to main.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  # A release is permanent; two runs publishing one tag is not a race worth having.
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # The floor of the supported range (spec 5.1): the wheel is pure Python and the
+          # same artifact serves every supported version, so it is built on the oldest.
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      # CI already ran on main, but a tag can be pushed at any commit, and a green branch is
+      # not proof that *this* commit was the green one. A release cannot be un-published into
+      # the instances that pinned it, so it is cheaper to run the suite twice than to find
+      # out afterwards.
+      - name: Test
+        run: poetry run pytest
+
+      - name: Build the distributions
+        run: poetry build
+
+      - name: Install the built wheel into a bare virtual environment
+        run: |
+          python -m venv /tmp/bare
+          /tmp/bare/bin/pip install --no-cache-dir dist/*.whl
+
+      # Run from the bare environment, so the version it compares against is the one the
+      # wheel actually installs rather than the one the source tree claims.
+      - name: The tag, the package, the changelog and the ontology archive agree
+        run: /tmp/bare/bin/python tools/release_check.py "$TAG"
+
+      - name: The release bootstraps an instance that pins it
+        run: |
+          export PATH="/tmp/bare/bin:$PATH"
+          /tmp/bare/bin/python tools/release_smoke.py "${TAG#v}" dist
+
+      - name: Cut the release notes from the changelog
+        run: /tmp/bare/bin/python tools/release_check.py "$TAG" --notes > release-notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$TAG" --title "$TAG" --notes-file release-notes.md dist/*

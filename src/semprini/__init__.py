@@ -16,13 +16,20 @@ from pathlib import Path
 
 __all__ = [
     "ONTOLOGY_PATH",
+    "PROJECT_URL",
     "UNINSTALLED_VERSION",
     "compiler_version",
     "ontology_version",
     "version_parts",
+    "wheel_url",
 ]
 
 ONTOLOGY_PATH = Path(__file__).parent / "ontology" / "sem.ttl"
+
+PROJECT_URL = "https://github.com/JuhaKor/semprini"
+"""Where releases live. Semprini is published as a release asset rather than through a
+package index (spec 5.1, 11 #3), so this is not a link in a README: it is half of the only
+address from which the compiler can be installed."""
 
 _VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 
@@ -32,6 +39,22 @@ UNINSTALLED_VERSION = "0.0.0+source"
 Public because it is a value other modules must recognize rather than merely produce: a
 manifest records which release wrote a file, and this string identifies no release, so
 :class:`semprini.manifest.Manifest` refuses to write one carrying it (spec 7)."""
+
+
+def wheel_url(version: str) -> str:
+    """Where the wheel for one release is downloaded from (spec 5.1, 11 #3).
+
+    Written down once, here, because four things build this URL and none of them may
+    disagree: the two workflow templates an instance runs every week, the README those
+    instances are created with, and the notes attached to the release itself. The version
+    appears in it twice — once as the tag directory, once in the wheel's own filename, which
+    is pip's naming rule rather than a choice — and a hand-assembled URL that gets one of
+    them wrong fails as a 404 in somebody else's CI.
+
+    The PEP 508 form (``semprini @ <url>``) rather than a bare URL, so that pip checks the
+    artifact it downloaded really is the distribution being asked for.
+    """
+    return f"{PROJECT_URL}/releases/download/v{version}/semprini-{version}-py3-none-any.whl"
 
 
 def compiler_version() -> str:

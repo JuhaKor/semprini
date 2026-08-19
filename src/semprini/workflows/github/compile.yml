@@ -34,9 +34,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Pinned to the plane version that created this instance. Upgrading is a deliberate
-      # edit to this line, reviewed like any other change (spec 7).
-      - run: pip install semprini==%%version%%
+      # Pinned to the plane version that created this instance. Semprini is published as
+      # a release asset rather than through a package index, so the version below is the
+      # one word an upgrade edits, in this file and in the other workflow (spec 7).
+      - name: Install the pinned plane version
+        env:
+          SEMPRINI_VERSION: "%%version%%"
+        run: pip install "semprini @ https://github.com/JuhaKor/semprini/releases/download/v${SEMPRINI_VERSION}/semprini-${SEMPRINI_VERSION}-py3-none-any.whl"
 
       - run: semprini run
         # No adapter shipped with this version needs a credential: both read files already
