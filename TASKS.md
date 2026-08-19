@@ -2439,7 +2439,7 @@ done and green.
     scratch instance is the place to do it if G5 wants that evidence, and the honest version of
     the claim until then is "exercised end to end in the suite".
 
-- [ ] **G4 · Project documentation**
+- [x] **G4 · Project documentation**
   **Spec:** §8, §9.2, §5.2
   **Deliver:** `README.md` stating the two-licence split prominently, `CONTRIBUTING.md`
   covering §9.2 including the four non-negotiables, and an adapter authoring guide
@@ -2447,6 +2447,64 @@ done and green.
   **Verify:** a fresh reader can install the package, bootstrap an instance and compile
   the fixture using only the README — walk it through literally, on a clean machine.
   **Depends:** G1
+  **Done.** Three documents: `README.md` rewritten from 40 lines to a full one, plus new
+  `CONTRIBUTING.md` and `docs/writing-an-adapter.md`. Prose-only by decision — no mutation
+  battery, since there is no code here to mutate and the testable claims are the commands and
+  outputs, which were checked by running them rather than by asserting them.
+
+  **Written to a house style the task owner set**: active voice, short sentences, simple
+  tenses, no noun clusters, imperative instructions. That is a deliberate break from the
+  register of `CLAUDE.md`, the spec and the instance README template, all of which are dense
+  and subordinate-clause-heavy. Those are addressed to somebody already inside the project.
+  These three are the ones a stranger reads first, and the two registers should not be
+  reconciled by making these harder.
+
+  **The verification was a literal walkthrough, and it is the reason to trust the README.**
+  A clean venv, `pip install` of the built wheel (not the editable dev install), then every
+  command in the README typed as written:
+  - `semprini version` / `adapters` / `init` / `run --dry-run` / `run` / `check` /
+    `check --base HEAD` all behave as the README says, including the 17-file scaffold listing
+    and the seven-check output.
+  - The fixture recompiled to **byte-identical** output on this Windows laptop from an
+    installed wheel — `generated/ is up to date; 5 files unchanged`, `git status` clean. The
+    README's determinism claim is a thing the reader reproduces, not a thing they are told.
+  - The adapter guide's worked example is real code that was run: a `csv-glossary` adapter,
+    packaged with the `pyproject.toml` the guide prints, `pip install`ed, listed by
+    `semprini adapters`, passing `check_contract()`, and compiled into an instance that then
+    passed all seven checks. Nothing in that guide is written from the interface alone.
+
+  **The walkthrough found one real trap, and the README now warns about it.** Step 5 tells the
+  reader to copy `tests/fixtures/acme/sources/taxonomies/product-category.xlsx` as a starting
+  point. Copied *unedited*, it carries a `Reference Entity UUID` row, so the first `run` exits 2
+  demanding `enumerates_source` — a configuration key the reader has no source to point at,
+  because they have not configured a modelling tool. The message is excellent and the failure is
+  correct; it is still the wrong first experience. The README now says to delete that row. This
+  is exactly what walking a document literally buys and reading it does not.
+
+  Three inaccuracies were also corrected against the code before shipping: check 7 re-serializes
+  the committed graph and compares bytes (it does **not** "compile twice"), check 1 covers
+  `shapes/local/` as well as `generated/` and `overlays/`, and §9.1's tag format is `vYYYY.MM.DD`
+  with dots.
+
+  Notes for later sessions:
+  - **`pip install semprini` does not work yet, and the README says so in a call-out.** The
+    package is not on PyPI; the note tells the reader to `poetry build` from a clone and install
+    the wheel. **G5 owns deleting that note** — and it is the one edit that turns the README from
+    accurate-with-a-caveat into simply accurate. It appears once, in *Before you install*, and
+    every later step says "or the wheel you built, see the note above".
+  - **The version `0.1.0` is written into that call-out** (`dist/semprini-0.1.0-py3-none-any.whl`).
+    A release bump has to update it, or delete it along with the rest of the note.
+  - **`CONTRIBUTING.md` names the four non-negotiables explicitly** — reproducible output, no
+    blank nodes, no changed IRI, no real organization's content — drawn from §9.2 rules 4 and 5.
+    §9.2's remaining principles are covered under *How the project is governed*. A fifth
+    non-negotiable would be a spec change first.
+  - **The adapter guide tells authors not to upstream by default**, per §9.2 rule 2, and says
+    bundling is a maintenance burden rather than a badge. If that policy ever softens, that
+    section is where it is stated to the outside world.
+  - Nothing here is covered by CI. `ruff format` does check Python blocks inside Markdown — it
+    reformatted one block in the adapter guide — so the guide's code stays formatted, but no
+    check runs the guide's example or the README's commands. Re-walking the README is a manual
+    step, and G5's clean-venv install is the natural place to do it again.
 
 - [ ] **G5 · Release and distribution**
   **Spec:** §7 (support policy), §11 #3
@@ -2487,7 +2545,7 @@ be deferred without stalling the build.
 | ~~1~~ | ~~w3id namespace registration~~ — **resolved:** PR #6488 merged, `https://w3id.org/semprini/ontology` live and verified | ~~A2~~; nothing now. G5 must still keep every released `/ontology/X.Y.Z/` resolving |
 | 2 | Confirm Apache-2.0 / CC BY 4.0 | A1 (the licence files are written there) |
 | 3 | Distribution channel | G5 |
-| 4 | Which adapters ship bundled | ~~D3~~ (Ellie and Excel are both bundled and registered); G4 |
+| ~~4~~ | ~~Which adapters ship bundled~~ — **resolved:** Ellie and Excel ship and are registered (D3); G4's adapter guide states the policy publicly — bundling is a maintenance commitment, and a third-party adapter is never second-class | ~~D3~~; ~~G4~~ |
 | ~~5~~ | ~~Default language tag(s)~~ — **resolved in B3:** one per instance, applied only where a label carries no tag of its own | ~~B3~~; C1 applies it |
 | 6 | When missing-definition becomes blocking | per instance; H1 |
 | ~~7~~ | ~~Ellie pagination and rate limits~~ — **resolved by scope:** the adapter reads exported files, so v1 makes no API call | ~~D3~~; whoever builds the API mode |
@@ -2534,6 +2592,14 @@ be deferred without stalling the build.
   report survives a real pull request body, that a no-op compile is green and silent, and
   that output is byte-identical between the Linux runner and a Windows laptop; and it
   falsified a mechanism this repository had asserted in four places since G1.
+- ~~**G4 next.**~~ Done, and **Phase G is one task from complete**. The project now has front
+  doors: a README that takes a stranger from "what is this" to a compiled instance on GitHub, a
+  `CONTRIBUTING.md` that states the four things a contribution may never do, and an adapter guide
+  whose worked example was packaged, installed and compiled rather than written from the
+  interface. The README was verified the way the task asked — walked literally on a clean install
+  — and that walk found a trap in the first-source step that reading it would not have. **G5 next**,
+  and it inherits one edit from here: the "not on PyPI yet" call-out in *Before you install*, which
+  a published release deletes.
 - ~~**G3 next.**~~ Done, and **the compiler is now feature-complete**: every subcommand of §5.1
   does something, and an adopter can bootstrap an instance, compile it, validate it and carry it
   across a plane upgrade without leaving the CLI. What is left in Phase G is documentation and

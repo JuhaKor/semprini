@@ -342,6 +342,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The instance README gained an **Upgrading the compiler** section, since a command nobody is
   told about is a command nobody runs — and the state it resolves is one an adopter would
   otherwise be tempted to fix by hand-editing `generated/`.
+- **Project documentation** (§8, §9.2, §5.2). `README.md` now opens with what Semprini is,
+  states the two-licence split, and walks an adopter through deploying an instance in eight
+  steps — install, choose and freeze a base IRI, bootstrap, push and protect, add a first
+  source, compile, review, hand to CI — followed by a technical section on the pipeline,
+  the metamodel, the namespaces, identity, determinism, the seven checks, adapters and
+  upgrades. Every command in it was run from a clean virtual environment against the built
+  wheel.
+- **`CONTRIBUTING.md`**, stating the four non-negotiables up front — never make output
+  non-reproducible, never emit a blank node, never change an existing IRI, never bring a real
+  organization's content into this repository — then §9.2's governance principles, the
+  development setup, the rule that a behaviour change edits the specification in the same pull
+  request, how to run a mutation battery, the exit-code contract, and which licence a
+  contribution falls under.
+- **`docs/writing-an-adapter.md`**, an authoring guide for third-party adapters (§5.2). Carries
+  a complete worked adapter, its `pyproject.toml` entry-point registration, and the
+  `semprini.testing.check_contract()` test every author should run before shipping. The example
+  was packaged, installed and compiled into an instance rather than written from the interface
+  alone. It says plainly that upstreaming is not expected: bundling is a maintenance commitment,
+  not a privilege the interface withholds.
 
 ### Ontology 0.1.0
 
