@@ -19,7 +19,33 @@ section, so what is written here is what an adopter reads when deciding whether 
 
 ## [Unreleased]
 
-Nothing yet.
+### Compiler
+
+#### Fixed
+
+- Text and source keys are normalized on the way into the compiler (§5.5 rule 9):
+  Unicode NFC, then every space-category character becomes an ordinary space, then
+  `U+200B`, `U+FEFF` and `U+00AD` are deleted. A non-breaking space pasted into a
+  spreadsheet or a modelling tool previously reached the generated Turtle as itself —
+  invisible in a diff, and therefore a change a reviewer could not see or explain.
+- The same normalization applies to identifiers, which is the consequential half: an
+  invisible character in a source key used to yield a different minted IRI, frozen into
+  `mappings/id-map.csv` on the run that minted it. Upgrading **can** therefore change
+  output for an instance whose sources carry such characters — literals lose the
+  invisible character, and `dcterms:modified` moves on the nodes affected. No migration
+  ships for it: a migration may not read sources (§7), so the change arrives with the
+  next ordinary compile.
+- A ragged taxonomy no longer splits a branch whose level cells differ only invisibly,
+  and no longer refuses a workbook whose column header does.
+- `skos:notation` is normalized like any other source text.
+
+#### Added
+
+- The run report names, per source, how many values normalization changed — and says
+  nothing for a source where it changed none.
+- The adapter contract (`semprini.testing`) rejects an adapter that returns text or keys
+  carrying invisible or decomposed characters, naming the code point rather than quoting
+  a value that would look correct.
 
 ## [0.1.0] — 2026-08-19
 

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from tools.build_fixture_instance import INSTANCE, TODAY, compile_instance
 
 from semprini import adapters, build, config
@@ -891,3 +891,173 @@ def test_a_missing_setting_is_an_issue_rather_than_a_traceback(tmp_path: Path) -
 
     with pytest.raises(ConfigError, match="needs a 'scheme_slug'"):
         adapter.fetch()
+
+
+# --- normalization (spec 5.5 rule 9) --------------------------------------------------
+
+
+def test_a_branch_spelled_with_an_invisible_character_is_still_one_branch(
+    tmp_path: Path,
+) -> None:
+    """The invisible counterpart of the test above, and the worse of the two.
+
+    A tagged cell beside a bare one is at least *visible* to whoever reads the sheet. An
+    NBSP is not: the parent's cell and the child's render identically in Excel, so an
+    adapter that matched the raw text would report every row beneath the second spelling
+    as an orphan pointing at a parent nobody can distinguish from the one it names.
+    """
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [
+            ("ont:Tools", '"Tools"@en', "", "", "", "", "", "", ""),
+            ("ont:Power", '"Tools"@en', '"Power tools"@en', "", "", "", "", "", ""),
+            (
+                "ont:Drills",
+                '"Tools"@en',
+                '"Power\u00a0tools"@en',
+                '"Drills"@en',
+                "",
+                "",
+                "",
+                "",
+                "",
+            ),
+        ],
+    )
+
+    model = fetch(path)
+
+    assert str(value(model, "Drills").parent) == "sizes:Power"
+
+
+def test_a_header_carrying_an_invisible_character_still_matches(tmp_path: Path) -> None:
+    # Header matching is strict on purpose, and refuses the whole workbook — so this is
+    # the one place where skipping normalization costs a taxonomy rather than a literal,
+    # for a reason nobody can see in the sheet.
+    header = ("Concept\u00a0URI", "L1 - Preferred\u00a0Label", *HEADER[2:])
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [("ont:Tools", '"Tools"@en', "", "", "", "", "", "", "")],
+        header=header,
+    )
+
+    model = fetch(path)
+
+    assert value(model, "Tools").pref_label == Text("Tools", "en")
+
+
+def test_an_identifier_carrying_an_invisible_character_is_the_same_identifier(
+    tmp_path: Path,
+) -> None:
+    # A source key is text before it is a key. Two spellings of one identifier would be
+    # two keys, two minted IRIs and two ID-map rows frozen on the run that wrote them
+    # (spec 5.4) — and the sheet would show one identifier twice.
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [
+            ("ont:Tools", '"Tools"@en', "", "", "", "", "", "", ""),
+            ("ont:Sand\u00aders", '"Tools"@en', '"Sanders"@en', "", "", "", "", "", ""),
+        ],
+    )
+
+    model = fetch(path)
+
+    assert value(model, "Sanders").pref_label == Text("Sanders", "en")
+
+
+def test_two_identifiers_differing_only_invisibly_are_one_duplicate(tmp_path: Path) -> None:
+    # Reported by the adapter, which can name both rows, rather than surfacing three
+    # stages later as two objects that minted onto one IRI.
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [
+            ("ont:Tools", '"Tools"@en', "", "", "", "", "", "", ""),
+            ("ont:Drills", '"Tools"@en', '"Drills"@en', "", "", "", "", "", ""),
+            ("ont:Dri\u00adlls", '"Tools"@en', '"Bits"@en', "", "", "", "", "", ""),
+        ],
+    )
+
+    with pytest.raises(TaxonomyContentError, match="already the identity of row 3"):
+        fetch(path)
+
+
+def test_a_definition_reaches_the_model_with_ordinary_spaces(tmp_path: Path) -> None:
+    # The report this rule came from: prose pasted out of a word processor, carrying a
+    # character that renders as a space and is not one.
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [
+            (
+                "ont:Tools",
+                '"Tools"@en',
+                "",
+                "",
+                "Implements used\u00a0to work material.",
+                "Hand\u00a0tools; Power\u00a0tools",
+                "",
+                "Covers the\u00a0implement itself.",
+                "Drill,\u00a0hammer",
+            )
+        ],
+    )
+
+    tools = value(fetch(path), "Tools")
+
+    assert tools.definition == Text("Implements used to work material.", "en")
+    assert tools.alt_labels == (Text("Hand tools", "en"), Text("Power tools", "en"))
+    assert tools.scope_notes == (Text("Covers the implement itself.", "en"),)
+    assert tools.examples == (Text("Drill, hammer", "en"),)
+
+
+def test_a_cell_of_nothing_but_invisible_characters_is_blank(tmp_path: Path) -> None:
+    # It is a non-empty string until it is normalized, so without this it would emit a
+    # skos:definition holding a character that renders as nothing at all (spec 5.3).
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [("ont:Tools", '"Tools"@en', "", "", "\u200b", "\u00ad", "", "", "")],
+    )
+
+    tools = value(fetch(path), "Tools")
+
+    assert tools.definition is None
+    assert tools.alt_labels == ()
+
+
+def test_the_fixture_workbook_carries_invisible_characters_on_purpose() -> None:
+    """The committed instance exercises this, not only the unit tests above.
+
+    Three of them, each a different failure: an NBSP in a level cell that would split the
+    power-tools branch, a soft hyphen inside an identifier that would mint a second IRI,
+    and an NBSP in prose that would reach the Turtle as raw bytes. The instance compiles
+    to byte-identical output regardless, which is the guarantee — and this test is what
+    stops a later regeneration of the workbook from quietly dropping the characters and
+    leaving the guarantee untested.
+    """
+    book = load_workbook(INSTANCE / "sources/taxonomies/product-category.xlsx")
+    cells = [
+        str(cell.value)
+        for row in book["Taxonomy"].iter_rows()
+        for cell in row
+        if cell.value is not None
+    ]
+    book.close()
+
+    assert any("\u00a0" in cell for cell in cells)
+    assert any("\u00ad" in cell for cell in cells)
+
+
+def test_a_row_of_nothing_but_invisible_characters_is_punctuation(tmp_path: Path) -> None:
+    # A blank row is judged on the *normalized* cells. Judged on the raw ones, a row
+    # holding a stray zero-width space is a value with no identity and no label, and the
+    # workbook is refused for two problems the sheet shows as an empty line.
+    path = workbook(
+        tmp_path / "t.xlsx",
+        [
+            ("ont:Tools", '"Tools"@en', "", "", "", "", "", "", ""),
+            ("\u200b", "\u00a0", "", "", "", "", "", "", ""),
+        ],
+    )
+
+    model = fetch(path)
+
+    assert len(model.taxonomy_values) == 1

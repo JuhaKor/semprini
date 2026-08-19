@@ -1144,3 +1144,85 @@ def test_the_fixture_instance_names_both_adapters() -> None:
     settings = config.load(INSTANCE)
 
     assert [source.adapter for source in settings.sources] == ["ellie", "excel-taxonomy"]
+
+
+# --- normalization (spec 5.5 rule 9) --------------------------------------------------
+
+
+def test_a_modelling_tool_carries_invisible_characters_too(tmp_path: Path) -> None:
+    """The fix is not adapter-local, and this is what proves it.
+
+    A modelling tool holds prose people typed and pasted exactly as a spreadsheet does.
+    Had the normalization gone into the Excel adapter, this export would have compiled an
+    entity whose name and definition carried characters no reviewer could see.
+    """
+    path = export(
+        tmp_path / "sales.json",
+        entities=[
+            entity(
+                CUSTOMER,
+                "Active\u00a0customer",
+                metadata={"Description": "Somebody who has\u00a0ordered."},
+            )
+        ],
+    )
+
+    model = fetch(tmp_path, one_model(tmp_path, path))
+
+    customer = named(model, "Active customer")
+    assert customer.pref_label == Text("Active customer")
+    assert customer.definition == Text("Somebody who has ordered.")
+
+
+def test_an_entity_key_carrying_an_invisible_character_is_the_same_entity(
+    tmp_path: Path,
+) -> None:
+    # Ellie's keys are UUIDs, and an invisible character in one is a second IRI for one
+    # entity — frozen into the ID map on the run that mints it (spec 5.4).
+    path = export(
+        tmp_path / "sales.json",
+        entities=[
+            entity(f"\u200b{CUSTOMER}", "Customer"),
+            entity(ACTIVE_CUSTOMER, "Active customer"),
+        ],
+        relationships=[inheritance("r1", CUSTOMER, ACTIVE_CUSTOMER)],
+    )
+
+    model = fetch(tmp_path, one_model(tmp_path, path))
+
+    assert named(model, "Customer").source_refs[SOURCE] == CUSTOMER
+    # The inheritance resolves, which it could not if the two spellings were two entities.
+    assert named(model, "Active customer").broader == (SourceRef(SOURCE, CUSTOMER),)
+
+
+def test_an_allowlisted_model_id_is_matched_after_normalization(tmp_path: Path) -> None:
+    # The allowlist is configuration somebody pasted into YAML and the modelId comes from
+    # the export; read through the same normalization, or an id that looks right matches
+    # no file and the run fails for a reason the config does not show (spec 5.3).
+    path = export(
+        tmp_path / "sales.json",
+        model_id="70337",
+        entities=[entity(CUSTOMER, "Customer")],
+    )
+
+    model = fetch(tmp_path, one_model(tmp_path, path, model_id="7\u200b0337"))
+
+    assert model.schemes[0].source_refs[SOURCE] == "70337"
+
+
+def test_an_export_whose_model_id_carries_an_invisible_character_still_matches(
+    tmp_path: Path,
+) -> None:
+    # The other side of the comparison. The allowlist is configuration and `modelId` comes
+    # from the export, so both have to be read through the same normalization — normalizing
+    # only one leaves a file that is the model it claims to be and is refused as if it had
+    # been copied over the wrong path (spec 5.3).
+    path = export(
+        tmp_path / "sales.json",
+        model_id="7\u200b0337",
+        entities=[entity(CUSTOMER, "Customer")],
+    )
+
+    model = fetch(tmp_path, one_model(tmp_path, path, model_id="70337"))
+
+    assert model.schemes[0].source_refs[SOURCE] == "70337"

@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Mapping, Sequence
+import unicodedata
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -54,8 +57,10 @@ __all__ = [
     "SourceRef",
     "TaxonomyValue",
     "Text",
+    "counting_normalizations",
     "is_language_tag",
     "merge_models",
+    "normalize_text",
 ]
 
 
@@ -159,6 +164,95 @@ class IssueError(ValueError):
         return f"{where}{len(self.issues)} {self.noun}s\n{listed}"
 
 
+_SPACES = frozenset(
+    "\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005"
+    "\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+)
+"""Every character Unicode gives general category ``Zs``, ``Zl`` or ``Zp``.
+
+Written out rather than derived at import, because deriving it means walking the whole
+code space; ``test_model.py`` re-derives it from ``unicodedata`` and demands this set
+back, so a Python or Unicode-data upgrade that changes the answer is a failing test
+rather than a silent change of behaviour.
+"""
+
+_REMOVED = frozenset("\u200b\ufeff\u00ad")
+"""Zero-width space, zero-width no-break space (a stray BOM) and the soft hyphen.
+
+Deleted rather than mapped to a space: they are not spacing, they are invisible. Worse
+than U+00A0 in one specific way — ``str.strip()`` does not touch them, so today they
+survive at *both* ends of a literal, where an NBSP at least loses its edge cases.
+
+U+200C and U+200D are deliberately **not** here. Zero-width non-joiner and joiner are
+meaningful in Indic and Arabic script and in emoji sequences; deleting them would rewrite
+words, which is the thing this function exists to avoid doing.
+"""
+
+_TRANSLATION: Mapping[int, str | None] = {
+    **{ord(character): " " for character in _SPACES},
+    **{ord(character): None for character in _REMOVED},
+}
+
+_NORMALIZATIONS: ContextVar[list[int] | None] = ContextVar("_NORMALIZATIONS", default=None)
+
+
+def normalize_text(value: str) -> str:
+    """Text as the compiler will hold it: composed, with no invisible characters.
+
+    Applied to every text **and every source key** on the way into this model (spec 5.5
+    rule 9). A source key is text too before it is a key, and that is the case that makes
+    this more than tidiness: an interior U+00A0 in an identifier yields a different key,
+    hence a different minted IRI, frozen into ``mappings/id-map.csv`` on the run that
+    mints it (spec 5.4).
+
+    Four steps, in this order so that the function is idempotent — which is what keeps a
+    recompile byte-identical (spec 6.1.7):
+
+    1. **NFC.** Composed and decomposed ``ä`` are different bytes and the same letter, so
+       without this two spellings of one word are two literals, and a diff shows a change
+       no source made. **Not NFKC**: that folds ligatures, superscripts and units, which
+       is content damage rather than normalization.
+    2. Every ``Zs``/``Zl``/``Zp`` character becomes an ordinary space.
+    3. :data:`_REMOVED` is deleted.
+    4. Strip, since 2 and 3 can expose whitespace at an edge that was hidden behind an
+       invisible character.
+
+    Three things it deliberately leaves alone, because they are content: U+2011, the
+    non-breaking hyphen, which is an orthographic choice rather than a paste artefact;
+    tabs and newlines inside a value, which the serializer already writes visibly as
+    ``\\t`` and ``\\n``; and runs of interior whitespace, which are not collapsed. A
+    doubled space left behind by step 2 is at least *visible* in a diff, and collapsing
+    would also rewrite text somebody spaced deliberately.
+    """
+    normalized = unicodedata.normalize("NFC", value).translate(_TRANSLATION)
+    if normalized != value:
+        tally = _NORMALIZATIONS.get()
+        if tally is not None:
+            tally[0] += 1
+    return normalized.strip()
+
+
+@contextmanager
+def counting_normalizations() -> Iterator[list[int]]:
+    """Count what :func:`normalize_text` changed, for the run report (spec 5.6).
+
+    A context variable rather than a return value because normalization happens inside
+    ``__post_init__`` of a frozen dataclass, which has nowhere to hand a count back to,
+    and because the count is wanted per *source* — which only ``run`` knows the bounds
+    of. Report-only: nothing here reaches the output, so a caller that never counts
+    compiles the same bytes as one that does.
+
+    Only a value the function actually changed is counted, so re-normalizing something
+    already normalized — which merging does routinely — adds nothing.
+    """
+    tally = [0]
+    token = _NORMALIZATIONS.set(tally)
+    try:
+        yield tally
+    finally:
+        _NORMALIZATIONS.reset(token)
+
+
 @dataclass(frozen=True, slots=True, order=True)
 class SourceRef:
     """One source's key for an object: the pair the ID map is keyed by (spec 5.4).
@@ -174,6 +268,13 @@ class SourceRef:
     """The key that source uses for the object: a UUID, a code, a slug."""
 
     def __post_init__(self) -> None:
+        # Normalized *before* emptiness is judged, and before anything else looks at it.
+        # A key that is nothing but a zero-width space is truthy until it is normalized,
+        # and would otherwise pass this check and go on to key an ID-map row that no
+        # steward could see (spec 5.4, 5.5 rule 9). The source name is left alone: it is
+        # a slug validated by configuration loading, which already rejects every
+        # character normalization would touch.
+        object.__setattr__(self, "key", normalize_text(self.key))
         if not self.source or not self.key:
             raise ValueError(f"a source ref needs both a source name and a key, got {self!r}")
         if ":" in self.source:
@@ -206,9 +307,17 @@ class Text:
     language: str | None = None
 
     def __post_init__(self) -> None:
+        # The one place every text in the compiler passes through, which is why the
+        # normalization lives here rather than in an adapter: Ellie carries the same
+        # pasted-from-elsewhere prose a workbook does, and a third-party adapter's author
+        # must not have to know that U+00A0 is a hazard (spec 5.2, 5.5 rule 9).
+        object.__setattr__(self, "value", normalize_text(self.value))
         if not self.value:
             # Empty is normalized to absent before it gets here (spec 5.3): an empty
             # definition emits no triple, and a Text that renders as "" would emit one.
+            # Reachable through normalization too — a cell holding one zero-width space
+            # is a non-empty string until it is normalized — so the callers below decide
+            # absence on the *normalized* value rather than the raw one.
             raise ValueError("text must not be empty")
         if self.language is not None and not is_language_tag(self.language):
             raise ValueError(f"not a language tag: {self.language!r}")
@@ -230,17 +339,30 @@ def _as_text(value: str | Text) -> Text:
     return value if isinstance(value, Text) else Text(value)
 
 
+def _has_content(value: str | Text) -> bool:
+    """Whether a value survives normalization as something worth emitting.
+
+    Emptiness is judged on the **normalized** string, never the raw one. A cell holding
+    a single zero-width space is a non-empty string that normalizes to nothing, and the
+    difference decides whether a field is absent or raises from ``Text.__post_init__``
+    several frames away from the source that wrote it (spec 5.5 rule 9).
+
+    A ``Text`` is already normalized and already refused emptiness, so it is content by
+    construction.
+    """
+    return True if isinstance(value, Text) else bool(normalize_text(value))
+
+
 def _as_optional_text(value: str | Text | None) -> Text | None:
     """Normalize to a text or to absent, treating empty as absent (spec 5.3)."""
     if value is None:
         return None
-    text = value if isinstance(value, Text) else Text(value) if value else None
-    return text
+    return _as_text(value) if _has_content(value) else None
 
 
 def _as_texts(values: Sequence[str | Text]) -> tuple[Text, ...]:
     """Normalize a set-valued text field, dropping empties rather than emitting them."""
-    return tuple(_as_text(value) for value in values if str(value))
+    return tuple(_as_text(value) for value in values if _has_content(value))
 
 
 def _union_sort_key(value: object) -> tuple[str, str]:
@@ -314,14 +436,21 @@ class SemanticObject:
             # An object with no source ref cannot be looked up, minted, or deprecated:
             # it would be invisible to every later stage.
             raise ValueError(f"{type(self).__name__} must carry at least one source ref")
-        if not self.pref_label:
+        if not _has_content(self.pref_label):
+            # Judged after normalization, so that a label of nothing but invisible
+            # characters is refused here — naming the object — rather than raising
+            # "text must not be empty" from Text a frame later (spec 5.5 rule 9).
             raise ValueError(f"{type(self).__name__} must carry a prefLabel")
-        # Constructed and discarded for its validation: an unusable pair must be refused
-        # where the adapter built it, not several stages later where the message could
-        # only name the pair and not the object that carries it.
-        for source, key in self.source_refs.items():
-            SourceRef(source, key)
-        object.__setattr__(self, "source_refs", MappingProxyType(dict(self.source_refs)))
+        # Constructed for its validation, and now kept for its normalization too: an
+        # unusable pair must be refused where the adapter built it, not several stages
+        # later where the message could only name the pair and not the object that
+        # carries it. The mapping is rebuilt from the pairs rather than copied, so that
+        # `source_refs` and `refs` cannot disagree about a key — one normalized and the
+        # other not is precisely the drift that would put two IRIs on one object.
+        refs = [SourceRef(source, key) for source, key in self.source_refs.items()]
+        object.__setattr__(
+            self, "source_refs", MappingProxyType({ref.source: ref.key for ref in refs})
+        )
         object.__setattr__(self, "pref_label", _as_text(self.pref_label))
         for name in ("alt_labels", "hidden_labels", "scope_notes", "examples"):
             object.__setattr__(self, name, _as_texts(getattr(self, name)))
@@ -440,7 +569,11 @@ class TaxonomyValue(SchemeMember):
 
     def __post_init__(self) -> None:
         SchemeMember.__post_init__(self)
-        object.__setattr__(self, "code", self.code or None)
+        # Normalized like any other source text, though it is not a `Text`: a notation is
+        # a code rather than prose (spec 5.5 rule 6 exempts it from language tags), and it
+        # is emitted as a literal all the same. A code carrying a character nobody can see
+        # is a code that matches nothing anyone searches for.
+        object.__setattr__(self, "code", (normalize_text(self.code) if self.code else "") or None)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

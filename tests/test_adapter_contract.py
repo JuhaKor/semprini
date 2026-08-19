@@ -34,6 +34,7 @@ from semprini.model import (
     SchemeType,
     Severity,
     SourceRef,
+    TaxonomyValue,
 )
 from semprini.testing import CONTRACT_BASE_IRI, AdapterContractError, check_contract
 
@@ -808,3 +809,48 @@ def test_the_guard_is_removed_even_when_a_check_fails(tmp_path: Path) -> None:
         check(Exploding)
 
     assert builtins.open is before
+
+
+# ------------------------------------------------------------------ normalization
+
+
+def test_an_adapter_that_returns_unnormalized_text_is_caught() -> None:
+    """The check exists for the fields that reach neither ``Text`` nor ``SourceRef``.
+
+    Everything routed through those two is normalized by construction, so a well-behaved
+    adapter passes this for free. What is left is plain ``str`` fields an author assembles
+    from source text — here a scheme slug — where the failure is silent both ways round:
+    the object joins a scheme nothing defines, and the two spellings are indistinguishable
+    in every message that could explain it.
+    """
+
+    class Invisible(BaseAdapter):
+        """Carries an NBSP through into a slug, which renders as an ordinary space."""
+
+        name = "invisible"
+
+        def fetch(self) -> InternalModel:
+            if self.config.get("down"):
+                raise SourceUnreachableError("the source is down")
+            return InternalModel(entities=(entity(schemes=("power\u00a0tools",)),))
+
+    with pytest.raises(AdapterContractError) as raised:
+        check(Invisible)
+
+    assert violations(raised) == {"normalized-text"}
+    # Named by code point: quoting the value shows the author nothing at all.
+    assert "U+00A0" in str(raised.value)
+
+
+def test_a_notation_is_normalized_like_any_other_source_text() -> None:
+    # `code` is a plain string rather than a Text — a notation is a code, not prose — so
+    # it reaches skos:notation without passing through either normalizing type unless the
+    # model does it explicitly.
+    assert (
+        TaxonomyValue(
+            source_refs={"contract-source": "Drills"},
+            pref_label="Drills",
+            code="PWR\u00a001",
+        ).code
+        == "PWR 01"
+    )
