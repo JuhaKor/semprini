@@ -26,13 +26,19 @@ from openpyxl import Workbook
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKBOOK = REPO_ROOT / "tests/fixtures/acme/sources/taxonomies/product-category.xlsx"
 
-# The vertical Property/Value table. 'Reference Entity UUID' is deliberately **blank**:
-# it names an entity in a modelling tool, and the fixture instance configures no such
-# source, so a value here would refuse to compile until D3 ships the Ellie adapter.
+# The vertical Property/Value table. 'Reference Entity UUID' names the Ellie entity this
+# taxonomy enumerates — 'Product category' in the storefront export — which is what makes
+# `sem:enumerates` reachable through the fixture. It was blank until D3 shipped the Ellie
+# adapter, because a value here refuses to compile until that source is configured.
 SCHEME_SHEET = [
     ("Property", "Value", "SKOS Mapping", "Notes"),
     ("Scheme Name", "Product category taxonomy", "dcterms:title", "The name of your taxonomy"),
-    ("Reference Entity UUID", "", "sem:enumerates", "The entity this taxonomy enumerates"),
+    (
+        "Reference Entity UUID",
+        "8f4b1bf5-8ec7-465b-8e0f-c221d260a34c",
+        "sem:enumerates",
+        "The entity this taxonomy enumerates",
+    ),
     (
         "Description",
         "A small synthetic taxonomy of hardware product categories, used by the plane's "
@@ -100,7 +106,10 @@ TAXONOMY_ROWS = [
     (
         "ont:Drills",
         '"Tools"@en',
-        '"Power tools"@en',
+        # An NBSP where ont:PowerTools above writes an ordinary space. The two
+        # cells look identical in Excel and are one branch only because the
+        # compiler normalizes them (spec 5.5 rule 9).
+        '"Power\u00a0tools"@en',
         '"Drills"@en',
         "Power tools that bore holes by rotating a bit.",
         "Drivers",
@@ -112,11 +121,13 @@ TAXONOMY_ROWS = [
         "2026-01-05",
     ),
     (
-        "ont:Sanders",
+        # A soft hyphen inside the identifier — invisible in the sheet, and
+        # deleted on the way in, so this is ont:Sanders and mints no second IRI.
+        "ont:Sand\u00aders",
         '"Tools"@en',
         '"Power tools"@en',
         '"Sanders"@en',
-        "Power tools that abrade a surface smooth.",
+        "Power tools that abrade a surface\u00a0smooth.",
         "",
         "",
         "",

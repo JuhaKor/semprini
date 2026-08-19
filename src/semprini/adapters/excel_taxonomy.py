@@ -43,6 +43,7 @@ from semprini.model import (
     TaxonomyValue,
     Text,
     is_language_tag,
+    normalize_text,
 )
 
 __all__ = ["ExcelTaxonomyAdapter"]
@@ -329,14 +330,29 @@ def _normalize_header(value: object) -> str:
     Headers in these workbooks carry their SKOS mapping on a second line — ``Concept URI``
     then ``(local identifier)`` — which is documentation for whoever fills the sheet in
     and no part of the column's name.
+
+    Normalized like any other cell, and this is the one place where leaving it out costs
+    a whole taxonomy rather than one literal: header matching is strict on purpose, so a
+    header typed ``Concept<NBSP>URI`` refuses the workbook for a reason nobody can see in
+    the sheet (spec 5.5 rule 9).
     """
     if value is None:
         return ""
-    return str(value).split("\n", 1)[0].strip().lower()
+    return normalize_text(str(value).split("\n", 1)[0]).lower()
 
 
 def _cell(value: object) -> str:
-    return "" if value is None else str(value).strip()
+    """A cell as text the rest of the adapter can act on (spec 5.5 rule 9).
+
+    Normalized here, before the cell is anything in particular, because this adapter
+    reads three kinds of thing through it and two of them never reach ``Text``: a
+    ``Concept URI`` becomes a source key, and a level cell becomes part of the path the
+    ragged hierarchy is matched on. ``Text`` would catch the labels and definitions in
+    time and nothing else — and the two it would miss are the two that fail *silently*,
+    as a parent that no row appears to define and as an identifier that mints a second
+    IRI for one value.
+    """
+    return "" if value is None else normalize_text(str(value))
 
 
 def _read_scheme_sheet(sheet: Worksheet, path: Path) -> Mapping[str, str]:
@@ -474,17 +490,24 @@ def _read_row(
     language: str | None,
     issues: list[Issue],
 ) -> _Row | None:
+    # Read once, into a list, rather than per column on demand. Every question below is
+    # then asked of the same normalized text — and the count the run report carries is a
+    # count of *cells*, not of how many times the adapter happened to look at one.
+    row = [_cell(item) for item in raw]
+
     def value(name: str) -> str:
         index = columns.get(name)
-        return _cell(raw[index]) if index is not None and index < len(raw) else ""
+        return row[index] if index is not None and index < len(row) else ""
 
-    cells = [_cell(raw[index]) if index < len(raw) else "" for index in level_columns]
+    cells = [row[index] if index < len(row) else "" for index in level_columns]
     key = _local_name(value(_CONCEPT_URI))
-    if not any(_cell(cell) for cell in raw):
+    if not any(row):
         # A wholly blank row is spreadsheet punctuation, not a value. Judged across the
         # *whole* row rather than the identity and level cells alone: a row carrying a
         # definition but no identity yet is half-finished work, and dropping it silently
-        # is how a value a steward believes they added never appears.
+        # is how a value a steward believes they added never appears. Judged on the
+        # normalized cells too, so a row holding nothing but invisible characters is the
+        # punctuation it looks like rather than a value with no label.
         return None
     where = f"{TAXONOMY_SHEET}!{number}"
     if not key:

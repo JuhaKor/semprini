@@ -40,6 +40,7 @@ from semprini.model import (
     MergeConflictError,
     RunContext,
     Severity,
+    counting_normalizations,
     merge_models,
 )
 from semprini.report import RunReport, SourceSummary
@@ -262,7 +263,8 @@ def _fetch(
         if context.only_source is not None and source.name != context.only_source:
             continue
         adapter = adapters.create(source, context)
-        fetched = adapter.fetch()
+        with counting_normalizations() as normalizations:
+            fetched = adapter.fetch()
         try:
             model = merge_models(model, fetched)
         except MergeConflictError as error:
@@ -281,10 +283,30 @@ def _fetch(
                 name=source.name,
                 adapter=source.adapter,
                 objects=len(fetched),
-                note=adapter.summary(),
+                note=_note(adapter.summary(), normalizations[0]),
             )
         )
     return model, tuple(summaries)
+
+
+def _note(summary: str, normalizations: int) -> str:
+    """The adapter's own note, plus what normalization changed on the way in (spec 5.6).
+
+    Said per source rather than once per run, because the answer a steward needs is *which
+    file to fix*, and silence is the whole point of the "when there is one" clause: a
+    source with nothing to normalize adds nothing to the report, so this line appears only
+    where there is something to act on (spec 5.5 rule 9).
+
+    Not an issue per value, deliberately. The fix usually lives in a binary workbook the
+    steward may not own, so a per-cell warning would be permanent noise on every run —
+    and normalizing silently, with nothing anywhere saying so, is how a compiler that
+    edits a source's words stops being trusted.
+    """
+    if not normalizations:
+        return summary
+    values = "value" if normalizations == 1 else "values"
+    normalized = f"normalized invisible or decomposed characters in {normalizations} {values}"
+    return f"{summary}; {normalized}" if summary else normalized
 
 
 def _move_namespace(

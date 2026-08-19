@@ -61,6 +61,7 @@ from semprini.model import (
     SchemeType,
     Severity,
     SourceRef,
+    normalize_text,
 )
 
 __all__ = ["EllieAdapter", "EllieContentError"]
@@ -285,13 +286,16 @@ class EllieAdapter(BaseAdapter):
                 continue
 
             model_id = model.get("id")
-            if model_id is None or str(model_id).strip() == "":
+            if _plain(model_id) == "":
                 issues.append(Issue(Severity.ERROR, "a model needs Ellie's 'id'", f"{at}.id"))
             else:
                 # Compared as text throughout: it is the scheme's source key, and the ID
                 # map's columns are text (spec 5.4). YAML gives an int, an export gives an
-                # int, and a quoted id in either must not mint a second scheme.
-                first = seen_ids.setdefault(str(model_id).strip(), index)
+                # int, and a quoted id in either must not mint a second scheme. Read
+                # through `_plain` on both sides so that the allowlist and the export are
+                # compared after the same normalization — an id pasted into the config
+                # with an invisible character would otherwise match no file at all.
+                first = seen_ids.setdefault(_plain(model_id), index)
                 if first != index:
                     issues.append(
                         Issue(
@@ -353,7 +357,7 @@ class EllieAdapter(BaseAdapter):
         models: Sequence[Mapping[str, Any]] = self.config["models"]
         return tuple(
             _ModelEntry(
-                model_id=str(model["id"]).strip(),
+                model_id=_plain(model["id"]),
                 path=str(model["path"]),
                 slug=str(model["scheme_slug"]),
             )
@@ -441,7 +445,7 @@ def _read_model(
 ) -> _Part | None:
     """One export as internal-model objects, or ``None`` if it cannot be read at all."""
     where = entry.path
-    stated = str(document.get("modelId", "")).strip()
+    stated = _plain(document.get("modelId"))
     if stated != entry.model_id:
         # The allowlist is keyed by Ellie's model id (spec 5.3), so the file has to be the
         # model the configuration named. An export copied over the wrong path otherwise
@@ -751,7 +755,11 @@ def _plain(value: object) -> str:
     Ellie writes ``null`` where a field is unset and ``""`` where it was cleared, and the
     difference is not one the graph can hold: an empty description emits no
     ``skos:definition`` either way (spec 5.3).
+
+    Normalized as well as trimmed (spec 5.5 rule 9). A modelling tool holds prose typed
+    and pasted by people exactly as a spreadsheet does, and the keys read through here are
+    identifiers: an invisible character in one mints a second IRI for one entity.
     """
     if value is None:
         return ""
-    return str(value).strip()
+    return normalize_text(str(value))

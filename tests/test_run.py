@@ -766,3 +766,85 @@ def test_planning_a_move_is_what_the_run_calls(instance: Path) -> None:
     assert lock.base_iri == MOVED
     assert all(row.iri.startswith(MOVED) for row in moved)
     assert NamespaceLock.load(instance).base_iri == BASE
+
+
+# --- normalization in the report (spec 5.5 rule 9, 5.6) -------------------------------
+
+
+def test_the_report_says_which_source_carried_invisible_characters(instance: Path) -> None:
+    """Reported, not silent — and per source, because that names the file to fix.
+
+    Not an issue per value: the fix usually lives in a binary workbook the steward may not
+    own, so a per-cell warning would be permanent noise on every run. Not silent either —
+    a compiler that edits a source's words with nothing anywhere saying so is one people
+    stop trusting.
+    """
+    export = instance / "sources/ellie/storefront.json"
+    document = json.loads(export.read_text(encoding="utf-8"))
+    entity = document["model"]["entities"][2]
+    assert entity["name"] == "Product category"
+    entity["name"] = entity["name"].replace(" ", "\u00a0")
+    export.write_text(json.dumps(document), encoding="utf-8", newline="\n")
+
+    notes = _source_notes(instance)
+
+    assert "normalized invisible or decomposed characters in 1 value" in notes["ellie-main"]
+    # The taxonomy's workbook carries three of them on purpose (see test_excel_taxonomy).
+    assert "in 3 values" in notes["product-category"]
+
+
+def test_a_source_with_nothing_to_normalize_says_nothing_about_it(instance: Path) -> None:
+    # The "when there is one" clause. A line appearing on every run for every source
+    # would be noise a reviewer learns to skip, and the report is the only part of a
+    # compile most people read (spec 5.6).
+    notes = _source_notes(instance)
+
+    assert "normalized" not in notes["ellie-main"]
+    assert notes["ellie-main"]
+
+
+def _source_notes(root: Path) -> dict[str, str]:
+    """The per-source notes of a run that writes a report.
+
+    ``generated/`` is cleared first, because a report describes a *run* and is not
+    rewritten when nothing moved (spec 5.6) \u2014 and normalization is by design something
+    that moves nothing. That is the honest consequence of putting the count here: a
+    steady-state compile of a source full of invisible characters produces no report and
+    therefore says nothing, and the note is read on the compile that changes something
+    else. It is the right trade against a warning that would fire on every run forever.
+    """
+    shutil.rmtree(root / "generated")
+    result = compile_(root)
+    assert result.report is not None
+    return {source.name: source.note for source in result.report.sources}
+
+
+def test_an_invisible_character_in_a_source_changes_no_output(instance: Path) -> None:
+    """The guarantee the whole rule exists for, asserted on bytes.
+
+    A workbook edited to carry an NBSP compiles to the same graph, mints no IRI and
+    produces no diff — which is what makes the character a non-event rather than a change
+    a reviewer has to explain (spec 1.2).
+    """
+    before = {
+        name: content
+        for name, content in governed(instance).items()
+        if not name.startswith("sources/")
+    }
+
+    export = instance / "sources/ellie/storefront.json"
+    document = json.loads(export.read_text(encoding="utf-8"))
+    entity = document["model"]["entities"][0]
+    entity["name"] = entity["name"].replace(" ", "\u00a0")
+    entity["id"] = "\u200b" + entity["id"]
+    export.write_text(json.dumps(document), encoding="utf-8", newline="\n")
+
+    result = compile_(instance)
+
+    after = {
+        name: content
+        for name, content in governed(instance).items()
+        if not name.startswith("sources/")
+    }
+    assert after == before
+    assert not result.changed

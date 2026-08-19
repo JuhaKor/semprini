@@ -9,10 +9,12 @@ each is pinned here rather than left to the graph builder to notice.
 from __future__ import annotations
 
 import dataclasses
+import unicodedata
 from pathlib import Path
 
 import pytest
 
+from semprini import model
 from semprini.model import (
     Attribute,
     Entity,
@@ -30,7 +32,9 @@ from semprini.model import (
     SourceRef,
     TaxonomyValue,
     Text,
+    counting_normalizations,
     merge_models,
+    normalize_text,
 )
 
 BASE = "https://semantics.example.com/"
@@ -523,3 +527,150 @@ def test_a_taxonomy_value_needs_no_code() -> None:
         ).code
         is None
     )
+
+
+# --- normalization (spec 5.5 rule 9) --------------------------------------------------
+
+
+def test_the_space_set_is_exactly_what_unicode_calls_a_separator() -> None:
+    # Pinned rather than derived at import, because deriving it means walking the whole
+    # code space. Re-derived here so that a Python or Unicode-data upgrade which changes
+    # the answer is a failing test rather than a silent change in what gets rewritten.
+    derived = {
+        chr(code)
+        for code in range(0x110000)
+        if unicodedata.category(chr(code)) in {"Zs", "Zl", "Zp"}
+    }
+    assert derived == model._SPACES
+
+
+def test_every_separator_becomes_an_ordinary_space() -> None:
+    for separator in sorted(model._SPACES):
+        assert normalize_text(f"a{separator}b") == "a b"
+
+
+def test_invisible_characters_are_deleted_rather_than_spaced() -> None:
+    # They are not spacing, they are invisible, and str.strip() does not touch them —
+    # so today they survive at both ends of a literal as well as inside one.
+    assert normalize_text("a\u200bb") == "ab"
+    assert normalize_text("a\ufeffb") == "ab"
+    assert normalize_text("a\u00adb") == "ab"
+    assert normalize_text("\u200bTools\u200b") == "Tools"
+
+
+def test_characters_that_are_content_are_left_alone() -> None:
+    # A non-breaking hyphen is an orthographic choice; ZWJ is meaningful in several
+    # scripts and in emoji sequences. Deleting either would rewrite words, which is the
+    # thing this function exists to avoid doing.
+    assert normalize_text("e\u2011mail") == "e\u2011mail"
+    assert normalize_text("a\u200db") == "a\u200db"
+
+
+def test_tabs_and_newlines_survive_inside_a_value() -> None:
+    # Real characters somebody typed, and the serializer already writes them visibly as
+    # backslash escapes, so they are not the invisible-diff problem this rule addresses.
+    assert normalize_text("a\tb\nc") == "a\tb\nc"
+
+
+def test_decomposed_letters_are_composed() -> None:
+    # The same invisible-diff bug as an NBSP with a far wider blast radius: two spellings
+    # of one Finnish word are two literals and one letter.
+    assert normalize_text("a\u0308ito") == "äito"
+    assert normalize_text("a\u0308ito") == unicodedata.normalize("NFC", "a\u0308ito")
+
+
+def test_compatibility_folding_is_not_performed() -> None:
+    # NFKC would map these too, and would also fold ligatures, superscripts and units —
+    # content damage rather than normalization. Only the separator survives as a space.
+    assert normalize_text("m\u00b2") == "m\u00b2"
+    assert normalize_text("\ufb01ile") == "\ufb01ile"
+
+
+def test_interior_runs_of_whitespace_are_not_collapsed() -> None:
+    # Deliberate: a doubled space left behind by the mapping is at least visible in a
+    # diff, and collapsing would rewrite text somebody spaced on purpose.
+    assert normalize_text("a\u00a0 b") == "a  b"
+    assert normalize_text("a  b") == "a  b"
+
+
+def test_normalization_is_idempotent() -> None:
+    # The property that keeps a recompile byte-identical (spec 6.1.7).
+    corpus = [
+        "Power\u00a0tools",
+        " \u200ba\u0308\u3000b\u00ad ",
+        "plain",
+        "a\u2011b\u200dc",
+        "\u202f\u2028",
+    ]
+    for value in corpus:
+        once = normalize_text(value)
+        assert normalize_text(once) == once
+
+
+def test_a_text_is_normalized_when_it_is_built() -> None:
+    # In Text rather than in an adapter, so that every adapter inherits it — including
+    # one this project has never seen (spec 5.2).
+    assert Text("Power\u00a0tools").value == "Power tools"
+    assert Text("Power\u00a0tools") == Text("Power tools")
+
+
+def test_a_source_key_is_normalized_before_it_is_a_key() -> None:
+    # The case that makes this more than tidiness: an invisible character in an
+    # identifier is a different key, a different minted IRI, and an ID-map row frozen on
+    # the run that mints it (spec 5.4).
+    assert SourceRef("product-category", "Sand\u00aders").key == "Sanders"
+    assert SourceRef("product-category", "Sand\u00aders") == SourceRef(
+        "product-category", "Sanders"
+    )
+
+
+def test_an_objects_two_views_of_its_keys_cannot_disagree() -> None:
+    # `source_refs` is rebuilt from the pairs rather than copied: one view normalized and
+    # the other not is how one object would end up with two IRIs.
+    customer = entity(refs={"ellie-main": f"{CUSTOMER_UUID}\u200b"})
+    assert customer.source_refs == {"ellie-main": CUSTOMER_UUID}
+    assert customer.refs == (SourceRef("ellie-main", CUSTOMER_UUID),)
+
+
+def test_a_key_of_nothing_but_invisible_characters_is_refused() -> None:
+    # Judged after normalization, not before: it is a non-empty string until then, and
+    # would otherwise key an ID-map row no steward could see.
+    with pytest.raises(ValueError, match="needs both a source name and a key"):
+        SourceRef("product-category", "\u200b")
+
+
+def test_a_value_of_nothing_but_invisible_characters_is_absent_not_an_error() -> None:
+    # Emptiness has to be decided on the normalized string. Deciding it on the raw one
+    # builds a Text that then raises "text must not be empty" a frame away from the cell
+    # that caused it.
+    assert entity(definition="\u200b").definition is None
+    assert entity(alt_labels=["Client", "\u00ad", "Buyer"]).alt_labels == (
+        Text("Client"),
+        Text("Buyer"),
+    )
+
+
+def test_a_label_of_nothing_but_invisible_characters_names_the_object() -> None:
+    with pytest.raises(ValueError, match="must carry a prefLabel"):
+        entity(label="\u200b\u00a0")
+
+
+def test_counting_reports_only_what_changed() -> None:
+    # Report-only, and counted per source so that the answer a steward gets is which file
+    # to fix (spec 5.6). Re-normalizing something already normalized — which merging does
+    # routinely — adds nothing.
+    with counting_normalizations() as tally:
+        Text("Power\u00a0tools")
+        Text("Power tools")
+        Text("  padded  ")
+        SourceRef("product-category", "Sand\u00aders")
+    assert tally[0] == 2
+
+
+def test_counting_changes_nothing_about_the_result() -> None:
+    # Nothing here reaches the output: a caller that never counts compiles the same bytes
+    # as one that does.
+    outside = Text("Power\u00a0tools")
+    with counting_normalizations():
+        inside = Text("Power\u00a0tools")
+    assert outside == inside

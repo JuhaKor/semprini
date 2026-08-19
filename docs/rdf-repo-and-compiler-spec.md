@@ -740,6 +740,10 @@ class BaseAdapter(ABC):
 
 Contract obligations on every adapter, which the core relies on:
 
+- Text and source keys an adapter returns are normalized by the compiler, not by the
+  adapter (5.5 rule 9). An adapter author never has to know that `U+00A0` is a hazard,
+  and an adapter cannot opt out — which is what makes the guarantee hold for a plugin
+  this project has never seen.
 - `fetch()` performs **no writes** and no identity minting; it returns normalized
   objects carrying a `source_key` per object. Identity resolution is the core's job.
 - Objects carry `source_refs: dict[str, str]`, so the same real-world concept seen by
@@ -998,6 +1002,9 @@ compile failure, exit 1.
 `iri, kind, source_name, source_key, first_seen, note`.
 
 - On every run, each normalized object is looked up by `(source_name, source_key)`.
+  The key is normalized before it is a key (5.5 rule 9): two spellings of one identifier
+  differing only by an invisible character would otherwise be two keys, two IRIs and two
+  rows here, permanently.
   Hit → reuse IRI. Miss → mint per 3.4, append a row. An object known to several sources
   has **one row per source ref**, all carrying the one IRI — the same pairs it carries as
   `sem:sourceRef` triples (3.3), so the registry and the RDF cannot tell different
@@ -1152,6 +1159,28 @@ rules:
    (3.4).
 8. No run timestamps anywhere in generated output — `dcterms:modified` reflects
    content change only (3.3).
+9. **Text is normalized on the way in**, before it is a label, a definition or a key.
+   Four steps, in this order, applied by the compiler to every text and every source key
+   an adapter returns: Unicode **NFC**; every character of general category `Zs`, `Zl` or
+   `Zp` becomes an ordinary space; `U+200B`, `U+FEFF` and `U+00AD` are deleted; the
+   result is stripped. It is idempotent, which is what keeps a recompile byte-identical
+   (6.1). Left alone deliberately: `U+2011`, tabs and newlines inside a value, `U+200C`
+   and `U+200D`, and runs of interior whitespace, which are **not** collapsed. **NFKC is
+   never applied** — it folds ligatures, superscripts and units, which is content damage
+   rather than normalization.
+
+   Two reasons, and the second is the load-bearing one. A literal differing only by an
+   invisible character renders identically in a diff, and PR diffs are the governance
+   interface (1.2): a reviewer would see a changed line with nothing visibly changed. And
+   a source key is text before it is a key — an invisible character in an identifier is a
+   different key, a different minted IRI, and an ID-map row frozen on the run that mints
+   it (5.4). Emptiness is judged **after** normalization, so a value that normalizes to
+   nothing is absent rather than a literal nobody can see.
+
+   The count is reported per source in the run report (5.6) where there is one, and
+   nowhere when there is not. Not per value: the fix usually lives in a source file the
+   steward may not own, so a per-value warning would be permanent noise — and normalizing
+   with nothing anywhere saying so is a compiler quietly editing a source's words.
 
 Terms are written the one way the rules allow: prefixed where the local name needs no
 escaping and the full `<IRI>` otherwise, `a` for `rdf:type`, and literals as single-line

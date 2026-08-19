@@ -57,6 +57,7 @@ from semprini.model import (
     RunContext,
     SemanticObject,
     Severity,
+    normalize_text,
 )
 
 __all__ = ["AdapterContractError", "check_contract"]
@@ -173,6 +174,7 @@ def _check_construction_and_fetch(
 
     _check_source_refs(model, source_name, issues)
     _check_nothing_is_minted(model, ctx, issues)
+    _check_text_is_normalized(model, issues)
     _check_it_normalizes(model, issues)
     _check_it_repeats(instance, model, issues)
     _check_settings_are_untouched(settings, before, issues)
@@ -217,6 +219,37 @@ def _check_nothing_is_minted(model: InternalModel, ctx: RunContext, issues: list
                     f"{type(object_).__name__}.{name} contains a sem: IRI ({value!r}); "
                     f"an adapter contributes data, never metamodel terms",
                 )
+
+
+def _check_text_is_normalized(model: InternalModel, issues: list[Issue]) -> None:
+    """Nothing an adapter returned still carries an invisible or decomposed character.
+
+    Every string routed through ``Text`` or ``SourceRef`` is normalized by construction
+    (spec 5.5 rule 9), so this passes for free — which is the point. What it catches is a
+    field that reaches neither: a value an author assembled from source text and stored as
+    a plain ``str``, where the two failures are invisible ones. A key that differs from
+    another key by a character nobody can see mints a second IRI and freezes it; a label
+    that does splits a hierarchy and reports the halves as orphans.
+
+    Named with the character's code point, because the whole difficulty of this class of
+    bug is that quoting the value shows the author nothing.
+    """
+    for object_ in model.objects:
+        for name, value in _strings(object_):
+            if value == normalize_text(value):
+                continue
+            odd = sorted(
+                {character for character in value if normalize_text(character) != character}
+            )
+            listed = ", ".join(f"U+{ord(character):04X}" for character in odd)
+            _fail(
+                issues,
+                "normalized-text",
+                f"{type(object_).__name__}.{name} is not normalized ({value!r} carries "
+                f"{listed or 'a decomposed character'}); pass source text through "
+                f"model.normalize_text, or build it as a Text or SourceRef, so that a "
+                f"character nobody can see cannot become an identifier or split a label",
+            )
 
 
 def _check_it_normalizes(model: InternalModel, issues: list[Issue]) -> None:
