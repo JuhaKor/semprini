@@ -78,24 +78,20 @@ Semprini needs **Python 3.12 or newer**. Check what you have:
 python --version
 ```
 
-> **The package is not on PyPI yet.** Publishing it is the next task in
-> [`TASKS.md`](TASKS.md). Until then, build the wheel from a clone of this repository:
->
-> ```sh
-> git clone https://github.com/JuhaKor/semprini.git
-> cd semprini
-> pip install poetry
-> poetry build
-> ```
->
-> That writes `dist/semprini-0.1.0-py3-none-any.whl`. Wherever the steps below say
-> `pip install semprini`, install that file instead:
->
-> ```sh
-> pip install /path/to/semprini/dist/semprini-0.1.0-py3-none-any.whl
-> ```
->
-> You need Poetry to build the wheel. Nobody needs it to *use* Semprini.
+Semprini is **not on a package index**. Every release attaches a wheel to its tag on
+[the releases page](https://github.com/JuhaKor/semprini/releases), and you install that file
+by URL:
+
+```sh
+pip install "semprini @ https://github.com/JuhaKor/semprini/releases/download/v0.1.0/semprini-0.1.0-py3-none-any.whl"
+```
+
+The version appears twice: once as the tag, once in the file's own name. Replace both. Every
+release page carries this command in its notes, so copy it from there rather than typing it.
+
+Two things follow. `pip install semprini` finds nothing. That is deliberate: you cannot
+install a version this project never published. And you type this URL once. `semprini init`
+writes it into your instance, pinned to the version that created it.
 
 ## Try it first
 
@@ -113,7 +109,7 @@ cd semprini
 python -m venv venv
 source venv/bin/activate     # on Windows: venv\Scripts\activate
 
-pip install semprini         # or the wheel you built, see the note above
+pip install "semprini @ https://github.com/JuhaKor/semprini/releases/download/v0.1.0/semprini-0.1.0-py3-none-any.whl"
 semprini version
 semprini adapters
 ```
@@ -195,7 +191,7 @@ cd acme-semantics
 python -m venv venv
 source venv/bin/activate     # on Windows: venv\Scripts\activate
 
-pip install semprini         # or the wheel you built, see the note above
+pip install "semprini @ https://github.com/JuhaKor/semprini/releases/download/v0.1.0/semprini-0.1.0-py3-none-any.whl"
 semprini version
 ```
 
@@ -550,7 +546,8 @@ reformatting from arriving mixed into somebody's content change.
 Upgrade in its own pull request:
 
 ```sh
-pip install semprini==<new version>
+# the wheel attached to the release you are moving to
+pip install "semprini @ https://github.com/JuhaKor/semprini/releases/download/vNEW/semprini-NEW-py3-none-any.whl"
 semprini migrate --to <new version>
 ```
 

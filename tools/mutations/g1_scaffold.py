@@ -204,10 +204,13 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
         """                "Add 'token_env: MY_API_TOKEN' to each source, and a secret of that name.",""",  # noqa: E501
     ),
     (
+        # Rewritten by G5, which moved the install off a package index and onto a release
+        # asset URL (spec 11 #3). The mutation is the same one: an instance that installs
+        # whatever is current rather than the version that created it.
         "the workflows install the latest plane version rather than this one",
         WORKFLOW,
-        "      - run: pip install semprini==%%version%%",
-        "      - run: pip install semprini",
+        '          SEMPRINI_VERSION: "%%version%%"',
+        '          SEMPRINI_VERSION: "latest"',
     ),
     (
         "generated/ is left for the first run to create",

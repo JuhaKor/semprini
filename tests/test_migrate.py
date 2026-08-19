@@ -26,7 +26,16 @@ from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, XSD
 
 from conftest import FIXTURE_INSTANCE
-from semprini import adapters, build, config, migrate, ontology_version, scaffold, validate
+from semprini import (
+    adapters,
+    build,
+    config,
+    migrate,
+    ontology_version,
+    scaffold,
+    validate,
+    wheel_url,
+)
 from semprini.build import GENERATED_DIR, ONTOLOGY_FILE, OutputFile
 from semprini.cli import ExitCode, main
 from semprini.config import InstanceConfig
@@ -950,7 +959,8 @@ def test_the_target_must_be_the_version_installed(old_instance: Path) -> None:
     with pytest.raises(MigrationError) as raised:
         migrate.migrate(settings_for(old_instance), to="9.9.9", migrations=(RENAME,))
 
-    assert "Install semprini==9.9.9" in str(raised.value)
+    assert "Install semprini 9.9.9" in str(raised.value)
+    assert wheel_url("9.9.9") in str(raised.value)
     assert snapshot(old_instance) == before
 
 
@@ -1145,7 +1155,8 @@ def test_the_cli_maps_a_migration_error_to_exit_1(
 
     err = capsys.readouterr().err
     assert "semprini:" in err
-    assert "Install semprini==9.9.9" in err
+    assert "Install semprini 9.9.9" in err
+    assert wheel_url("9.9.9") in err
 
 
 def test_the_cli_checks_the_namespace_lock_first(instance: Path) -> None:

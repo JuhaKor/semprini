@@ -2522,6 +2522,130 @@ done and green.
   publishing a second ontology version and confirming the first still resolves.
   **Depends:** A2, G3, G4
 
+  **Built and green, waiting on one action that is not mine to take: pushing the tag.**
+  Everything below is implemented, tested and verified against the real built wheel in a clean
+  virtual environment. What is left is `git tag v0.1.0 && git push origin v0.1.0` on the merged
+  commit, which publishes the release and makes the URLs in the README resolve. Tick the box
+  after step 4 of *Cutting a release* in `CONTRIBUTING.md` passes.
+
+  **The channel is decided (§11 #3): tagged GitHub releases, no package index.** That is the
+  spec's own fallback default, and it is now recorded as resolved in §11 and stated in §5.1 and
+  §7. The consequence reaches further than the decision sounds, and it is why this task touched
+  fifteen files rather than three: `pip install semprini==X` works nowhere any more, so every
+  place that said it had to change — both shipped workflow templates, the instance README
+  template, this repository's README, and two error messages that were telling operators to run
+  a command that would now fail. The rendered install line is
+
+      env:
+        SEMPRINI_VERSION: "0.1.0"
+      run: pip install "semprini @ https://github.com/.../v${SEMPRINI_VERSION}/semprini-${SEMPRINI_VERSION}-py3-none-any.whl"
+
+  The version sits in a shell variable because the URL names it twice — tag directory and wheel
+  filename, which is pip's naming rule rather than a choice — and an adopter upgrading by hand
+  would otherwise edit one occurrence and not the other. One line per workflow, and
+  `test_the_workflows_pin_the_plane_version` now expands that variable itself and compares the
+  result with `semprini.wheel_url()`, the single definition of the URL that the workflows, the
+  instance README and the release notes all render from.
+
+  **A2's known gap is closed, and closing it produced the invariant this task is really about.**
+  Released ontology versions are frozen copies under `ontology-archive/<version>/sem.ttl`, and
+  `tools/build_site.py` publishes every one of them — each documented from *its own* document
+  rather than from today's, since a page describing current terms under a released version's
+  number is a worse answer than a 404. The current version's page lists them, which is the only
+  navigation the site has and the only way somebody discovers a permanent path exists. Proven by
+  `test_a_released_version_still_resolves_after_the_next_one_ships`, which fakes the second
+  version rather than waiting for one — waiting is how the gap survived A2.
+
+  The invariant: **a released ontology can no longer be edited without releasing a new version of
+  it.** The archived copy and the shipped document are compared byte for byte, so any edit to
+  `src/semprini/ontology/sem.ttl` fails the suite until `owl:versionInfo` moves. Nothing enforced
+  that before; §7 asserted it in prose. A version number that goes *backwards* is refused too —
+  that one is invisible to every other check, because the document still matches its own copy.
+
+  **Two tools, because a release is permanent and CI has to be able to refuse one.**
+  - `tools/release_check.py <tag>` compares the tag against `pyproject.toml`, the installed
+    distribution, the changelog and the archive; `--notes` cuts the release notes from the
+    changelog section and appends the install command. Run it before tagging. `release.yml` runs
+    it again on the tag from the bare environment the wheel was installed into, so it checks the
+    artifact rather than the source that produced it.
+  - `tools/release_smoke.py <version>` is G5's own verification, automated: it runs the console
+    script of an installed wheel, bootstraps an instance with it, and reads back what that
+    instance pinned. **CI runs it on every pull request** against the built wheel, so the class
+    of failure it catches — package data left out, an entry point that does not resolve, a
+    placeholder that survived substitution — fails here rather than in the first repository
+    somebody creates. It addresses the console script by path rather than through PATH, which is
+    what makes it run at all on Windows.
+
+  **Verified on this laptop against the artifact, not the source tree:** `poetry build`, a clean
+  venv, `pip install` of the wheel, then `semprini version` (0.1.0 / 0.1.0),
+  `release_check.py v0.1.0`, `release_smoke.py 0.1.0`, `semprini init` (both workflows pin
+  `SEMPRINI_VERSION: "0.1.0"`, URL well-formed), and `semprini check` on the fixture instance —
+  seven checks, 0 errors, 4 expected definition warnings. The wheel carries no
+  `ontology-archive/`: an instance reads the one version it pinned from the package.
+
+  **Mutation battery `g5_release`: 19 mutations, all caught.** Two were findings rather than
+  confirmations. The first survivor exposed a re-sort in `build_site.build()` that no test could
+  observe, because `released()` had already ordered the versions — dead code standing in for an
+  invariant nobody enforced. It is gone, and the invariant it assumed (the current version is
+  never older than a released one) is now a check in `release_check.py` with a test of its own.
+  The second showed the ordering test could not tell a numeric sort from a lexical one: `0.9.0`
+  and `0.10.0` sort the same way either way, and only a third version between them separates
+  them. `g1_scaffold`'s pin mutation was rotted by the install change and has been re-anchored.
+
+  **A code review at medium found five things, and two of them would have bitten on the very
+  first ontology bump — the exact event this task exists to make safe.** All five are fixed.
+  - **The site published a versioned path for the working tree's version.** Bump
+    `owl:versionInfo` in a pull request, merge it, and `/ontology/<that version>/` went live on
+    main weeks before any release froze it; a revert or a second bump then deleted a URL that
+    had already resolved. A versioned path is now published for an **archived** version and for
+    nothing else, and the in-development version's page says it has no permanent path yet
+    instead of linking one that 404s.
+  - **`test_the_site_holds_exactly_the_paths_the_redirects_target` hard-coded five paths**, so
+    it would have failed on the first release that archived a second version. It now derives
+    the expected set from the archive, and asserts the archive is not empty so the derivation
+    cannot pass vacuously.
+  - **Nothing compared the built wheel's filename with the one the download URL promises.**
+    Every other check compared `wheel_url()` against something rendered from `wheel_url()`.
+    `release_smoke.py` now takes the distribution directory and checks the artifact itself; CI
+    and the release workflow both pass it.
+  - A missing `ontology-archive/` raised a traceback over the top of the instruction the check
+    before it had just given.
+  - The two "install semprini X" messages named a version with no way to install it, in the
+    very world this task creates. Both now name the URL.
+
+  The battery grew to **22 mutations, all caught**, including one for each of the first three.
+
+  **Remaining, in order:**
+  1. Merge this pull request. That also deploys the site — `pages.yml` now triggers on
+     `ontology-archive/**` — which is what makes `/ontology/0.1.0/` resolve from the archive
+     rather than from `sem.ttl` alone.
+  2. `git switch main && git pull && git tag v0.1.0 && git push origin v0.1.0`. `release.yml`
+     runs the suite, builds both distributions, installs the wheel into a bare environment, runs
+     both release tools against it, and publishes the release with the changelog section as its
+     notes. Nothing is published if any step fails.
+  3. Run step 4 of *Cutting a release*: install the published wheel by URL into a clean venv, and
+     `curl` the ontology's versioned path. **Neither can be checked by CI** — the asset does not
+     exist until the release is published, and the site is deployed by a different workflow.
+  4. Tick this box.
+
+  **Notes for later sessions:**
+  - **The README now describes a release that does not exist yet.** Its install URLs are right
+    for v0.1.0 and resolve the moment step 2 finishes; between merge and tag they 404. The
+    ordering is deliberate — the alternative is a README documenting a caveat instead of a
+    product — but do not leave the gap open for long.
+  - **`release.yml` runs the full suite on the tag**, duplicating CI on main. On purpose: a tag
+    can be pushed at any commit, and a green branch is not proof that *this* commit was the green
+    one. A release cannot be un-published into the instances that pinned it.
+  - **The w3id `.htaccess` needs no change for new versions.** It already maps any `X.Y.Z`, so
+    the archive is the whole mechanism. That file stays gitignored in
+    `background-material/w3id/semprini/`, recorded only in A2.
+  - **The first ontology bump is the moment to re-read `ontology-archive/README.md`.** Adding the
+    new version's directory is a step in the release pull request, not something the tooling
+    does. `release_check.py` refusing the release is the safety net, not the process.
+  - Moving to a package index later changes the install line and nothing else. `wheel_url()` is
+    the one place it is written down, and the version an instance pins is the same number either
+    way — which is what §11 #3 now records.
+
 ---
 
 ## Phase H — Pilot
@@ -2545,9 +2669,9 @@ be deferred without stalling the build.
 
 | §11 | Decision | Blocks |
 |---|---|---|
-| ~~1~~ | ~~w3id namespace registration~~ — **resolved:** PR #6488 merged, `https://w3id.org/semprini/ontology` live and verified | ~~A2~~; nothing now. G5 must still keep every released `/ontology/X.Y.Z/` resolving |
+| ~~1~~ | ~~w3id namespace registration~~ — **resolved:** PR #6488 merged, `https://w3id.org/semprini/ontology` live and verified | ~~A2~~; nothing now. G5 discharged the obligation it left: every released version is published from `ontology-archive/` and goes on resolving |
 | 2 | Confirm Apache-2.0 / CC BY 4.0 | A1 (the licence files are written there) |
-| 3 | Distribution channel | G5 |
+| ~~3~~ | ~~Distribution channel~~ — **resolved:** tagged GitHub releases carrying a wheel and an sdist; no package index. The tag is the address an instance installs from, so `pip install semprini` resolves nothing and no unreleased version is installable by accident | ~~G5~~ |
 | ~~4~~ | ~~Which adapters ship bundled~~ — **resolved:** Ellie and Excel ship and are registered (D3); G4's adapter guide states the policy publicly — bundling is a maintenance commitment, and a third-party adapter is never second-class | ~~D3~~; ~~G4~~ |
 | ~~5~~ | ~~Default language tag(s)~~ — **resolved in B3:** one per instance, applied only where a label carries no tag of its own | ~~B3~~; C1 applies it |
 | 6 | When missing-definition becomes blocking | per instance; H1 |
@@ -2612,3 +2736,19 @@ be deferred without stalling the build.
   G5 inherits two things beyond its own scope: A2's known gap (every released
   `/ontology/X.Y.Z/` must keep resolving), and the question of whether a release candidate
   needs to be a migration target, which G3 refused by requiring `X.Y.Z`.
+
+- ~~**G5 next.**~~ Built and green; **Phase G is complete once the tag is pushed**. The project
+  has a release process, a channel (§11 #3: tagged GitHub releases, no index), and the last of
+  A2's debts is paid — every ontology version ever published now keeps resolving, from frozen
+  copies rather than from a working tree that has moved on. The invariant that fell out of it is
+  worth more than the mechanism: a released ontology document cannot be edited under its own
+  version number, because the shipped copy and the archived one are compared byte for byte. §7
+  had asserted that in prose since v0.1 and nothing checked it.
+
+  **H1 is next, and it is the first task whose subject is a real organization.** It needs the
+  release to exist — an instance pins a version, and until a tag is pushed there is no URL for
+  its workflows to install from. Everything else H1 needs is in place: `semprini init` produces
+  the tree, both workflows have been run against a real instance on GitHub (G2), and the
+  compiler is feature-complete (G3). What H1 adds is the things only a pilot can settle — a real
+  base IRI, an Ellie allowlist filled one validated model at a time, named stewards, and §11 #6,
+  the last open decision, which is per instance and needs somebody's actual data to answer.

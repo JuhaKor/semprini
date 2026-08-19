@@ -39,7 +39,7 @@ variable and the value is read at fetch time; a token pasted into the file is re
 ## Working on it
 
 ```sh
-pip install semprini==%%version%%
+pip install "semprini @ %%wheel_url%%"
 
 semprini check      # every validation, writing nothing — the same thing CI runs
 semprini run        # fetch every configured source, compile, write generated/
@@ -47,8 +47,11 @@ semprini run --dry-run    # what a run would write, without writing it
 semprini adapters   # which source adapters are installed
 ```
 
-Both workflows in `.github/workflows/` pin the plane version above. Upgrading the compiler
-is a deliberate edit to those files, reviewed like any other change.
+Semprini is published as a release asset rather than through a package index, so it is
+installed by URL: `pip install semprini` finds nothing, and no version this project has not
+released can arrive here by accident. Both workflows in `.github/workflows/` install the
+same version from the same address, each on a `SEMPRINI_VERSION` line of its own. Upgrading
+the compiler is a deliberate edit to those two lines, reviewed like any other change.
 
 ### Upgrading the compiler
 
@@ -58,9 +61,13 @@ deliberate — it stops a new release's reflow from arriving mixed into somebody
 change. Bring it over in its own pull request:
 
 ```sh
-pip install semprini==<new version>
+# from https://github.com/JuhaKor/semprini/releases — the wheel attached to that release
+pip install "semprini @ https://github.com/JuhaKor/semprini/releases/download/vNEW/semprini-NEW-py3-none-any.whl"
 semprini migrate --to <new version>    # the same version; it refuses any other
 ```
+
+Substitute the version for `NEW` in both places, then set `SEMPRINI_VERSION` to it in both
+workflow files.
 
 The migration rewrites `generated/` into what the new release would have written, **without
 reading your sources**, so the diff is about the upgrade and nothing else. It will not mint an

@@ -51,7 +51,15 @@ from rdflib import Graph, URIRef
 from rdflib.namespace import DCTERMS
 from rdflib.term import Node
 
-from semprini import build, compiler_version, manifest, ontology_version, report, serialize
+from semprini import (
+    build,
+    compiler_version,
+    manifest,
+    ontology_version,
+    report,
+    serialize,
+    wheel_url,
+)
 from semprini.build import GENERATED_DIR, ONTOLOGY_FILE, OutputFile
 from semprini.config import InstanceConfig
 from semprini.identity import ID_MAP_PATH, IdMap
@@ -273,7 +281,8 @@ def migrate(
                     Severity.ERROR,
                     f"--to says {to} but this is semprini {running_compiler}; a migration is "
                     f"performed by the release it upgrades to, whose steps only exist in "
-                    f"that release. Install semprini=={to} and run it again",
+                    f"that release. Install semprini {to} from {wheel_url(to)} and run it "
+                    f"again",
                     "--to",
                 )
             ]

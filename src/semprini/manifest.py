@@ -34,7 +34,13 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
 
-from semprini import UNINSTALLED_VERSION, compiler_version, ontology_version, version_parts
+from semprini import (
+    UNINSTALLED_VERSION,
+    compiler_version,
+    ontology_version,
+    version_parts,
+    wheel_url,
+)
 from semprini.build import GENERATED_DIR, OutputFile
 from semprini.model import Issue, IssueError, Severity
 from semprini.report import REPORT_FILE
@@ -371,8 +377,9 @@ def _advice(recorded: str, running: str) -> str:
     if here < there:
         return (
             f"the installed release is older than the one that compiled generated/, and a "
-            f"migration only ever moves forward; install semprini=={recorded} — if this is CI, "
-            f"the pinned version in the workflow is the stale value"
+            f"migration only ever moves forward; install semprini {recorded} from "
+            f"{wheel_url(recorded)} — if this is CI, the pinned version in the workflow is "
+            f"the stale value"
         )
     return f"run `semprini migrate --to {running}` in its own PR"
 
