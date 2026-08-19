@@ -2447,6 +2447,9 @@ done and green.
   **Verify:** a fresh reader can install the package, bootstrap an instance and compile
   the fixture using only the README — walk it through literally, on a clean machine.
   **Depends:** G1
+  **Merged — [PR #19](https://github.com/JuhaKor/semprini/pull/19).** CI green on 3.12, 3.14 and
+  the wheel job. A docs-only change, so CI proves only that nothing here broke the package; the
+  claim this task rests on is the clean-venv walkthrough below, which no CI job runs.
   **Done.** Three documents: `README.md` rewritten from 40 lines to a full one, plus new
   `CONTRIBUTING.md` and `docs/writing-an-adapter.md`. Prose-only by decision — no mutation
   battery, since there is no code here to mutate and the testable claims are the commands and
