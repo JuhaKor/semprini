@@ -216,12 +216,24 @@ Merging step 1 also redeploys the site, which is what makes the new ontology ver
 
 ```sh
 pip install "semprini @ https://github.com/JuhaKor/semprini/releases/download/v0.2.0/semprini-0.2.0-py3-none-any.whl"
-curl -sI -H 'Accept: text/turtle' https://w3id.org/semprini/ontology/0.2.0/sem.ttl
+curl -sIL -H "Accept: text/turtle" https://w3id.org/semprini/ontology/0.2.0/sem.ttl
 ```
 
 Nothing in CI can check either one: the asset does not exist until the release is published, and
 the site is deployed by a different workflow. Check the *previous* ontology version still
 resolves too — that is the promise the archive exists to keep.
+
+Two things about that second command, both of which have caught somebody already.
+
+**In PowerShell, write `curl.exe`.** Plain `curl` there is an alias for `Invoke-WebRequest`,
+which takes a hashtable for `-Headers` and fails with a parameter-binding error before it ever
+reaches the network. `curl.exe` is the real curl, shipped with Windows, and takes the flags
+above unchanged.
+
+**Read the last hop, not the first.** `-L` follows the redirect, so the output holds two
+responses: w3id's `302`, whose own `Content-Type` is `text/html` and means nothing, and then the
+`200` from the site. The second one is the answer — expect `text/turtle; charset=utf-8` for the
+header above, and `text/html` for a browser's `Accept`.
 
 ### A released ontology is frozen
 

@@ -2509,7 +2509,7 @@ done and green.
     check runs the guide's example or the README's commands. Re-walking the README is a manual
     step, and G5's clean-venv install is the natural place to do it again.
 
-- [ ] **G5 · Release and distribution**
+- [x] **G5 · Release and distribution**
   **Spec:** §7 (support policy), §11 #3
   **Deliver:** tagged release process, CHANGELOG discipline, publication of the package
   and of the ontology at its w3id target.
@@ -2522,11 +2522,20 @@ done and green.
   publishing a second ontology version and confirming the first still resolves.
   **Depends:** A2, G3, G4
 
-  **Built and green, waiting on one action that is not mine to take: pushing the tag.**
-  Everything below is implemented, tested and verified against the real built wheel in a clean
-  virtual environment. What is left is `git tag v0.1.0 && git push origin v0.1.0` on the merged
-  commit, which publishes the release and makes the URLs in the README resolve. Tick the box
-  after step 4 of *Cutting a release* in `CONTRIBUTING.md` passes.
+  **Merged as [PR #20](https://github.com/JuhaKor/semprini/pull/20), and v0.1.0 is published.**
+  CI green on 3.12, 3.14 and the wheel job — the last of which now builds the wheel, installs it
+  into a bare environment and bootstraps an instance from it, so the Linux runner proves the same
+  thing the laptop did. **Semprini has a first release, and it is installable by anybody.**
+
+  **Verified from outside, after publication**, which is the half no CI job can reach:
+  - `https://github.com/JuhaKor/semprini/releases/download/v0.1.0/semprini-0.1.0-py3-none-any.whl`
+    — the exact URL every instance's workflows fetch — resolves `200`. Both distributions are
+    attached to the tag (wheel 203,750 bytes, sdist 181,779 bytes).
+  - The ontology resolves at every path w3id promises, in both directions: `/ontology` and
+    `/ontology/0.1.0/` each return `200 text/turtle; charset=utf-8` for an RDF `Accept` and
+    `200 text/html; charset=utf-8` for a browser's, and `/ontology/0.1.0/sem.ttl` `302`s to the
+    site and lands `200 text/turtle`. The versioned path is now served from
+    `ontology-archive/0.1.0/sem.ttl`, so it survives the next bump — which is the whole point.
 
   **The channel is decided (§11 #3): tagged GitHub releases, no package index.** That is the
   spec's own fallback default, and it is now recorded as resolved in §11 and stated in §5.1 and
@@ -2615,18 +2624,13 @@ done and green.
 
   The battery grew to **22 mutations, all caught**, including one for each of the first three.
 
-  **Remaining, in order:**
-  1. Merge this pull request. That also deploys the site — `pages.yml` now triggers on
-     `ontology-archive/**` — which is what makes `/ontology/0.1.0/` resolve from the archive
-     rather than from `sem.ttl` alone.
-  2. `git switch main && git pull && git tag v0.1.0 && git push origin v0.1.0`. `release.yml`
-     runs the suite, builds both distributions, installs the wheel into a bare environment, runs
-     both release tools against it, and publishes the release with the changelog section as its
-     notes. Nothing is published if any step fails.
-  3. Run step 4 of *Cutting a release*: install the published wheel by URL into a clean venv, and
-     `curl` the ontology's versioned path. **Neither can be checked by CI** — the asset does not
-     exist until the release is published, and the site is deployed by a different workflow.
-  4. Tick this box.
+  **The release process was run for the first time, and step 4 found a documentation bug rather
+  than a release bug.** `CONTRIBUTING.md` gave the verification as `curl -sI -H '...'`, which in
+  PowerShell binds to `Invoke-WebRequest` and dies on the header argument before reaching the
+  network — so the one step written for a human to run by hand was the one step never run on the
+  maintainer's own platform. Fixed: the doc says `curl.exe` in PowerShell, uses `-L`, and now
+  warns to read the last hop rather than w3id's `302`, whose `Content-Type` is `text/html` and
+  means nothing. That trap was recorded in A2 and had not travelled into the instructions.
 
   **Notes for later sessions:**
   - **The README now describes a release that does not exist yet.** Its install URLs are right
@@ -2737,18 +2741,18 @@ be deferred without stalling the build.
   `/ontology/X.Y.Z/` must keep resolving), and the question of whether a release candidate
   needs to be a migration target, which G3 refused by requiring `X.Y.Z`.
 
-- ~~**G5 next.**~~ Built and green; **Phase G is complete once the tag is pushed**. The project
-  has a release process, a channel (§11 #3: tagged GitHub releases, no index), and the last of
-  A2's debts is paid — every ontology version ever published now keeps resolving, from frozen
-  copies rather than from a working tree that has moved on. The invariant that fell out of it is
-  worth more than the mechanism: a released ontology document cannot be edited under its own
-  version number, because the shipped copy and the archived one are compared byte for byte. §7
-  had asserted that in prose since v0.1 and nothing checked it.
+- ~~**G5 next.**~~ Done, and **Phase G is complete**. v0.1.0 is published and verified from
+  outside. The project has a release process, a channel (§11 #3: tagged GitHub releases, no
+  index), and the last of A2's debts is paid — every ontology version ever published now keeps
+  resolving, from frozen copies rather than from a working tree that has moved on. The invariant
+  that fell out of it is worth more than the mechanism: a released ontology document cannot be
+  edited under its own version number, because the shipped copy and the archived one are
+  compared byte for byte. §7 had asserted that in prose since v0.1 and nothing checked it.
 
-  **H1 is next, and it is the first task whose subject is a real organization.** It needs the
-  release to exist — an instance pins a version, and until a tag is pushed there is no URL for
-  its workflows to install from. Everything else H1 needs is in place: `semprini init` produces
-  the tree, both workflows have been run against a real instance on GitHub (G2), and the
-  compiler is feature-complete (G3). What H1 adds is the things only a pilot can settle — a real
-  base IRI, an Ellie allowlist filled one validated model at a time, named stewards, and §11 #6,
-  the last open decision, which is per instance and needs somebody's actual data to answer.
+  **H1 is next, and it is the first task whose subject is a real organization.** The thing it
+  was waiting for now exists: an instance pins a version, and there is a released version to
+  pin. Everything else H1 needs is in place: `semprini init` produces the tree, both workflows
+  have been run against a real instance on GitHub (G2), and the compiler is feature-complete
+  (G3). What H1 adds is the things only a pilot can settle — a real base IRI, an Ellie allowlist
+  filled one validated model at a time, named stewards, and §11 #6, the last open decision,
+  which is per instance and needs somebody's actual data to answer.
