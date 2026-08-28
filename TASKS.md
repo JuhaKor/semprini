@@ -2859,6 +2859,86 @@ done and green.
   is tagged per §9.1 rule 7.
   **Depends:** D3, G5, H0
 
+- [ ] **H2 · Point the local flow at the run report**
+  **Spec:** §5.6 — the report is unchanged; only who gets told about it moves.
+  **Deliver:** `semprini run`'s console summary ends by naming `generated/.report.md`, the
+  New/Changed/Deprecated counts it holds, and the one line that turns it into a pull request
+  description — `gh pr create --body-file generated/.report.md`, which is exactly what
+  `compile.yml` already does. No subcommand is added: `semprini report` would be `cat` with
+  a §5.1 surface change behind it.
+  **Why:** §5.6 calls the report "the reviewer's summary", and every run writes it, local
+  ones included — but only `compile.yml` has ever used it. A steward who compiles locally
+  and opens a pull request by hand is holding that summary inside their own commit with
+  nothing to tell them it is there, and reviews a source edit, several Turtle files and a
+  manifest as one undifferentiated diff. Cheap, and it helps whichever way H3 goes.
+  **Verify:** a test asserts the summary names the report path, the three counts and the
+  `gh` line after a run that wrote something, and names none of them after a `--dry-run` or
+  a run that changed nothing — a no-op rewrites no report (§5.6) and leaves nothing to
+  propose, so pointing at the committed one would invite a pull request describing a run
+  that did not happen.
+  **Depends:** nothing. Worth landing before H1's stewards start rather than after.
+
+- [ ] **H3 · Decide who compiles a source change**
+  **Spec:** §1.2, §4.2, §6.2, §6.3 — a decision here edits all four in the same change.
+  **The question:** an instance ships two steward flows and documents neither as the
+  primary one. A steward can compile locally and commit the source and its Turtle together
+  (§4.2), or commit the source alone and let the scheduled compile propose the Turtle in
+  its own pull request (§6.2). Both work. They are governed differently, and the difference
+  is written down nowhere an adopter would find it.
+
+  **Established while framing this (2026-08-28), and worth not rediscovering:**
+  - **The scheduled compile is a no-op on a v1 instance whose sources have not changed.**
+    Both bundled adapters read files under `sources/`; Ellie's `base_url` is provenance —
+    which instance the UUIDs belong to — and fetches nothing (`adapters/ellie.py`). Nothing
+    in the output is time-driven either: `dcterms:modified` is carried from content rather
+    than stamped per run (`build.py`), and deprecation fires on absence from sources, not
+    on a clock. So `compile.yml` today can only ever find work where someone committed a
+    source without recompiling. It is infrastructure for the Ellie API mode, shipped ahead
+    of it — not a check on stewards.
+  - **Nothing compares `generated/` to `sources/`.** None of §6.1's seven checks recompiles
+    from the sources, so a source committed without a recompile passes CI clean. Under the
+    §4.2 flow that is a real hazard with no mechanical guard; under a compile-in-CI flow it
+    cannot arise at all.
+
+  **The trade-off, recorded:**
+  - **Source and Turtle in one pull request** — the flow §4.2 already justifies. One review
+    sees cause and effect, and that matters most where it is least visible: an `.xlsx`
+    taxonomy is a binary blob in a diff, so the generated Turtle beside it is the only
+    reviewable account of what the workbook edit did. Costs: the steward needs Python and a
+    pinned Semprini install, and a forgotten recompile is silent.
+  - **Source only, compile follows on schedule.** The steward needs no Python at all — a
+    real widening of who can take part — and the stale-compile hazard disappears. Costs:
+    whoever approves the workbook approves a change whose effect they cannot see, and that
+    effect arrives days later as a bot pull request, plausibly to a different reviewer,
+    where the natural reading is "the machine did what machines do" rather than "did we
+    mean this?". §1.2 makes the pull request diff the governance interface, and this
+    separates the diff from the decision that caused it. Between the two merges, `main`
+    also holds sources that `generated/` does not describe, and no check notices.
+  - **Compile on the source pull request's own branch** — the option that is not a
+    compromise. CI compiles against the branch and pushes `generated/` into that same pull
+    request: one review, cause and effect together, no local Python. Costs to design around
+    rather than wave away — the push needs a credential that is not `GITHUB_TOKEN`, or the
+    pushed commit contributes no `validate` run (the parked `action_required` mechanism
+    §6.2 already documents); the reviewer waits for the bot before reviewing; a fork's pull
+    request cannot do it, which is likely fine for an internal instance. It is a third
+    workflow, not an edit to `compile.yml` — the dated branch and force-push there solve a
+    different problem. The weekly schedule then keeps only the job it was built for,
+    upstream drift, and stays a cheap no-op until the API adapter lands.
+
+  **For whoever picks this up:** do not settle it on this repository's own reasoning. H1 is
+  the evidence — whether the pilot's stewards can install Python decides most of it — and
+  the Ellie API mode forces the question anyway, so designing both cases together costs
+  less than designing them twice.
+  **Deliver:** the decision, written into the spec sections above in the same change; one
+  flow named as primary in `templates/instance/README.md` with the other stated as the
+  exception; and whatever workflow the decision implies.
+  **Verify:** if the flow stays as §4.2 has it, a test that the instance README names one
+  primary flow, and nothing else changes. If the compile moves into CI, a scratch instance
+  on GitHub where a source-only pull request gains its Turtle from the workflow and
+  `validate` reports on the pushed commit — the same real-instance run G2 used, since that
+  is the only way the token behaviour is established rather than assumed.
+  **Depends:** H1 for evidence; H2 is independent and helps either way.
+
 ---
 
 ## Decision gates
@@ -2960,3 +3040,9 @@ be deferred without stalling the build.
   (G3). What H1 adds is the things only a pilot can settle — a real base IRI, an Ellie allowlist
   filled one validated model at a time, named stewards, and §11 #6, the last open decision,
   which is per instance and needs somebody's actual data to answer.
+
+- **H3 is a decision, not a build, and H1 is what informs it.** The plane ships two steward
+  flows — compile locally and commit source with Turtle, or commit the source and let the
+  scheduled compile follow — and names neither as primary. H2 helps under both and can land
+  immediately. Nothing else should be built on either flow until the pilot says which one
+  its stewards can actually run, and the Ellie API mode will reopen the question regardless.
