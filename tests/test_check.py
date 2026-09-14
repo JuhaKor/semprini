@@ -4,7 +4,7 @@ The command an adopting organization's CI runs on every pull request, and the on
 standing between a hand edit and a governed file. Two claims are asserted here and nowhere
 else.
 
-*A green check means the instance is committable.* Every one of the seven checks has a
+*A green check means the instance is committable.* Every one of the eight checks has a
 purpose-built failing fixture below, so a check that stopped checking would show up as a
 test that stopped failing — which is the failure mode a validation suite is most prone to
 and least able to notice.
@@ -26,11 +26,12 @@ from typing import Any
 import pytest
 from tools.build_fixture_instance import COMPILER, ONTOLOGY
 
-from semprini import build, config, lifecycle, validate
+from semprini import adapters, build, config, lifecycle, validate
+from semprini.adapters import discovery as discovery_module
 from semprini.cli import ExitCode, main
 from semprini.identity import ID_MAP_PATH, NAMESPACE_LOCK_PATH, NamespaceLockError
 from semprini.manifest import MANIFEST_FILE, Manifest
-from semprini.model import Issue, Severity
+from semprini.model import InternalModel, Issue, RunContext, Severity
 from semprini.validate import CHECKS, CheckOutcome, CheckResult
 
 GENERATED = build.GENERATED_DIR
@@ -179,9 +180,9 @@ def test_every_check_is_reported_in_order(instance: Path) -> None:
     # sequence must be visible as a missing line rather than as one fewer thing failing.
     result = check(instance)
 
-    assert [item.number for item in result.outcomes] == [1, 2, 3, 4, 5, 6, 7]
+    assert [item.number for item in result.outcomes] == [1, 2, 3, 4, 5, 6, 7, 8]
     assert [item.name for item in result.outcomes] == list(CHECKS)
-    assert len(CHECKS) == 7
+    assert len(CHECKS) == 8
 
 
 def test_warnings_are_reported_and_do_not_fail_the_command(instance: Path) -> None:
@@ -907,3 +908,207 @@ def test_the_summary_is_the_same_on_every_machine(instance: Path) -> None:
     assert first == second == third
     # Guards the guard: three identical empty outputs would also pass the line above.
     assert first.count("  - ") == 4
+
+
+# --------------------------------------------------- check 8: source configuration
+
+CONFIG = "config/semprini.yaml"
+
+
+def misconfigure(root: Path, old: str, new: str) -> None:
+    """Break one setting inside a source's adapter-owned ``config:`` block.
+
+    Adapter-owned is the point. ``config.load`` validates the keys the compiler defines —
+    a source's name, its adapter, whether a value is a credential — and cannot judge what
+    is under ``config:``, because only the adapter knows what belongs there. That is the
+    gap check 8 closes.
+    """
+    edit(root / CONFIG, lambda text: text.replace(old, new, 1))
+
+
+class _Rigged(adapters.BaseAdapter):
+    """An adapter that misbehaves on demand, standing in for somebody else's plugin."""
+
+    name = "excel-taxonomy"
+    fail: str = ""
+
+    def __init__(self, source_name: str, config: Any, ctx: RunContext) -> None:
+        if type(self).fail == "construct":
+            raise RuntimeError("opened a connection\nand fell over")
+        super().__init__(source_name, config, ctx)
+
+    def fetch(self) -> InternalModel:  # pragma: no cover - check 8 never fetches
+        raise AssertionError("check 8 must not fetch")
+
+    def validate_config(self) -> list[Issue]:
+        if type(self).fail == "raise":
+            raise RuntimeError("not the way to report a bad key")
+        if type(self).fail == "junk":
+            return "two problems"  # type: ignore[return-value]
+        if type(self).fail == "list-junk":
+            return [Issue(Severity.ERROR, "a real one"), "and a string"]  # type: ignore[list-item]
+        if type(self).fail == "unlocated":
+            return [Issue(Severity.ERROR, "something is wrong and I cannot say where")]
+        return []
+
+
+@pytest.fixture
+def rigged(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
+    """Put ``_Rigged`` behind ``adapter: excel-taxonomy`` for one test.
+
+    Patched at discovery rather than at :func:`semprini.adapters.create`, which is the
+    function under test: check 8's whole job is to survive whatever an installed plugin
+    does, so the plugin has to arrive by the route a real one does.
+    """
+
+    real = discovery_module.load_adapter
+
+    def rig(failure: str) -> None:
+        _Rigged.fail = failure
+        # Only the taxonomy source is rigged. The other source keeps its real adapter, so
+        # a finding below is one source's and not every source's.
+        monkeypatch.setattr(
+            discovery_module,
+            "load_adapter",
+            lambda name: _Rigged if name == _Rigged.name else real(name),
+        )
+
+    monkeypatch.setattr(_Rigged, "fail", "")
+    return rig
+
+
+def test_a_bad_adapter_setting_fails_check_8(instance: Path) -> None:
+    """The mistake nothing else in the command can see.
+
+    A slug becomes an IRI local name and a file name, both permanent (spec 3.4.2), so a
+    workbook configured with a scheme slug that is not a slug must fail on the pull
+    request that wrote it — not on the first compile after it merges.
+    """
+    misconfigure(instance, "scheme_slug: product-category", "scheme_slug: Product Category")
+
+    result = check(instance)
+
+    (found,) = failed(result, 8)
+    assert "not a slug" in found.message
+    assert found.location == "sources.product-category.config.scheme_slug"
+    assert main(["check"]) == ExitCode.FAILURE
+
+
+def test_every_source_is_asked(instance: Path) -> None:
+    # One adapter's findings must not stand in for the roster's: a run reports everything
+    # wrong with the instance (spec 6.1), and two sources misconfigured in one pull
+    # request are one fix, not two round trips.
+    misconfigure(instance, "scheme_slug: product-category", "scheme_slug: Product Category")
+    misconfigure(instance, "base_url: https://acme.ellie.ai/api/v1", "port: 8080")
+
+    located = {issue.location for issue in failed(check(instance), 8)}
+
+    assert "sources.product-category.config.scheme_slug" in located
+    assert any(item is not None and item.startswith("sources.ellie-main") for item in located)
+
+
+def test_check_8_reads_nothing_from_the_sources(instance: Path) -> None:
+    """Construction and ``validate_config()`` open nothing (spec 5.2).
+
+    Asserted by taking the sources away. Every other check reads committed files, so an
+    instance whose `sources/` is absent — a shallow checkout, a workbook stored elsewhere
+    — must still check green, and check 8 that quietly opened a workbook would be the one
+    check to fail.
+    """
+    for path in sorted((instance / "sources").rglob("*")):
+        if path.is_file():
+            path.unlink()
+
+    result = check(instance)
+
+    assert outcome(result, 8).passed
+    assert result.ok
+
+
+def test_check_8_answers_when_the_turtle_does_not_parse(instance: Path) -> None:
+    # Checks 4-7 ask questions about content that did not parse and are reported as not
+    # run. Check 8 asks about configuration, so it answers — and an operator with both
+    # problems sees both.
+    edit(instance / GENERATED / CONCEPTS, lambda text: text + "\nthis is not turtle .\n")
+    misconfigure(instance, "scheme_slug: product-category", "scheme_slug: Product Category")
+
+    result = check(instance)
+
+    assert [item.number for item in result.outcomes] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert outcome(result, 5).skipped is not None
+    assert "not a slug" in failed(result, 8)[0].message
+
+
+def test_an_adapter_that_cannot_be_constructed_is_a_finding(
+    instance: Path, rigged: Callable[[str], None]
+) -> None:
+    rigged("construct")
+
+    (found,) = failed(check(instance), 8)
+
+    assert "could not be constructed" in found.message
+    assert found.location == "product-category"
+    # One line: an issue is rendered as one bullet and pasted into a pull request body.
+    assert "\n" not in found.message
+
+
+def test_an_adapter_that_raises_instead_of_reporting_is_a_finding(
+    instance: Path, rigged: Callable[[str], None]
+) -> None:
+    # The contract says `validate_config()` reports rather than raises, and nothing can
+    # make a third party keep it. A broken plugin must name the source an operator
+    # configured, not surface as a traceback from someone else's distribution.
+    rigged("raise")
+
+    (found,) = failed(check(instance), 8)
+
+    assert "raised while validating its configuration" in found.message
+    assert "not the way to report a bad key" in found.message
+
+
+def test_an_adapter_returning_something_that_is_not_issues_is_a_finding(
+    instance: Path, rigged: Callable[[str], None]
+) -> None:
+    # A string is iterable, so a lenient check would report one issue per character.
+    rigged("junk")
+
+    (found,) = failed(check(instance), 8)
+
+    assert "returned str from validate_config()" in found.message
+    assert "must be a list of issues" in found.message
+
+
+def test_an_adapter_returning_a_list_holding_something_else_is_a_finding(
+    instance: Path, rigged: Callable[[str], None]
+) -> None:
+    # The half a type check on the container misses. A list holding a string passes that
+    # check and fails one attribute later, as a traceback naming `severity` — which names
+    # no plugin and no source.
+    rigged("list-junk")
+
+    (found,) = failed(check(instance), 8)
+
+    assert "returned a list holding str" in found.message
+
+
+def test_a_finding_with_no_location_is_named_by_its_source(
+    instance: Path, rigged: Callable[[str], None]
+) -> None:
+    # An adapter names the offending key where it can. Where it cannot, the operator still
+    # has to be told which of their sources to open.
+    rigged("unlocated")
+
+    (found,) = failed(check(instance), 8)
+
+    assert found.location == "product-category"
+
+
+def test_check_8_writes_nothing(instance: Path, rigged: Callable[[str], None]) -> None:
+    # The one point in this command where third-party code runs, in a command that must be
+    # safe to point at a repository it cannot write to (spec 5.1).
+    rigged("raise")
+    before = snapshot(instance)
+
+    assert main(["check"]) == ExitCode.FAILURE
+
+    assert snapshot(instance) == before

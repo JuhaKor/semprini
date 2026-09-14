@@ -270,7 +270,7 @@ No caller under `src/` or `tools/`: `serialize.write`, `build.read_previous`,
 
 ---
 
-## C. A real inconsistency
+## C. A real inconsistency — **done**
 
 Three docstrings (`adapters/base.py` on `__init__` and `validate_config`,
 `adapters/discovery.py` on `create`, `model.py` on `Issue`) say `semprini check` constructs
@@ -278,10 +278,11 @@ every configured adapter to call `validate_config()`. It does not: `validate.py`
 imports `adapters`, and `adapters.create` has one caller, in `run._fetch`. Each bundled
 adapter compensates by calling its own `validate_config()` at the top of `fetch()`.
 
-Either make `check` do what the docstrings claim (a configuration mistake would then fail
-CI on the pull request that introduced it, which is the behaviour spec §6.1 describes), or
-delete the claim and keep the in-`fetch` call. Worth doing first, independently of
-everything else.
+**Resolved by making `check` do what the docstrings claim.** `semprini check` now has an
+eighth check, *source configuration* (spec §6.1 check 8): it constructs every configured
+adapter and collects `validate_config()`. The in-`fetch` calls stay — spec §5.3 requires an
+adapter to validate its own settings before reading anything, so a run that skipped `check`
+still fails with the offending key. Battery: `tools/mutations/c_source_config.py`.
 
 ---
 
@@ -302,7 +303,7 @@ everything else.
 
 ## Suggested order
 
-1. **C** — the `validate_config` inconsistency. Small, and a correctness matter.
+1. ~~**C** — the `validate_config` inconsistency.~~ Done: check 8, spec §6.1.
 2. **A1–A5**, one PR each, spec edits included, while no instance holds data. A1 first: it
    is the largest and it simplifies lifecycle and build for everything after it.
 3. **B1, B2, B3** as mechanical refactors under the mutation batteries

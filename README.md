@@ -327,7 +327,7 @@ version.
 semprini check
 ```
 
-`semprini check` runs seven checks and writes nothing. Run it before every commit. It is the
+`semprini check` runs eight checks and writes nothing. Run it before every commit. It is the
 same command your continuous integration runs, so it reaches the same verdict on your laptop as
 it does in the cloud.
 
@@ -486,7 +486,7 @@ same graph, but one renamed label would then show up as four changed hunks inste
 
 ### Validation
 
-`semprini check` runs seven checks in this order, and writes nothing.
+`semprini check` runs eight checks in this order, and writes nothing.
 
 | # | Check | Fails when |
 |---|---|---|
@@ -497,9 +497,12 @@ same graph, but one renamed label would then show up as four changed hunks inste
 | 5 | SHACL | the RDF breaks the core shapes, or your own local ones |
 | 6 | identity | somebody deleted or edited a row in `mappings/id-map.csv` |
 | 7 | determinism | a generated file is not the bytes the canonical serializer writes |
+| 8 | source configuration | a source's own settings are wrong — the adapter is asked |
 
-The cheap checks run first, and the slow SHACL run comes late. Check 6 needs a revision to
-compare against. In CI it uses the pull request's base branch, and locally you pass
+The cheap checks run first, and the slow SHACL run comes late. Check 8 asks each adapter about
+the settings under its own `config:` block, which is the part no other check can read; it opens
+no source and reads no file, so it answers even when check 1 has found a file that will not
+parse. Check 6 needs a revision to compare against. In CI it uses the pull request's base branch, and locally you pass
 `--base <rev>`. Without one it reports itself as *not run* rather than passing quietly.
 
 **Every check lives in the CLI, and none of them lives in the workflow files.** Both shipped
