@@ -46,6 +46,15 @@ section, so what is written here is what an adopter reads when deciding whether 
 - The adapter contract (`semprini.testing`) rejects an adapter that returns text or keys
   carrying invisible or decomposed characters, naming the code point rather than quoting
   a value that would look correct.
+- `semprini check` gained an eighth check, **source configuration** (§6.1 check 8): every
+  configured adapter is constructed and asked to validate its own settings. What sits
+  under a source's `config:` belongs to the adapter, so a mistyped sheet name or a scheme
+  slug that is not a slug used to pass review and fail on the first compile after merging.
+  It now fails on the pull request that wrote it. An instance with such a mistake in its
+  configuration will start failing `semprini check` on the upgrade; the finding names the
+  key. The step reads no source, so it is unaffected by a `sources/` directory that is
+  absent, and an adapter that misbehaves while being asked is reported against its source
+  rather than raised as a traceback.
 
 ## [0.1.0] — 2026-08-19
 

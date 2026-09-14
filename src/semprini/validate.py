@@ -1,6 +1,6 @@
 """SHACL and structural checks behind ``semprini check`` (spec 6.1).
 
-This module is ``semprini check``: all seven checks of spec 6.1, in order, and the one
+This module is ``semprini check``: all eight checks of spec 6.1, in order, and the one
 place that decides whether an instance is committable. Every check lives here rather than
 in workflow YAML (spec 6.3), so an adopter on GitLab or Azure DevOps ports a config file
 instead of reimplementing the checks, and a failure reproduces identically on a laptop
@@ -60,8 +60,8 @@ from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import RDF, SH
 from rdflib.term import IdentifiedNode, Node
 
-from semprini import ONTOLOGY_PATH, build, lifecycle, ontology_version, serialize
-from semprini.config import SLUG_PATTERN, InstanceConfig
+from semprini import ONTOLOGY_PATH, adapters, build, lifecycle, ontology_version, serialize
+from semprini.config import SLUG_PATTERN, InstanceConfig, SourceConfig
 from semprini.identity import (
     ID_MAP_PATH,
     UUID_PATTERN,
@@ -70,7 +70,7 @@ from semprini.identity import (
     verify_namespace_lock,
 )
 from semprini.manifest import Manifest, ManifestError
-from semprini.model import Issue, IssueError, Kind, Severity
+from semprini.model import Issue, IssueError, Kind, RunContext, Severity
 
 __all__ = [
     "CHECKS",
@@ -407,7 +407,7 @@ def check_shapes(
     not (spec 6.1.5), and :func:`check` owns the exit code.
 
     The graphs may be passed in already parsed. :func:`check` does, because it has read
-    them for check 1 and four of the seven checks ask questions about the same bytes: an
+    them for check 1 and four of the eight checks ask questions about the same bytes: an
     instance large enough for check 5 to be slow is one where parsing ``generated/`` four
     more times is felt. Omitted, they are read from ``repo_root`` as before, which is what
     a caller wanting check 5 alone means. ``local`` is per file rather than one graph,
@@ -496,19 +496,24 @@ CHECKS: Sequence[str] = (
     "SHACL",
     "identity",
     "determinism",
+    "source configuration",
 )
-"""The seven checks of spec 6.1, in the order they run and numbered from 1.
+"""The eight checks of spec 6.1, in the order they run and numbered from 1.
 
 Named here rather than in each function so that the sequence is readable in one place and
 so that "check 4" means the same thing in this module, in the spec and in what an operator
 reads. Order is not arbitrary: check 1 is what makes checks 4 to 7 answerable at all, and the
 cheap file-level checks come before the SHACL run, which is the slow one (6.1.5).
+
+Check 8 is last in the numbering and asks nothing about RDF, which is why it is the one
+check that still answers when check 1 fails: a configured source with a bad key is a
+finding an operator can act on whether or not the committed Turtle parses.
 """
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CheckOutcome:
-    """What one of the seven checks found."""
+    """What one of the eight checks found."""
 
     number: int
     name: str
@@ -617,6 +622,12 @@ def check(
     request, so it must be safe to point at a repository it is not allowed to modify, and
     it must reach the same verdict as the run that produced the files.
 
+    Check 8 constructs every configured adapter and calls ``validate_config()`` on it
+    (spec 5.2, 6.1). That is the one point in this command where third-party code runs, and
+    it runs under the contract that construction has no side effects and reads nothing —
+    an adapter that breaks the contract is reported as a finding against its source, never
+    as a traceback.
+
     ``base`` is the git revision the ID map's append-only rule is judged against (check 6);
     omitted, it is discovered. ``compiler`` and ``ontology`` are injected for the same
     reason a run injects them — the plane's own fixture instance pins the versions its
@@ -652,6 +663,9 @@ def check(
         # a second, invented problem on top of the real one.
         unparsed = "the instance's Turtle does not parse (check 1)"
         outcomes.extend(_skipped(number, unparsed) for number in (4, 5, 6, 7))
+        # Check 8 reads configuration, not RDF, so it is answered here too: an operator
+        # with an unparseable file and a mistyped source key should see both in one run.
+        outcomes.append(_outcome(8, _check_source_config(settings)))
         return CheckResult(tuple(outcomes))
 
     generated = build.union_of(content.generated.values())
@@ -676,6 +690,7 @@ def check(
     outcomes.append(
         _outcome(7, _check_determinism(root, content, settings.base_iri, ontology_drifted=drifted))
     )
+    outcomes.append(_outcome(8, _check_source_config(settings)))
     return CheckResult(tuple(outcomes))
 
 
@@ -924,6 +939,93 @@ def _check_determinism(
             )
         )
     return tuple(sorted(issues, key=_sort_key))
+
+
+def _check_source_config(settings: InstanceConfig) -> tuple[Issue, ...]:
+    """Check 8: every configured source's own settings, asked of the adapter itself.
+
+    Configuration loading validates what the compiler can see — that a source names an
+    installed adapter, that no key holds a credential (spec 5.1). Only the adapter knows
+    whether the sheet name exists in the workbook's shape it expects, or whether a model
+    allowlist is usable. So every configured adapter is constructed and asked, which is
+    what :meth:`~semprini.adapters.BaseAdapter.validate_config` is for and why an
+    adapter's construction is required to be free of side effects (spec 5.2).
+
+    Reported as ordinary findings — exit 1 — rather than the exit 2 a namespace lock or a
+    credential in configuration raises. Those two abort before any check runs, because
+    nothing else this command said would be meaningful under them; a source whose sheet
+    name is wrong invalidates none of checks 1 to 7, and the operator wants those answers
+    in the same round trip.
+
+    Each source is asked independently: one adapter that cannot even be constructed must
+    not hide a second source's mistake, for the same reason discovery keeps a broken
+    plugin from hiding the others (spec 5.2).
+    """
+    context = settings.run_context(dry_run=True)
+    return tuple(issue for source in settings.sources for issue in _asked_of(source, context))
+
+
+def _asked_of(source: SourceConfig, context: RunContext) -> tuple[Issue, ...]:
+    """One source's ``validate_config()``, with every way it can fail turned into issues.
+
+    This is the only point in ``semprini check`` where third-party code runs, and the
+    contract it runs under is unenforceable — a plugin may raise from ``__init__``, raise
+    from ``validate_config()``, or return something that is not a list of issues. Each is
+    a defect in that adapter, and each is reported against the source that configured it:
+    a traceback out of ``semprini check`` names a file in someone else's distribution and
+    tells the operator nothing about which of their sources to look at.
+    """
+    try:
+        adapter = adapters.create(source, context)
+    except adapters.AdapterError as error:
+        # Already phrased for an operator by discovery, and about the installation rather
+        # than about this source's keys; passed through rather than wrapped.
+        return (Issue(Severity.ERROR, _one_line(error), source.name),)
+    except Exception as error:
+        return (
+            Issue(
+                Severity.ERROR,
+                f"adapter {source.adapter!r} could not be constructed: {_one_line(error)}",
+                source.name,
+            ),
+        )
+
+    try:
+        reported = adapter.validate_config()
+    except Exception as error:
+        return (
+            Issue(
+                Severity.ERROR,
+                f"adapter {source.adapter!r} raised while validating its configuration "
+                f"instead of reporting: {_one_line(error)}",
+                source.name,
+            ),
+        )
+
+    if not isinstance(reported, list):
+        return (_not_issues(source, type(reported).__name__),)
+    for item in reported:
+        # Checked per member rather than only on the container: a list holding a string
+        # passes a type check on the list and then fails an attribute away, as a traceback
+        # naming `severity` — which tells an operator nothing about which plugin is at
+        # fault.
+        if not isinstance(item, Issue):
+            return (_not_issues(source, f"a list holding {type(item).__name__}"),)
+    # An adapter names the offending key as the location where it can; where it cannot,
+    # the source is the least an operator needs in order to know which file to open.
+    return tuple(
+        Issue(issue.severity, issue.message, issue.location or source.name) for issue in reported
+    )
+
+
+def _not_issues(source: SourceConfig, returned: str) -> Issue:
+    """One adapter broke the return type of ``validate_config()`` (spec 5.2)."""
+    return Issue(
+        Severity.ERROR,
+        f"adapter {source.adapter!r} returned {returned} from validate_config(), "
+        f"which must be a list of issues",
+        source.name,
+    )
 
 
 def _committed(path: Path) -> str:

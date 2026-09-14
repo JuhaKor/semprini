@@ -2895,7 +2895,7 @@ done and green.
     on a clock. So `compile.yml` today can only ever find work where someone committed a
     source without recompiling. It is infrastructure for the Ellie API mode, shipped ahead
     of it — not a check on stewards.
-  - **Nothing compares `generated/` to `sources/`.** None of §6.1's seven checks recompiles
+  - **Nothing compares `generated/` to `sources/`.** None of §6.1's checks recompiles
     from the sources, so a source committed without a recompile passes CI clean. Under the
     §4.2 flow that is a real hazard with no mechanical guard; under a compile-in-CI flow it
     cannot arise at all.

@@ -757,8 +757,9 @@ Contract obligations on every adapter, which the core relies on:
 - An adapter contributes only data — never IRIs in another instance's namespace, and
   never `sem:` terms.
 - Construction is free of side effects. `semprini check` constructs every configured
-  adapter purely to call `validate_config()` (6.1), and must not open a connection to
-  do it.
+  adapter purely to call `validate_config()` (6.1 check 8), and must not open a connection
+  to do it. Neither construction nor `validate_config()` reads a source: an instance whose
+  `sources/` is absent still checks clean on this step.
 
 Adapters bundled with the plane are ordinary plugins registered by the same mechanism,
 so a third-party adapter is never a second-class citizen.
@@ -1437,6 +1438,26 @@ categories below. Steps, all blocking unless noted:
    serializer did not produce (4.2); the comparison is skipped when check 3 found the
    recorded ontology version drifting, because the committed copy is then expected to
    differ.
+8. **Source configuration**: every configured adapter is constructed and asked for its
+   own verdict on its own settings — `validate_config()`, the one obligation 5.2 places
+   on an adapter beyond fetching. Configuration loading judges what the compiler defines
+   (a source's name, its adapter, a key holding a credential); what is under `config:`
+   belongs to the adapter, and nothing else in this command can read it. Without this
+   step a mistyped sheet name or a scheme slug that is not a slug passes review and fails
+   on the first compile after it merges, which is the round trip 6.1 exists to prevent.
+
+   Findings are ordinary findings — exit `1`, not the exit `2` a namespace lock or a
+   credential in configuration aborts with. Those two make everything else this command
+   says meaningless; a source whose settings are wrong invalidates none of checks 1–7.
+
+   It is also the only check that still answers when check 1 fails: it asks about
+   configuration rather than about RDF, so an instance with an unparseable file and a bad
+   key reports both. And it is the one point in `semprini check` where third-party code
+   runs — under the 5.2 contract that construction has no side effects and reads nothing.
+   An adapter that breaks the contract (raising from construction or from
+   `validate_config()`, or returning something that is not a list of issues) is reported
+   as a finding against the source that configured it, never as a traceback: a plugin's
+   defect must name the source an operator can act on.
 
 The plane's own test suite runs the same checks against `tests/fixtures/acme/` — a
 complete synthetic instance with a mocked source API and sample workbook, plus golden
