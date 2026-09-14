@@ -284,35 +284,14 @@ tell the same story.
    same way: deleting the file must not become the way around a permanent decision. Base
    IRI and instance id are what is compared — the recorded ontology version says what the
    instance bootstrapped against, and upgrading the metamodel is the manifest's drift
-   check to govern (6.1), not this file's. Changing the base IRI is a migration, not a
-   configuration edit: it requires `--force-namespace-change`, which rewrites the ID map
-   and every generated file in one reviewable commit and is expected to be a once-ever
-   event. Local names survive the move unchanged, so an object keeps its identity and
-   changes only the namespace it lives in. The flag moves the **base IRI and nothing
-   else**: it is the one invocation that suspends the lock's checks, so an instance id
-   that has also drifted is refused rather than re-frozen, and a "move" to the base IRI
-   already locked is refused too — it would only discard the record of when the namespace
-   was frozen.
-
-   The **merge register moves with the map**, and that is the only circumstance in which a
-   compile writes `mappings/merges.csv` (5.4). Its rows are the one place in an instance
-   where a person typed an IRI; left behind, every one of them would name an IRI the moved
-   map has never heard of, the run would refuse itself, and the migration could not be
-   performed at all on an instance that had ever recorded a merge. Rebasing changes no
-   decision — a row says the same two objects are one, in the namespace they now live in.
-
-   The move is **computed with the run and written with its output**, map, register and
-   lock included, and the map is written before the lock. A move performed up front would leave
-   an instance whose map says it has moved and whose `generated/` says it has not the
-   moment the compile that follows fails, and that state has no way out: a second
-   `--force-namespace-change` is refused as a move to the base IRI already locked, and a
-   plain run refuses the old IRIs still in the output. The run **rebases the previous
-   generated state** before lifecycle reads it, so nodes already written are recognized as
-   the nodes they are — without that, every one of them is an IRI the ID map has never
-   heard of (5.4), which at best fails the run and at worst would silently drop every
-   deprecated object in the instance. Rebasing is also what keeps `dcterms:modified` still:
-   the move changes where an object lives and nothing it says, so the commit is every IRI
-   and no dates, and the run report shows nothing new and nothing changed.
+   check to govern (6.1), not this file's. **The base IRI is permanent.** There is no
+   command that moves an instance to a different one: an organization that needs a new
+   base IRI creates a new instance, and the old one's IRIs stay published as they were.
+   A "once-ever" move that rewrote the ID map, the merge register and every generated
+   file was specified in an earlier draft and removed before any instance existed. It
+   contradicted 1.2 — an IRI that never changes cannot also be moved — and it made the
+   lock a promise one invocation could suspend, which is a weaker promise than one that
+   nothing suspends.
 
 ### 3.5 Lifecycle rules
 
@@ -571,7 +550,6 @@ exposes a console script:
 semprini init      --base-iri <IRI> --org <slug> [--dir <path>]   # bootstrap an instance (5.7)
                    [--language <tag>]                             # default_language (5.5 rule 6)
 semprini run       [--dry-run]                                    # fetch, compile, write
-                   [--force-namespace-change]                     # move the base IRI (3.4)
 semprini check     [--base <rev>]                                 # validate only, no writes
 semprini migrate   --to <version>                                 # apply migrations (7)
                                                                   # <version> = the installed one

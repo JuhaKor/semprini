@@ -27,12 +27,12 @@ from typing import Any
 
 import pytest
 from rdflib import Graph, URIRef
-from rdflib.namespace import DCTERMS, SKOS
+from rdflib.namespace import SKOS
 from tools.build_fixture_instance import COMPILER, INSTANCE, ONTOLOGY, TODAY
 
-from semprini import adapters, build, config, identity, lifecycle, run
+from semprini import adapters, build, config, lifecycle, run
 from semprini.cli import ExitCode, main
-from semprini.identity import ID_MAP_PATH, NAMESPACE_LOCK_PATH, IdMap, NamespaceLock
+from semprini.identity import IdMap, NamespaceLock, NamespaceLockError
 from semprini.model import Entity, InternalModel, Kind, Scheme, SchemeType, merge_models
 from semprini.report import REPORT_FILE
 
@@ -536,181 +536,47 @@ def test_the_report_is_never_stale(instance: Path) -> None:
     assert (instance / build.GENERATED_DIR / REPORT_FILE).exists()
 
 
-# --------------------------------------------------------------------- the namespace move
+# ------------------------------------------------------------------ the namespace lock
 
 
-def move_to(root: Path, base_iri: str) -> None:
-    path = root / config.CONFIG_PATH
+def test_a_run_against_a_moved_base_iri_writes_nothing(instance: Path) -> None:
+    """Spec 3.4.4: the base IRI is permanent. Editing it in configuration is refused by
+    the lock before anything is fetched, minted or written — there is no flag that turns
+    the refusal into a move."""
+    path = instance / config.CONFIG_PATH
     path.write_text(
-        path.read_text(encoding="utf-8").replace(BASE, base_iri), encoding="utf-8", newline="\n"
+        path.read_text(encoding="utf-8").replace(BASE, "https://vocab.example.org/"),
+        encoding="utf-8",
+        newline="\n",
     )
-
-
-MOVED = "https://vocab.example.org/"
-
-
-def test_a_namespace_move_rewrites_every_iri_and_nothing_else(instance: Path) -> None:
-    """Spec 3.4.4: the ID map, the lock and every generated file, in one commit.
-
-    The claim a reviewer of that commit has to be able to check is "every IRI moved and no
-    content did", so the run's own report is part of the assertion: nothing new, nothing
-    changed. The previous state is rebased before lifecycle sees it, which is also what
-    keeps ``dcterms:modified`` from moving on every node in the instance.
-    """
-    dates = {
-        str(subject): str(date)
-        for subject, date in graph_of(instance, "concepts-storefront.ttl").subject_objects(
-            DCTERMS.modified
-        )
-    }
-    move_to(instance, MOVED)
-
-    result = compile_(instance, force_namespace_change=True)
-
-    assert result.changed
-    assert result.report is not None
-    assert (result.report.new, result.report.changed, result.report.deprecated) == ((), (), ())
-    assert NamespaceLock.load(instance).base_iri == MOVED
-    assert all(row.iri.startswith(MOVED) for row in IdMap.load(instance))
-    moved = graph_of(instance, "concepts-storefront.ttl")
-    assert all(str(subject).startswith(MOVED) for subject in moved.subjects(unique=True))
-    assert {
-        str(subject).replace(MOVED, BASE): str(date)
-        for subject, date in moved.subject_objects(DCTERMS.modified)
-    } == dates
-
-
-def test_a_namespace_move_keeps_the_local_names(instance: Path) -> None:
-    """The object keeps its identity and changes only where it lives (spec 3.4.4)."""
-    before = [row.iri for row in IdMap.load(instance)]
-    move_to(instance, MOVED)
-
-    compile_(instance, force_namespace_change=True)
-
-    assert [row.iri for row in IdMap.load(instance)] == [iri.replace(BASE, MOVED) for iri in before]
-
-
-def test_a_move_carries_a_deprecated_node_with_it(instance: Path) -> None:
-    """The reason the previous state is rebased rather than discarded.
-
-    A node no source reports any more exists only in ``generated/``. Read against the
-    moved map without rebasing, its IRI is one the ID map has never heard of — which is a
-    refused run at best, and the silent deletion of every deprecated object at worst.
-    """
-    drop_entity(instance, WAREHOUSE)
-    compile_(instance)
-    move_to(instance, MOVED)
-
-    compile_(instance, force_namespace_change=True)
-
-    concepts = graph_of(instance, "concepts-storefront.ttl")
-    assert (
-        URIRef(f"{MOVED}concepts/{WAREHOUSE}"),
-        URIRef(f"{build.SEM}status"),
-        None,
-    ) in concepts
-    assert build.STATUS_DEPRECATED in (
-        instance / build.GENERATED_DIR / "concepts-storefront.ttl"
-    ).read_text(encoding="utf-8")
-
-
-def test_a_moved_instance_then_compiles_like_any_other(instance: Path) -> None:
-    """The move is a migration, and the run after it is an ordinary run."""
-    move_to(instance, MOVED)
-    compile_(instance, force_namespace_change=True)
-
-    after = compile_(instance)
-
-    assert not after.changed
-
-
-def test_a_dry_run_of_a_move_writes_nothing(instance: Path) -> None:
-    """Including the map and the lock: the migration is computed, not performed."""
-    move_to(instance, MOVED)
     before = snapshot(instance)
 
-    result = compile_(instance, force_namespace_change=True, dry_run=True)
+    assert main(["run"]) == ExitCode.CONFIG
 
     assert snapshot(instance) == before
-    assert all(
-        MOVED in file.text
-        for file in result.files
-        if file.name.endswith(".ttl") and file.name != build.ONTOLOGY_FILE
+    assert NamespaceLock.load(instance).base_iri == BASE
+
+
+def test_the_library_refuses_a_moved_base_iri_without_the_cli(instance: Path) -> None:
+    """The lock is not the CLI's alone. ``run.run`` is what the fixture builder and any
+    embedder call, and a registry minting under a base IRI the lock does not name must be
+    impossible to obtain from there too (spec 3.4.4)."""
+    path = instance / config.CONFIG_PATH
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(BASE, "https://vocab.example.org/"),
+        encoding="utf-8",
+        newline="\n",
     )
-
-
-def test_a_failed_move_leaves_the_instance_where_it_was(instance: Path) -> None:
-    """Nothing is written until the compile succeeds, which is what makes the move
-    recoverable: an instance whose map had moved and whose output had not could neither
-    move again — the flag refuses a base IRI already locked — nor compile."""
-    move_to(instance, MOVED)
-    (instance / "sources/taxonomies/product-category.xlsx").unlink()
     before = snapshot(instance)
 
-    assert main(["run", "--force-namespace-change"]) == ExitCode.UNREACHABLE
+    with pytest.raises(NamespaceLockError):
+        compile_(instance)
 
     assert snapshot(instance) == before
-    assert (instance / ID_MAP_PATH).read_bytes() == before[ID_MAP_PATH.as_posix()]
-    assert (instance / NAMESPACE_LOCK_PATH).read_bytes() == before[NAMESPACE_LOCK_PATH.as_posix()]
-
-
-def test_the_move_writes_the_map_before_the_lock(
-    instance: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Order matters on the one file pair that must never disagree (spec 3.4.4).
-
-    If the lock were written first and the map's write then failed, the instance would say
-    it lives in the new namespace while every row still named the old one — and the next
-    run would mint a second IRI for every object. The other order leaves it recoverable.
-    """
-    written: list[str] = []
-    original_map, original_lock = IdMap.save, NamespaceLock.save
-
-    def save_map(self: IdMap, repo_root: Path | None = None) -> Path:
-        written.append("map")
-        return original_map(self, repo_root)
-
-    def save_lock(self: NamespaceLock, repo_root: Path | None = None) -> Path:
-        written.append("lock")
-        return original_lock(self, repo_root)
-
-    monkeypatch.setattr(IdMap, "save", save_map)
-    monkeypatch.setattr(NamespaceLock, "save", save_lock)
-    move_to(instance, MOVED)
-
-    compile_(instance, force_namespace_change=True)
-
-    assert written == ["map", "lock"]
-
-
-def test_a_namespace_move_takes_the_merge_register_with_it(instance: Path) -> None:
-    """The register is the one file holding IRIs a person typed (spec 5.4).
-
-    Left behind, every row would name an IRI the moved map has never heard of and the run
-    would refuse itself — so this migration could not be performed at all on an instance
-    that had ever recorded a merge, which is every instance old enough to need one.
-    """
-    drop_entity(instance, WAREHOUSE)
-    record_merge(instance, f"{BASE}concepts/{WAREHOUSE}", f"{BASE}concepts/{DELIVERY}")
-    compile_(instance)
-    move_to(instance, MOVED)
-
-    compile_(instance, force_namespace_change=True)
-
-    register = lifecycle.MergeRegister.load(instance)
-    assert [(row.deprecated_iri, row.replaced_by_iri) for row in register] == [
-        (f"{MOVED}concepts/{WAREHOUSE}", f"{MOVED}concepts/{DELIVERY}")
-    ]
-    assert register.rows[0].note == "merged into the survivor"
-    assert (
-        URIRef(f"{MOVED}concepts/{WAREHOUSE}"),
-        DCTERMS.isReplacedBy,
-        URIRef(f"{MOVED}concepts/{DELIVERY}"),
-    ) in graph_of(instance, "concepts-storefront.ttl")
 
 
 def test_an_ordinary_run_never_writes_the_merge_register(instance: Path) -> None:
-    """Every row in it is a steward's decision; only the namespace move rewrites one.
+    """Every row in it is a steward's decision; no compile rewrites one (spec 5.4).
 
     Written with spacing a person would leave and the compiler would normalize away, so
     "unchanged" means untouched rather than merely re-rendered the same.
@@ -726,18 +592,6 @@ def test_an_ordinary_run_never_writes_the_merge_register(instance: Path) -> None
     compile_(instance)
 
     assert (instance / lifecycle.MERGES_PATH).read_bytes() == before
-
-
-def test_planning_a_move_is_what_the_run_calls(instance: Path) -> None:
-    """The moved map and lock reach the disk through the run, not through identity."""
-    move_to(instance, MOVED)
-    lock, moved = identity.plan_namespace_change(
-        config.load(instance), ontology_version=ONTOLOGY, today=TODAY
-    )
-
-    assert lock.base_iri == MOVED
-    assert all(row.iri.startswith(MOVED) for row in moved)
-    assert NamespaceLock.load(instance).base_iri == BASE
 
 
 # --- normalization in the report (spec 5.5 rule 9, 5.6) -------------------------------

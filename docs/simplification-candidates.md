@@ -85,7 +85,7 @@ the `sem:relatesTo` retention rule is gone — build re-derives every shortcut f
 Net removal: 196 source lines and 242 test lines, after adding the two tests the new rule
 needed. Battery: `tools/mutations/a1_lifecycle.py`.
 
-### A2. Moving the base IRI: `--force-namespace-change`
+### A2. Moving the base IRI: `--force-namespace-change` — **done**
 
 Spec §3.4.4 calls it "expected to be a once-ever event". It carries:
 
@@ -102,6 +102,16 @@ one creates a new instance. Or keep the rebase as a documented manual procedure 
 removal: about 250 source lines.
 
 Spec: §3.4.4, §5.1 (the flag).
+
+**Done**, the first way: the base IRI is permanent and a different one is a new instance.
+No manual procedure is documented — a `sed` over `mappings/` and `generated/` is the bypass
+with none of the flag's refusals, and the lock's own rule is that deleting the file must not
+be a way around a permanent decision. Everything listed above is gone; the lock's refusal
+message now says "permanent" and "new instance" rather than naming a flag. The battery
+(`tools/mutations/a2_namespace.py`) anchors on what remains — the lock check in `identity`,
+`cli` and `run` — and its one initial survivor became a test: nothing below the CLI had
+proved that `run.run` itself refuses a mismatched lock, and the fixture builder calls
+`run.run` directly. Net removal: 223 source lines and 228 test lines.
 
 ### A3. Credential handling in configuration
 
@@ -314,8 +324,8 @@ still fails with the offending key. Battery: `tools/mutations/c_source_config.py
 ## Suggested order
 
 1. ~~**C** — the `validate_config` inconsistency.~~ Done: check 8, spec §6.1.
-2. ~~**A1** — partial runs.~~ Done. **A2–A5** next, one PR each, spec edits included, while no
-   instance holds data.
+2. ~~**A1** — partial runs.~~ ~~**A2** — the namespace move.~~ Done. **A3–A5** next, one PR
+   each, spec edits included, while no instance holds data.
 3. **B1, B2, B3** as mechanical refactors under the mutation batteries
    (`python tools/mutate.py <battery> --list` first; anchors will move).
 4. **B4–B9** opportunistically, whenever the file in question is open for another reason.

@@ -10,10 +10,10 @@
 # of quietly doing something else.
 
 semprini:
-  # Frozen at bootstrap by mappings/namespace.lock. Editing it here moves nothing: every
-  # IRI already minted stays under the base it was minted in, and the run refuses to start
-  # rather than mint a second, parallel set. Moving an instance to a new base is
-  # `semprini run --force-namespace-change` (spec 3.4.4).
+  # Frozen at bootstrap by mappings/namespace.lock and permanent. Editing it here moves
+  # nothing: every IRI already minted stays under the base it was minted in, and the run
+  # refuses to start rather than mint a second, parallel set. An organization that needs
+  # a different base IRI creates a new instance (spec 3.4.4).
   base_iri: "%%base_iri%%"
 
   # This instance's own slug. Recorded in the namespace lock and equally frozen.

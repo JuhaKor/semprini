@@ -30,7 +30,7 @@ import io
 import json
 import re
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid5
@@ -61,7 +61,6 @@ __all__ = [
     "NamespaceLockError",
     "Registry",
     "mint_local_name",
-    "plan_namespace_change",
     "verify_namespace_lock",
 ]
 
@@ -875,8 +874,8 @@ class NamespaceLock:
                 Issue(
                     Severity.ERROR,
                     f"the base IRI is {config.base_iri!r} but this instance minted its "
-                    f"IRIs under {self.base_iri!r}; changing it is a migration, not a "
-                    f"configuration edit — see 'semprini run --force-namespace-change'",
+                    f"IRIs under {self.base_iri!r}; the base IRI is permanent — an "
+                    f"instance that needs a different one is a new instance",
                     "semprini.base_iri",
                 )
             )
@@ -898,92 +897,3 @@ def verify_namespace_lock(config: InstanceConfig) -> NamespaceLock:
     lock = NamespaceLock.load(config.repo_root)
     lock.verify(config)
     return lock
-
-
-def plan_namespace_change(
-    config: InstanceConfig,
-    *,
-    ontology_version: str,
-    today: datetime.date | None = None,
-) -> tuple[NamespaceLock, IdMap]:
-    """Move an instance to a new base IRI — ``--force-namespace-change`` (spec 3.4.4).
-
-    Expected to be a once-ever event, and a migration rather than a configuration edit.
-    Every IRI in the ID map is rewritten from the old base to the new one, keeping its
-    local name, so identity survives the move: the same object keeps the same UUID, in a
-    new namespace.
-
-    **Nothing is written.** The moved lock and map are returned for the run to save
-    alongside the regenerated files (spec 5.1), which is what puts the whole move into one
-    reviewable commit — and what keeps a compile that fails afterwards from leaving an
-    instance whose map says it has moved and whose ``generated/`` says it has not. That
-    state has no way out: a second ``--force-namespace-change`` is refused as a move to
-    the base IRI already locked, and a plain run refuses the old IRIs still in the output.
-    The caller writes the map first and the lock second, so an interrupted write leaves
-    the instance saying it still lives in the old namespace, which a re-run recovers from.
-
-    Generated files are not rewritten here either: they are machine-owned and the run
-    regenerates them wholesale (spec 4.3), rebasing the previous state it carries forward
-    so that deprecated nodes move with everything else.
-
-    The flag moves the **base IRI and nothing else** (spec 3.4.4). An instance id that has
-    also drifted is refused rather than re-frozen: this is the one invocation that
-    suspends the lock's checks, and it must not become the way any other locked value gets
-    quietly adopted. A move that would change nothing is refused too — rewriting the lock
-    then only discards the record of when the namespace was actually frozen.
-
-    Raises :class:`IdentityError` if the map holds an IRI outside the old base: it is not
-    this function's to move, and silently leaving it behind would split the instance
-    across two namespaces.
-    """
-    lock = NamespaceLock.load(config.repo_root)
-    if config.instance_id != lock.instance_id:
-        raise NamespaceLockError(
-            [
-                Issue(
-                    Severity.ERROR,
-                    f"the instance id is {config.instance_id!r} but the namespace lock was "
-                    f"written for {lock.instance_id!r}; --force-namespace-change moves the "
-                    f"base IRI and nothing else",
-                    "semprini.instance_id",
-                )
-            ],
-            origin=NAMESPACE_LOCK_PATH.as_posix(),
-        )
-    if config.base_iri == lock.base_iri:
-        raise NamespaceLockError(
-            [
-                Issue(
-                    Severity.ERROR,
-                    f"the base IRI is already {lock.base_iri!r}; there is nothing to move, "
-                    f"and --force-namespace-change is not a way to refresh the lock",
-                    "semprini.base_iri",
-                )
-            ],
-            origin=NAMESPACE_LOCK_PATH.as_posix(),
-        )
-    old_map = IdMap.load(config.repo_root)
-
-    issues = [
-        Issue(
-            Severity.ERROR,
-            f"{row.iri} is not under the locked base IRI {lock.base_iri!r}, so it cannot "
-            f"be moved to the new one",
-            str(row.ref),
-        )
-        for row in old_map
-        if not row.iri.startswith(lock.base_iri)
-    ]
-    if issues:
-        raise IdentityError(issues, origin=ID_MAP_PATH.as_posix())
-
-    moved = IdMap(
-        replace(row, iri=config.base_iri + row.iri[len(lock.base_iri) :]) for row in old_map
-    )
-    changed = NamespaceLock(
-        base_iri=config.base_iri,
-        instance_id=config.instance_id,
-        ontology_version=ontology_version,
-        date=datetime.date.today() if today is None else today,
-    )
-    return changed, moved

@@ -97,14 +97,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = subcommands.add_parser("run", help="fetch, compile, write")
     run.add_argument("--dry-run", action="store_true")
-    run.add_argument(
-        "--force-namespace-change",
-        action="store_true",
-        help=(
-            "move the instance to a new base IRI, rewriting the ID map, the namespace "
-            "lock and every generated file (spec 3.4); expected to be a once-ever event"
-        ),
-    )
 
     check = subcommands.add_parser("check", help="validate only, no writes")
     check.add_argument(
@@ -250,11 +242,7 @@ def _run(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
     split is the one spec 6.3 requires between the compiler and the surface an operator
     sees, and it is why a run behaves identically on a laptop and in CI.
     """
-    result = run.run(
-        settings,
-        dry_run=arguments.dry_run,
-        force_namespace_change=arguments.force_namespace_change,
-    )
+    result = run.run(settings, dry_run=arguments.dry_run)
     for line in result.summary():
         _say(line)
     return ExitCode.OK
@@ -303,11 +291,9 @@ def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig:
     # themselves (D2, D3). From then on every installation has some, and a misspelled
     # `adapter:` is exit 2 naming the key.
     loaded = config.load(known_adapters=installed or None)
-    if not getattr(arguments, "force_namespace_change", False):
-        # The one invocation allowed to disagree with the lock — moving the base IRI
-        # is what it is for (3.4). Every other run aborts on a mismatch rather than
-        # minting a second set of IRIs beside the ID map's.
-        identity.verify_namespace_lock(loaded)
+    # Every command aborts on a mismatch rather than minting a second set of IRIs
+    # beside the ID map's; the base IRI is permanent (3.4).
+    identity.verify_namespace_lock(loaded)
     return loaded
 
 
