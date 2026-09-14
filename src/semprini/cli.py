@@ -96,7 +96,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     run = subcommands.add_parser("run", help="fetch, compile, write")
-    run.add_argument("--source", metavar="<name>")
     run.add_argument("--dry-run", action="store_true")
     run.add_argument(
         "--force-namespace-change",
@@ -253,7 +252,6 @@ def _run(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
     """
     result = run.run(
         settings,
-        only_source=arguments.source,
         dry_run=arguments.dry_run,
         force_namespace_change=arguments.force_namespace_change,
     )
@@ -305,10 +303,6 @@ def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig:
     # themselves (D2, D3). From then on every installation has some, and a misspelled
     # `adapter:` is exit 2 naming the key.
     loaded = config.load(known_adapters=installed or None)
-    if arguments.command == "run":
-        # Validates --source against the configured sources: a typo would otherwise
-        # compile nothing and exit 0, which reads as success.
-        loaded.run_context(only_source=arguments.source, dry_run=arguments.dry_run)
     if not getattr(arguments, "force_namespace_change", False):
         # The one invocation allowed to disagree with the lock — moving the base IRI
         # is what it is for (3.4). Every other run aborts on a mismatch rather than

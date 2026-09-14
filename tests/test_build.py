@@ -613,43 +613,6 @@ def test_enumerating_something_that_is_not_an_entity_is_refused() -> None:
         compile_(merge_models(wrong))
 
 
-def test_a_partial_run_refuses_an_object_another_source_describes() -> None:
-    """Files are rewritten whole, so an object rebuilt from half its evidence would have
-    the other half deleted (spec 5.4).
-
-    The model here is the full sample compiled as a ``--source ellie-main`` run, so the
-    taxonomy's objects are exactly the case: described by a source this run did not fetch.
-    """
-    with pytest.raises(BuildError, match="which this --source ellie-main run did not fetch"):
-        compile_(ctx=context(only_source=ELLIE))
-
-
-def test_a_partial_run_of_a_source_that_owns_its_objects_is_built() -> None:
-    """The ordinary partial run: one source, its own objects, nothing shared.
-
-    What makes it safe is the other half — every object outside the fetched scope arrives
-    from lifecycle as a carried node (spec 3.5), which is asserted end to end in
-    ``test_run.py`` rather than here.
-    """
-    only_ellie = merge_models(
-        InternalModel(
-            schemes=(
-                Scheme(
-                    source_refs={ELLIE: "1234"},
-                    pref_label="Sales domain model",
-                    slug="sales",
-                    scheme_type=SchemeType.GLOSSARY,
-                ),
-            ),
-            entities=(Entity(source_refs={ELLIE: ORDER}, pref_label="Order", schemes=("sales",)),),
-        )
-    )
-
-    produced = by_name(compile_(only_ellie, ctx=context(only_source=ELLIE)))
-
-    assert sorted(produced) == ["concepts-sales.ttl", "ontology.ttl"]
-
-
 # ------------------------------------------------------- references point at real nodes
 
 

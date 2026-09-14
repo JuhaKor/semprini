@@ -226,20 +226,13 @@ class InstanceConfig:
             ]
         )
 
-    def run_context(self, *, only_source: str | None = None, dry_run: bool = False) -> RunContext:
-        """The :class:`~semprini.model.RunContext` this configuration describes.
-
-        ``only_source`` is checked against the configured sources here: ``--source`` with
-        a typo would otherwise compile nothing at all and exit 0, which reads as success.
-        """
-        if only_source is not None:
-            self.source(only_source)
+    def run_context(self, *, dry_run: bool = False) -> RunContext:
+        """The :class:`~semprini.model.RunContext` this configuration describes."""
         return RunContext(
             base_iri=self.base_iri,
             instance_id=self.instance_id,
             repo_root=self.repo_root,
             default_language=self.default_language,
-            only_source=only_source,
             dry_run=dry_run,
         )
 

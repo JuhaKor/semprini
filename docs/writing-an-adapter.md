@@ -63,7 +63,7 @@ Three things are handed to you:
 |---|---|
 | `self.source_name` | the source's configured `name` — what goes into `sem:sourceRef` and the identity map |
 | `self.config` | your `config:` subtree, passed through untouched, deeply read-only |
-| `self.ctx` | what the run knows: `base_iri`, `instance_id`, `repo_root`, `default_language`, `only_source`, `dry_run` |
+| `self.ctx` | what the run knows: `base_iri`, `instance_id`, `repo_root`, `default_language`, `dry_run` |
 
 `self.ctx` carries no identity map. Minting is not something you can do by accident.
 

@@ -814,10 +814,6 @@ class RunContext:
     """Applied when the graph is built to every label and definition that carries no
     language of its own; one that does keeps it (spec 5.5 rule 6, 11 #5)."""
 
-    only_source: str | None = None
-    """``--source <name>``: a partial run, which must skip deprecation outside its
-    scope (spec 5.4)."""
-
     dry_run: bool = False
 
     def __post_init__(self) -> None:

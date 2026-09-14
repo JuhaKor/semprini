@@ -292,9 +292,7 @@ tell the same story.
    else**: it is the one invocation that suspends the lock's checks, so an instance id
    that has also drifted is refused rather than re-frozen, and a "move" to the base IRI
    already locked is refused too — it would only discard the record of when the namespace
-   was frozen. It cannot be combined with `--source`: the commit would then make two
-   claims at once — that every IRI moved, and that some content changed — and a reviewer
-   cannot check the first through the second.
+   was frozen.
 
    The **merge register moves with the map**, and that is the only circumstance in which a
    compile writes `mappings/merges.csv` (5.4). Its rows are the one place in an instance
@@ -510,8 +508,8 @@ A file with no content is **not written**: a glossary with no relationships prod
 assuming it. One changed fact must be one changed line, which it stops being the moment a
 triple lives in two places; and the check is worth its cost because a run assembles its
 files from two kinds of evidence — the model, and the nodes lifecycle retained (3.5) — so
-a shortcut the previous run wrote and this one also derives would otherwise reach an
-instance as a diff hunk nobody could account for.
+a node claimed by both would otherwise reach an instance as a diff hunk nobody could
+account for.
 
 ### 4.3 Rules
 
@@ -533,9 +531,8 @@ instance as a diff hunk nobody could account for.
   loading the directory from Git reads statements no source still makes.
 - **A run removes what it did not produce.** "Overwritten wholesale" is a statement about
   the directory, not about each file: output the run did not write is deleted, including
-  anything nested, since a consumer reading the tree reads that too. This is safe for a
-  `--source X` run as well as a full one, because every object outside the fetched scope is
-  carried forward by lifecycle (5.4) and so *is* produced. `.report.md` is the exception —
+  anything nested, since a consumer reading the tree reads that too. `.report.md` is the
+  exception —
   it is written only when something moved (5.6), so a run that produced no report has not
   stopped producing the committed one. Removing a file counts as a change, so the run that
   does it rewrites the report. A migration (7) is held to the same rule: it writes every
@@ -573,7 +570,7 @@ exposes a console script:
 ```
 semprini init      --base-iri <IRI> --org <slug> [--dir <path>]   # bootstrap an instance (5.7)
                    [--language <tag>]                             # default_language (5.5 rule 6)
-semprini run       [--source <name>] [--dry-run]                  # fetch, compile, write
+semprini run       [--dry-run]                                    # fetch, compile, write
                    [--force-namespace-change]                     # move the base IRI (3.4)
 semprini check     [--base <rev>]                                 # validate only, no writes
 semprini migrate   --to <version>                                 # apply migrations (7)
@@ -605,7 +602,7 @@ fetch (per configured adapter)
   → normalize into the internal model (Entity, Attribute, Relationship,
     Scheme, TaxonomyValue)
   → apply lifecycle rules (diff against previous generated/ state: what is gone,
-    what this run is entitled to judge, what the merge register replaces — 3.5, 5.4)
+    what the merge register replaces — 3.5, 5.4)
   → resolve identity (ID map lookup / minting)
   → build rdflib Graphs (one per output file), from the model and the nodes
     lifecycle retained
@@ -622,13 +619,10 @@ the instance exactly as it was rather than half-written — there is no state in
 pipeline without its last four lines, which is what makes what it reports worth believing:
 the bytes it would have committed are the bytes it computed.
 
-`--source <name>` fetches that source alone and compiles it against the previous state:
-every object outside the fetched scope arrives from lifecycle as a retained node (5.4), so
-the run still writes the whole directory. The one case that cannot be assembled this way is
-an object the ID map records against **two** sources when only one was fetched — the model
-holds it rebuilt from half its evidence — and the run refuses it (exit `1`) rather than
-choosing between deleting the other source's statements and discarding the update it was
-invoked for.
+Every run fetches **every** configured source. There is no way to compile one source
+against the previous state of the others: deprecation is a question about the union of all
+of them (5.4), and a run that fetched a subset could not answer it. Both bundled adapters
+read committed files, so a full compile is the cheap operation this relies on.
 
 Lifecycle runs **before** the build stage rather than over its output: a deprecated object
 is not in the model — no adapter returned it — so there is nothing for a later pass to
@@ -658,8 +652,7 @@ minted, and a row outlives the node — an object whose source was reconfigured 
 one behind. What makes the stricter question answerable at all is that both legitimate
 sources of a node are in hand by then: the model, and the nodes lifecycle retained. A
 relationship may point at an entity no source reports any more, which is exactly what
-deprecation-not-deletion is for, and on a `--source X` run most of what a reference points
-at is retained rather than compiled.
+deprecation-not-deletion is for.
 
 A dangling `sem:enumerates` is the ordinary case while an instance is being brought up
 rather than an exotic one: a workbook names its reference entity by that entity's key in
@@ -1062,10 +1055,6 @@ strictly, and every rule below refuses rather than repairs:
 - **A successor may itself be deprecated later, and that is not an error.** A was merged
   into B and B was afterwards retired by its own source: ordinary history, recorded
   correctly at the time. Only a *cycle* is refused, because a cycle never had a survivor.
-- **The register is applied within the run's scope**, like every other lifecycle decision
-  below. A row naming an object this run was not entitled to judge does nothing until a
-  run that fetched its sources reaches it; acting on it anyway would deprecate a node on
-  no evidence, which is the one thing `--source` promises not to do.
 - **A row for an object the sources still describe fails the run** (exit 1). The register
   and the sources contradict each other, and the compiler settles neither: deprecating
   anyway would override every source from a one-line CSV edit, and ignoring the row would
@@ -1093,33 +1082,17 @@ that merely mentions it, as the `sem:relatesTo` shortcut does (4.2), states no m
 it than it did before. Deprecation is a status and not a tombstone: the ID-map row is
 untouched, so an object a source restores is active again under the IRI it always had.
 
-**Scope.** A run may only conclude that an object is gone if it fetched every source that
-owns it — that is, every `source_name` the ID map records against its IRI. Consequently a
-run scoped with `--source <name>` performs no deprecation for objects any other source
-owns, and neither does a full run for an object whose ID map names a source that is no
-longer configured (which `semprini check` reports separately, above).
+**Scope.** Every run fetches every configured source (5.1), so every run is entitled to
+the question: an object in the previous output that no configured source still reports is
+deprecated. There is no out-of-scope object and nothing is carried forward unjudged.
 
-Out-of-scope objects are **carried forward exactly as they stand**, status included, not
-skipped: `generated/` files are rewritten whole, so a node left out of a run's output is a
-node deleted from the instance — the opposite of what "skip deprecation" is asking for.
-
-Carrying forward works because an out-of-scope object belongs to nobody the run fetched.
-An object the ID map records against **two** sources when only one was fetched is therefore
-the one case a partial run cannot assemble: the model holds it rebuilt from one source's
-statements, so writing it would delete the other's contribution, and carrying it forward
-would discard the very update the run was invoked for. The run refuses it (exit `1`) and
-says to compile in full, for the reason merging refuses to guess (5.2) — loosening this
-later is easy, and tightening it once instances hold files built under a guess is not.
-
-The `sem:relatesTo` shortcut needs saying separately, because it is the one statement
-written away from the node it is about (4.2): its subject is the source entity, but it
-lives in the relationship's file. When the entity is still reported and the *relationship*
-is out of scope, neither rule above reaches the shortcut — the entity is rebuilt from a
-model that no longer holds the relationship — so it is **retained with the relationship**,
-which was itself carried forward as active. A shortcut whose pair the run still derives is
-not retained, since the build stage writes it (one triple, one file); nor is one whose only
-relationship was *deprecated*, since `sem:relatesTo` carries no status of its own and
-leaving it would assert a live relation on the strength of a retired one.
+**Removing a source from `config/semprini.yaml` therefore deprecates everything it
+owned**, on the next run, in one reviewable commit. That is the union rule applied
+honestly — a source that is not configured reports nothing — and it is not a deletion:
+statements are kept, the ID-map rows are untouched, and re-adding the source makes those
+objects active again under the IRIs they always had. `semprini check` reports an ID map
+naming a source that is not configured (6.1 check 6), so an accidental edit is caught
+before a run acts on it.
 
 **An IRI in `generated/` that the ID map does not hold fails the run** (exit 1). It means
 a row was deleted or a file was hand-edited (4.3); the compiler cannot say which source

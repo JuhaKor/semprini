@@ -32,7 +32,7 @@ from rdflib.term import Node
 from semprini import adapters, build, identity, lifecycle, manifest, ontology_version, report
 from semprini.build import OutputFile
 from semprini.config import InstanceConfig
-from semprini.identity import NamespaceLock, NamespaceLockError, Registry
+from semprini.identity import NamespaceLock, Registry
 from semprini.model import (
     InternalModel,
     Issue,
@@ -129,7 +129,6 @@ def _count(number: int, noun: str) -> str:
 def run(
     settings: InstanceConfig,
     *,
-    only_source: str | None = None,
     dry_run: bool = False,
     force_namespace_change: bool = False,
     today: datetime.date | None = None,
@@ -149,23 +148,7 @@ def run(
     whichever subcommand produced it.
     """
     root = settings.repo_root
-    context = settings.run_context(only_source=only_source, dry_run=dry_run)
-    if force_namespace_change and only_source is not None:
-        # Refused rather than merged into one commit: a namespace move must be readable as
-        # "every IRI moved and nothing else did" (spec 3.4.4), and a partial fetch in the
-        # same run makes that claim uncheckable — the reviewer cannot tell a rebased line
-        # from a changed one.
-        raise NamespaceLockError(
-            [
-                Issue(
-                    Severity.ERROR,
-                    "--force-namespace-change moves every IRI in the instance and cannot "
-                    "be combined with --source; run the move on its own, then compile the "
-                    "source",
-                    "--source",
-                )
-            ]
-        )
+    context = settings.run_context(dry_run=dry_run)
 
     previous_files = build.read_previous_files(root)
     merges = lifecycle.MergeRegister.load(root)
@@ -184,9 +167,7 @@ def run(
     plan = lifecycle.plan(
         model,
         registry=registry,
-        context=context,
         previous=previous_files,
-        sources=[source.name for source in settings.sources],
         merges=merges,
     )
     files = build.build(
@@ -244,7 +225,7 @@ def run(
 def _fetch(
     settings: InstanceConfig, context: RunContext
 ) -> tuple[InternalModel, tuple[SourceSummary, ...]]:
-    """Read every source in scope and merge what they return (spec 5.1, 5.2).
+    """Read every configured source and merge what they return (spec 5.1, 5.2).
 
     An adapter is constructed and used here and nowhere else: it fetches, it is asked to
     describe what it read for the report, and it is done. A failure to reach a source
@@ -260,8 +241,6 @@ def _fetch(
     model = InternalModel()
     summaries: list[SourceSummary] = []
     for source in settings.sources:
-        if context.only_source is not None and source.name != context.only_source:
-            continue
         adapter = adapters.create(source, context)
         with counting_normalizations() as normalizations:
             fetched = adapter.fetch()
@@ -339,10 +318,6 @@ def _move_namespace(
     move changes which namespace an object lives in and nothing it says, so the run's diff
     is every IRI and no dates, and the report says nothing was added or changed. That is
     exactly the claim a reviewer of a once-ever migration needs to be able to check.
-
-    Combining the move with ``--source`` is refused: the commit would have to be read as
-    two claims at once — that every IRI moved, and that some content changed — and the
-    first cannot be verified through the second.
     """
     lock, moved = identity.plan_namespace_change(
         settings,

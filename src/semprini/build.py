@@ -162,8 +162,8 @@ class CarriedNode:
 
     :func:`semprini.lifecycle.plan` produces these, which is where every judgement lives:
     whether the node is really gone (a question about the union of all configured sources,
-    never one of them), whether this run is even entitled to ask (spec 5.4's partial-run
-    rule), and what the merge register says replaces it. This stage only writes them.
+    never one of them) and what the merge register says replaces it. This stage only
+    writes them.
     """
 
     file: str
@@ -196,17 +196,10 @@ def build(
     ``today`` is injected so that a test pins it and so that nothing but this stage reads
     a clock.
 
-    ``carried`` are the nodes lifecycle decided to retain (spec 3.5) — deprecated objects
-    and, on a partial run, objects outside the fetched scope. They are written alongside
-    what the model produced and are dated by the same rule, so a deprecation is a changed
-    ``sem:status`` line and nothing else.
-
-    A partial run (``--source X``) builds from the fetched model **plus** those carried
-    nodes, which is what makes it safe: files are rewritten whole, so every object the run
-    did not fetch has to arrive from somewhere, and lifecycle supplies it verbatim. The one
-    case that cannot be assembled this way is refused — an object *two* sources describe
-    when only one was fetched, which the model holds rebuilt from half its evidence
-    (:meth:`_Builder._check_partial_scope`).
+    ``carried`` are the nodes lifecycle decided to retain (spec 3.5): objects no
+    configured source reports any more. They are written alongside what the model produced
+    and are dated by the same rule, so a deprecation is a changed ``sem:status`` line and
+    nothing else.
     """
     builder = _Builder(
         model=model,
@@ -467,7 +460,6 @@ class _Builder:
         self._check_memberships(schemes)
         self._check_enumerated_entities()
         self._check_carried_are_gone(resolved)
-        self._check_partial_scope(resolved)
         self._raise_collected()
 
         blocks = self._blocks(resolved, schemes) + self._carried_blocks()
@@ -719,8 +711,7 @@ class _Builder:
         The stricter question — is the node this points at in the output the run is about
         to write — is :meth:`_check_references_are_written`'s, and has to wait until the
         blocks exist: a reference to an object no source reports any more is legitimate
-        precisely because lifecycle retains it (spec 3.5), and on a partial run most of
-        the output arrives that way.
+        precisely because lifecycle retains it (spec 3.5).
 
         A dangling ref is recorded and a placeholder returned rather than raised on the
         spot, so that a model with several of them reports them all in one run. The
@@ -883,42 +874,6 @@ class _Builder:
                     object_,
                 )
 
-    def _check_partial_scope(self, resolved: Mapping[SemanticObject, str]) -> None:
-        """A partial run may not rebuild an object another source also describes (spec 5.4).
-
-        ``--source X`` fetched one source, and every object it did not fetch is carried
-        forward verbatim by lifecycle — which works precisely because those objects belong
-        to nobody else in this run. An object the ID map records against **two** sources is
-        the case that breaks: the model holds it rebuilt from one source's statements
-        alone, so writing it would delete the other source's contribution to it, and
-        carrying it forward would discard the update the run was invoked for. Neither is
-        recoverable from what a partial run knows, so it is refused and the operator is
-        told to run in full.
-
-        Nothing in v1 produces cross-source objects — both bundled adapters own what they
-        report — so this costs an instance nothing today. It is refused rather than guessed
-        for the reason merging refuses to guess (spec 5.2): loosening the rule later is
-        easy, and tightening it once instances hold files built under a guess is not.
-
-        The ID map alone answers the question, because ``resolve()`` has already run: every
-        ref of every object in the model has a row by now, minted on this run or found from
-        an earlier one, so "which sources describe this IRI" is complete.
-        """
-        if self.context.only_source is None:
-            return
-        for object_, iri in sorted(resolved.items(), key=lambda item: item[1]):
-            described_by = {row.source_name for row in self.registry.id_map.owners(iri)}
-            others = sorted(described_by - {self.context.only_source})
-            if others:
-                self._issue(
-                    f"{object_.kind} {object_.refs[0]} is described by "
-                    f"{', '.join(repr(name) for name in others)}, which this "
-                    f"--source {self.context.only_source} run did not fetch; an object "
-                    f"several sources describe can only be rebuilt from all of them, so "
-                    f"compile it with a full run",
-                    object_,
-                )
-
     def _check_references_are_written(self, blocks: Sequence[_Block]) -> None:
         """Every cross-reference must point at a node this run actually writes.
 
@@ -932,8 +887,7 @@ class _Builder:
         Asked over the whole output rather than per statement, because the legitimate
         answers arrive from two places: the model, and the nodes lifecycle retained (spec
         3.5) — a relationship may point at an entity no source reports any more, which is
-        exactly what deprecation-not-deletion is for, and on a ``--source X`` run most of
-        what a reference points at is carried rather than compiled.
+        exactly what deprecation-not-deletion is for.
         """
         # Defining blocks only. A file that merely *mentions* a node — the ``sem:relatesTo``
         # shortcut (spec 4.2) — is not a description of it, and a reference resolving onto

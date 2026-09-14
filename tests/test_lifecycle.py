@@ -2,7 +2,7 @@
 
 Every test here is really one question asked in a different shape: **can an object leave
 an instance?** It must not be able to. A source stops mentioning something, a steward
-merges two concepts, a partial run looks at one source out of three — and in each case the
+merges two concepts, a source is dropped from the configuration — and in each case the
 node has to still be there afterwards, still answering to the IRI something published,
 with a status saying what happened to it.
 
@@ -15,7 +15,7 @@ had.
 from __future__ import annotations
 
 import datetime
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -48,7 +48,6 @@ DEPRECATED = Literal("deprecated")
 LATER = datetime.date(2027, 3, 1)
 LATER_STILL = datetime.date(2027, 9, 9)
 
-SOURCES = (ELLIE, EXCEL)
 
 SALES = Scheme(
     source_refs={ELLIE: "1234"},
@@ -90,9 +89,7 @@ def run(
     compiled: InternalModel,
     *,
     today: datetime.date = TODAY,
-    sources: Collection[str] = SOURCES,
     merges: MergeRegister | None = None,
-    only_source: str | None = None,
 ) -> tuple[tuple[OutputFile, ...], lifecycle.LifecyclePlan]:
     """One compile of ``compiled`` over whatever ``root`` already holds.
 
@@ -101,7 +98,7 @@ def run(
     from the CSV each time rather than held across runs, so identity survives the file and
     not just the process.
     """
-    ctx = RunContext(base_iri=BASE, instance_id="acme", repo_root=root, only_source=only_source)
+    ctx = RunContext(base_iri=BASE, instance_id="acme", repo_root=root)
     registry = Registry(IdMap.load(root), BASE, repo_root=root, today=today)
 
     previous_files = build.read_previous_files(root)
@@ -109,9 +106,7 @@ def run(
     plan = lifecycle.plan(
         compiled,
         registry=registry,
-        context=ctx,
         previous=previous_files,
-        sources=sources,
         merges=merges,
     )
     files = build.build(
@@ -329,9 +324,7 @@ def test_a_statement_about_a_node_nothing_describes_is_not_a_node(tmp_path: Path
     plan = lifecycle.plan(
         InternalModel(),
         registry=Registry(IdMap(), BASE, repo_root=tmp_path, today=LATER),
-        context=context(),
         previous={"relationships-sales.ttl": orphan},
-        sources=SOURCES,
     )
 
     assert plan == lifecycle.LifecyclePlan()
@@ -373,26 +366,17 @@ def test_a_node_the_id_map_has_never_heard_of_is_refused(tmp_path: Path) -> None
 
 # ------------------------------------------------------------------------- run scope
 #
-# A partial run is planned here, not built: what these pin is the rule that makes such a
-# run safe at all — a run that did not look cannot conclude. `test_run.py` asserts the
-# other half, that a `--source X` run therefore writes the whole directory.
+# Every run fetches every configured source (spec 5.1), so there is one question per node
+# and every run is entitled to it. What these pin is the consequence: a source dropped
+# from the configuration reports nothing, and what it owned is deprecated rather than
+# suspended.
 
 
-def plan_only(
-    root: Path,
-    compiled: InternalModel,
-    *,
-    sources: Collection[str] = SOURCES,
-    only_source: str | None = None,
-) -> lifecycle.LifecyclePlan:
+def plan_only(root: Path, compiled: InternalModel) -> lifecycle.LifecyclePlan:
     return lifecycle.plan(
         compiled,
         registry=Registry(IdMap.load(root), BASE, repo_root=root, today=LATER),
-        context=RunContext(
-            base_iri=BASE, instance_id="acme", repo_root=root, only_source=only_source
-        ),
         previous=build.read_previous_files(root),
-        sources=sources,
     )
 
 
@@ -406,74 +390,6 @@ def carried(plan: lifecycle.LifecyclePlan, iri: str) -> set[tuple[URIRef, object
     }
 
 
-def test_a_partial_run_does_not_deprecate_another_sources_objects(tmp_path: Path) -> None:
-    """Spec 5.4: ``--source X`` skips deprecation for anything outside the fetched scope.
-    The taxonomy was not fetched, so this run knows nothing about it either way."""
-    taxonomy = Scheme(
-        source_refs={EXCEL: "product-category.xlsx"},
-        pref_label="Product category taxonomy",
-        slug="product-category",
-        scheme_type=SchemeType.TAXONOMY,
-    )
-    value = TaxonomyValue(
-        source_refs={EXCEL: "PT"}, pref_label="Power tools", schemes=("product-category",)
-    )
-    run(tmp_path, model(entity("e1", "Customer"), value, schemes=(SALES, taxonomy)))
-    power_tools = iri_of(tmp_path, "PT", EXCEL)
-
-    plan = plan_only(tmp_path, model(entity("e1", "Customer")), only_source=ELLIE)
-
-    assert plan.deprecated == ()
-    assert (SEM_STATUS, ACTIVE) in carried(plan, power_tools)
-
-
-def test_an_object_outside_the_scope_is_carried_rather_than_skipped(tmp_path: Path) -> None:
-    """ "No deprecation" cannot mean "no output": each file is rewritten whole, so a node
-    left out of the plan is a node deleted from the instance — the loud version of the
-    thing this module exists to prevent."""
-    taxonomy = Scheme(
-        source_refs={EXCEL: "product-category.xlsx"},
-        pref_label="Product category taxonomy",
-        slug="product-category",
-        scheme_type=SchemeType.TAXONOMY,
-    )
-    value = TaxonomyValue(
-        source_refs={EXCEL: "PT"},
-        pref_label="Power tools",
-        definition="Tools with a motor.",
-        schemes=("product-category",),
-    )
-    files = run(tmp_path, model(entity("e1", "Customer"), value, schemes=(SALES, taxonomy)))[0]
-    power_tools = iri_of(tmp_path, "PT", EXCEL)
-    said = {
-        statement
-        for statement in statements(files, power_tools)
-        if statement[0] != DCTERMS.modified
-    }
-
-    plan = plan_only(tmp_path, model(entity("e1", "Customer")), only_source=ELLIE)
-
-    # Verbatim: the run has no evidence about this node, so it changes nothing about it.
-    assert carried(plan, power_tools) == said
-
-
-def test_an_object_two_sources_share_is_out_of_scope_unless_both_were_fetched(
-    tmp_path: Path,
-) -> None:
-    """One fetched source cannot conclude an object is gone when a second source it did
-    not read also describes it — that is the ID map's whole point (spec 5.4)."""
-    shared = Entity(
-        source_refs={ELLIE: "e1", EXCEL: "shared"}, pref_label="Customer", schemes=("sales",)
-    )
-    run(tmp_path, model(shared))
-    customer = iri_of(tmp_path, "e1")
-
-    plan = plan_only(tmp_path, InternalModel(schemes=(SALES,)), only_source=ELLIE)
-
-    assert plan.deprecated == ()
-    assert (SEM_STATUS, ACTIVE) in carried(plan, customer)
-
-
 def relationship(key: str, source: str, target: str, *, scheme: str = "sales") -> Relationship:
     return Relationship(
         source_refs={EXCEL: key},
@@ -482,24 +398,6 @@ def relationship(key: str, source: str, target: str, *, scheme: str = "sales") -
         target=SourceRef(ELLIE, target),
         schemes=(scheme,),
     )
-
-
-def test_a_shortcut_survives_when_its_relationship_is_out_of_scope(tmp_path: Path) -> None:
-    """The one statement written away from the node it is about (spec 4.2), and so the one
-    neither rule reaches on its own: the entity is live and gets rebuilt from a model that
-    no longer holds the relationship, while the relationship itself is carried as active.
-    Dropping the shortcut would delete a governed triple on a run that concluded nothing."""
-    ends = (entity("e1", "Customer"), entity("e2", "Order"))
-    before = run(tmp_path, model(*ends, relationship("r1", "e1", "e2")))[0]
-    customer, order = iri_of(tmp_path, "e1"), iri_of(tmp_path, "e2")
-    shortcut = (URIRef(f"{SEM}relatesTo"), URIRef(order))
-    assert shortcut in statements(before, customer)
-
-    after = run(tmp_path, model(*ends), today=LATER, sources=(ELLIE,))[0]
-
-    assert shortcut in statements(after, customer)
-    # Nothing moved at all: the run had no evidence about any of it.
-    assert [(f.name, f.text) for f in after] == [(f.name, f.text) for f in before]
 
 
 def test_a_shortcut_goes_when_its_relationship_is_deprecated(tmp_path: Path) -> None:
@@ -514,37 +412,6 @@ def test_a_shortcut_goes_when_its_relationship_is_deprecated(tmp_path: Path) -> 
 
     assert plan.deprecated == (iri_of(tmp_path, "r1", EXCEL),)
     assert (URIRef(f"{SEM}relatesTo"), URIRef(order)) not in statements(after, customer)
-
-
-def test_a_shortcut_the_run_still_derives_is_not_also_carried(tmp_path: Path) -> None:
-    """Two relationships between one pair derive the identical triple (spec 4.2). With one
-    live and one frozen, retaining the frozen one's shortcut as well would write that
-    triple into two files — the defect C1 fixed, reached from the other direction."""
-    ends = (
-        entity("e1", "Customer", schemes=("sales", "finance")),
-        entity("e2", "Order", schemes=("sales", "finance")),
-    )
-    live = Relationship(
-        source_refs={ELLIE: "r-live"},
-        pref_label="places",
-        source=SourceRef(ELLIE, "e1"),
-        target=SourceRef(ELLIE, "e2"),
-        schemes=("sales",),
-    )
-    frozen = relationship("r-frozen", "e1", "e2", scheme="finance")
-    run(tmp_path, model(*ends, live, frozen, schemes=(SALES, FINANCE)))
-    customer, order = iri_of(tmp_path, "e1"), iri_of(tmp_path, "e2")
-
-    after = run(
-        tmp_path, model(*ends, live, schemes=(SALES, FINANCE)), today=LATER, sources=(ELLIE,)
-    )[0]
-
-    holders = [
-        name
-        for name, graph in by_file(after).items()
-        if (URIRef(customer), URIRef(f"{SEM}relatesTo"), URIRef(order)) in graph
-    ]
-    assert holders == ["relationships-sales.ttl"]
 
 
 def test_one_statement_may_not_be_written_into_two_files(tmp_path: Path) -> None:
@@ -573,11 +440,11 @@ def test_one_statement_may_not_be_written_into_two_files(tmp_path: Path) -> None
         )
 
 
-def test_a_full_run_deprecates_an_object_all_of_whose_sources_it_fetched(
+def test_an_object_two_sources_described_is_deprecated_when_neither_reports_it(
     tmp_path: Path,
 ) -> None:
-    """The counterpart of the three above: scope is what separates "not looked at" from
-    "not there", and with everything fetched the second is the answer."""
+    """Several owners is not several questions. The ID map records this object against two
+    sources, both of which the run read, and neither reports it any more."""
     shared = Entity(
         source_refs={ELLIE: "e1", EXCEL: "shared"}, pref_label="Customer", schemes=("sales",)
     )
@@ -590,20 +457,22 @@ def test_a_full_run_deprecates_an_object_all_of_whose_sources_it_fetched(
     assert (SEM_STATUS, DEPRECATED) in carried(plan, customer)
 
 
-def test_a_source_missing_from_configuration_is_out_of_scope_rather_than_gone(
+def test_a_source_removed_from_the_configuration_deprecates_what_it_owned(
     tmp_path: Path,
 ) -> None:
-    """A renamed source is an error `semprini check` reports (spec 5.4). Until it does,
-    its objects must not quietly leave: a config typo would empty half the graph."""
+    """A source that is not configured reports nothing, so the union rule reaches its
+    objects like any others (spec 5.4). Deprecated, not deleted: the statements stay, the
+    ID-map row is untouched, and `semprini check` reports the map naming an unconfigured
+    source so the edit is caught before a run acts on it."""
     run(tmp_path, model(entity("e1", "Customer")))
     customer = iri_of(tmp_path, "e1")
 
-    files, plan = run(
-        tmp_path, InternalModel(schemes=(SALES,)), today=LATER, sources=("renamed-source",)
-    )
+    files, plan = run(tmp_path, InternalModel(schemes=(SALES,)), today=LATER)
 
-    assert plan.deprecated == ()
-    assert (SEM_STATUS, ACTIVE) in statements(files, customer)
+    assert plan.deprecated == (customer,)
+    assert (SEM_STATUS, DEPRECATED) in statements(files, customer)
+    assert (SKOS.prefLabel, Literal("Customer", lang="en")) in statements(files, customer)
+    assert IdMap.load(tmp_path).owners(customer)
 
 
 # --------------------------------------------------------------------- merge register
@@ -695,30 +564,6 @@ def test_a_register_row_whose_deprecated_iri_is_unknown_is_refused(tmp_path: Pat
             model(entity("e1", "Customer")),
             merges=merged(f"{BASE}concepts/nothing-like-this", survivor),
         )
-
-
-def test_a_register_row_for_an_object_outside_the_scope_does_nothing_this_run(
-    tmp_path: Path,
-) -> None:
-    """The register is a lifecycle decision and takes the scope rule with it: acting on it
-    would mean deprecating a node this run has no evidence about, which is the one thing
-    ``--source`` promises not to do. The next full run applies it. On a full run this state
-    means the ID map names an unconfigured source, which `semprini check` reports (5.4)."""
-    run(tmp_path, model(entity("e1", "Customer"), entity("e2", "Client")))
-    survivor, out_of_scope = iri_of(tmp_path, "e1"), iri_of(tmp_path, "e2")
-
-    plan = lifecycle.plan(
-        model(entity("e1", "Customer")),
-        registry=Registry(IdMap.load(tmp_path), BASE, repo_root=tmp_path, today=LATER),
-        context=RunContext(base_iri=BASE, instance_id="acme", repo_root=tmp_path),
-        previous=build.read_previous_files(tmp_path),
-        sources=("some-other-source",),
-        merges=merged(out_of_scope, survivor),
-    )
-
-    assert plan.deprecated == ()
-    assert (DCTERMS.isReplacedBy, URIRef(survivor)) not in carried(plan, out_of_scope)
-    assert (SEM_STATUS, ACTIVE) in carried(plan, out_of_scope)
 
 
 def test_a_successor_that_is_itself_deprecated_is_allowed(tmp_path: Path) -> None:
@@ -940,9 +785,7 @@ def test_nothing_is_minted_while_planning(tmp_path: Path) -> None:
     lifecycle.plan(
         model(entity("e1", "Customer"), entity("e9", "Brand new")),
         registry=registry,
-        context=context(),
         previous=build.read_previous_files(tmp_path),
-        sources=SOURCES,
     )
 
     assert registry.minted == ()

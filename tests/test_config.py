@@ -597,26 +597,13 @@ def test_the_default_credential_lookup_reads_the_process_environment(
 def test_the_run_context_carries_the_configured_instance(instance: Path) -> None:
     loaded = config.load(instance)
 
-    context = loaded.run_context(only_source="product-category", dry_run=True)
+    context = loaded.run_context(dry_run=True)
 
     assert context.base_iri == loaded.base_iri
     assert context.instance_id == "acme"
     assert context.default_language == "en"
     assert context.repo_root == instance
-    assert context.only_source == "product-category"
     assert context.dry_run is True
-
-
-def test_an_unknown_source_is_a_configuration_error(instance: Path) -> None:
-    """`--source` with a typo would otherwise compile nothing and exit 0."""
-    loaded = config.load(instance)
-
-    with pytest.raises(ConfigError) as raised:
-        loaded.run_context(only_source="product-categories")
-
-    assert "product-categories" in str(raised.value)
-    # And what *is* configured, or a typo and a source nobody added look identical.
-    assert "configured: ellie-main, product-category" in str(raised.value)
 
 
 # -------------------------------------------------------------------------- through CLI
@@ -646,13 +633,6 @@ def test_a_broken_configuration_exits_2_naming_the_key(
     assert "sources[0].config.api_key" in err
     # The remedy, not just the refusal.
     assert "environment variable" in err
-
-
-def test_an_unknown_source_argument_exits_2(
-    instance: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert main(["run", "--source", "taxonomy"]) == ExitCode.CONFIG
-    assert "taxonomy" in capsys.readouterr().err
 
 
 def test_commands_that_do_not_read_an_instance_ignore_a_broken_configuration(
