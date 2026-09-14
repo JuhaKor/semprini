@@ -461,9 +461,12 @@ When a source drops an object, Semprini does not delete it. It marks the object 
 and keeps it. If a steward records the replacement in `mappings/merges.csv`, the deprecated node
 points at its survivor with `dcterms:isReplacedBy`, so links into it still lead somewhere.
 
-Semprini decides what to deprecate from **all** your sources at once, never from one. That is
-why a partial run — `semprini run --source product-category` — deliberately skips deprecation
-outside its own scope.
+Semprini decides what to deprecate from **all** your sources at once, never from one. Every
+run reads every source you have configured, which is what makes the question answerable. It
+also means that removing a source from `config/semprini.yaml` deprecates everything it
+contributed, on the next run — not silently, but as a reviewable commit full of `deprecated`
+statuses. Put the source back and those objects are active again under the IRIs they always
+had.
 
 ### Determinism
 

@@ -39,6 +39,28 @@ section, so what is written here is what an adopter reads when deciding whether 
   and no longer refuses a workbook whose column header does.
 - `skos:notation` is normalized like any other source text.
 
+#### Removed
+
+- **`semprini run --source <name>` is gone.** Every run now fetches every configured source.
+  Partial runs existed so that one source could be recompiled without reading the others, and
+  they carried a matching rule: a run that had not looked at a source was not allowed to
+  conclude anything about its objects, so those were carried forward untouched. Both bundled
+  adapters read committed files, so a full compile costs seconds and a full compile is the only
+  way deprecation is ever judged correctly (§5.4) — the flag bought little and complicated
+  every decision downstream of it. Scripts or workflows passing `--source` will fail with an
+  unrecognized-argument error; drop the flag.
+- With it goes the refusal of an object two sources describe, which only a partial run could
+  provoke, and the refusal to combine `--force-namespace-change` with `--source`.
+- **A source removed from `config/semprini.yaml` now deprecates everything it owned**, on the
+  next run. This follows from the union rule (§5.4): a source that is not configured reports
+  nothing. Previously such objects were held in limbo — carried forward as active by a run that
+  had concluded nothing about them — on the theory that the removal might be a typo. It is a
+  deprecation, not a deletion: statements, files and `mappings/id-map.csv` rows are all
+  untouched, so restoring the `sources:` entry makes those objects active again under the IRIs
+  they always had, and `semprini check` still reports an ID map naming a source that is not
+  configured (§6.1 check 6). Adopters who deliberately keep a de-configured source's objects
+  live should expect a large deprecation diff on the upgrade.
+
 #### Added
 
 - The run report names, per source, how many values normalization changed — and says

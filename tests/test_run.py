@@ -27,12 +27,12 @@ from typing import Any
 
 import pytest
 from rdflib import Graph, URIRef
-from rdflib.namespace import DCTERMS
+from rdflib.namespace import DCTERMS, SKOS
 from tools.build_fixture_instance import COMPILER, INSTANCE, ONTOLOGY, TODAY
 
 from semprini import adapters, build, config, identity, lifecycle, run
 from semprini.cli import ExitCode, main
-from semprini.identity import ID_MAP_PATH, NAMESPACE_LOCK_PATH, IdMap, IdMapRow, NamespaceLock
+from semprini.identity import ID_MAP_PATH, NAMESPACE_LOCK_PATH, IdMap, NamespaceLock
 from semprini.model import Entity, InternalModel, Kind, Scheme, SchemeType, merge_models
 from semprini.report import REPORT_FILE
 
@@ -377,73 +377,6 @@ def test_generated_output_the_id_map_does_not_know_stops_the_run(instance: Path)
     assert snapshot(instance) == before
 
 
-# ------------------------------------------------------------------------- partial runs
-
-
-def test_a_partial_run_carries_every_source_it_did_not_fetch(instance: Path) -> None:
-    """``--source X`` compiles one source and must still write the whole directory.
-
-    Files are rewritten whole, so the objects of every other source have to arrive from
-    somewhere: lifecycle supplies them verbatim (spec 5.4), and the test of that is that a
-    run which fetched one of two sources changes nothing at all.
-    """
-    result = compile_(instance, only_source=ELLIE)
-
-    assert not result.changed
-    assert snapshot(instance) == snapshot(INSTANCE)
-
-
-def test_a_partial_run_does_not_deprecate_what_it_did_not_look_at(instance: Path) -> None:
-    """The rule ``--source`` exists to keep: a run that did not look cannot conclude.
-
-    The other source is not merely unfetched here, it is *gone* — a full run would deprecate
-    all nine of its objects. The scoped one carries them forward untouched instead.
-    """
-    (instance / "sources/taxonomies/product-category.xlsx").unlink()
-
-    compile_(instance, only_source=ELLIE)
-
-    taxonomy = graph_of(instance, "taxonomy-product-category.ttl")
-    statuses = {str(status) for status in taxonomy.objects(None, build.SEM_STATUS)}
-    assert statuses == {build.STATUS_ACTIVE}
-    assert (instance / build.GENERATED_DIR / "taxonomy-product-category.ttl").read_bytes() == (
-        INSTANCE / build.GENERATED_DIR / "taxonomy-product-category.ttl"
-    ).read_bytes()
-
-
-def test_a_partial_run_refuses_an_object_two_sources_describe(instance: Path) -> None:
-    """The case carry-forward cannot cover: the model holds the object rebuilt from one
-    source's statements, and writing it would delete the other's (spec 5.4)."""
-    shared = f"{BASE}concepts/{WAREHOUSE}"
-    id_map = IdMap.load(instance)
-    id_map.append(
-        IdMapRow(
-            iri=shared,
-            kind=Kind.ENTITY,
-            source_name=EXCEL,
-            source_key="warehouse",
-            first_seen=TODAY,
-        )
-    )
-    id_map.save(instance)
-    before = snapshot(instance)
-
-    with pytest.raises(build.BuildError, match="which this --source ellie-main run did not fetch"):
-        compile_(instance, only_source=ELLIE)
-
-    assert snapshot(instance) == before
-
-
-def test_a_partial_run_is_idempotent(instance: Path) -> None:
-    """Two partial runs of the same source, like two full ones, produce zero diff."""
-    assert main(["run", "--source", EXCEL]) == ExitCode.OK
-    after_first = snapshot(instance)
-
-    assert main(["run", "--source", EXCEL]) == ExitCode.OK
-
-    assert snapshot(instance) == after_first
-
-
 # --------------------------------------------------------------------------- deprecation
 
 
@@ -466,6 +399,53 @@ def test_an_object_a_source_deleted_is_deprecated_in_place(instance: Path) -> No
     # The row stays: deprecation is a status, not a tombstone, and the object is active
     # again under the same IRI if its source restores it.
     assert any(row.source_key == WAREHOUSE for row in IdMap.load(instance))
+
+
+def test_a_source_removed_from_the_configuration_deprecates_everything_it_owned(
+    instance: Path,
+) -> None:
+    """Every run reads every configured source (spec 5.1), so a source that is no longer
+    listed reports nothing and the union rule reaches its objects like any others (5.4).
+
+    The consequence an operator feels: dropping a `sources:` entry is not a pause, it is a
+    deprecation of that source's whole contribution, in one reviewable commit. Nothing is
+    deleted — the statements stay, the files stay, the ID-map rows stay — so re-adding the
+    entry brings every object back active under the IRI it always had.
+    """
+    settings = (instance / config.CONFIG_PATH).read_text(encoding="utf-8")
+    taxonomy_entry = settings.index("  - adapter: excel-taxonomy")
+    (instance / config.CONFIG_PATH).write_text(settings[:taxonomy_entry], encoding="utf-8")
+    owned = sorted(row.iri for row in IdMap.load(instance) if row.source_name == "product-category")
+    assert owned
+
+    result = compile_(instance)
+
+    assert sorted(result.deprecated) == owned
+    taxonomy = graph_of(instance, "taxonomy-product-category.ttl")
+    statuses = {str(status) for status in taxonomy.objects(None, build.SEM_STATUS)}
+    assert statuses == {build.STATUS_DEPRECATED}
+    # Deprecated, never deleted: the file, its statements and the map rows all survive.
+    assert (URIRef(owned[0]), SKOS.prefLabel, None) in taxonomy
+    assert (
+        sorted(row.iri for row in IdMap.load(instance) if row.source_name == "product-category")
+        == owned
+    )
+
+
+def test_a_source_put_back_is_active_again_under_the_same_iris(instance: Path) -> None:
+    """The other half of the rule above, and what makes it a status rather than a
+    tombstone (spec 3.5): the removal is undone by undoing the configuration edit."""
+    settings = (instance / config.CONFIG_PATH).read_text(encoding="utf-8")
+    taxonomy_entry = settings.index("  - adapter: excel-taxonomy")
+    (instance / config.CONFIG_PATH).write_text(settings[:taxonomy_entry], encoding="utf-8")
+    compile_(instance)
+
+    (instance / config.CONFIG_PATH).write_text(settings, encoding="utf-8")
+    compile_(instance, today=TODAY.replace(year=TODAY.year + 1))
+
+    taxonomy = graph_of(instance, "taxonomy-product-category.ttl")
+    statuses = {str(status) for status in taxonomy.objects(None, build.SEM_STATUS)}
+    assert statuses == {build.STATUS_ACTIVE}
 
 
 def test_deprecating_is_done_once_and_then_stays_put(instance: Path) -> None:
@@ -642,14 +622,6 @@ def test_a_moved_instance_then_compiles_like_any_other(instance: Path) -> None:
     after = compile_(instance)
 
     assert not after.changed
-
-
-def test_a_move_cannot_be_combined_with_a_partial_run(instance: Path) -> None:
-    """Exit 2: the commit would make two claims at once and neither could be checked."""
-    move_to(instance, MOVED)
-
-    assert main(["run", "--force-namespace-change", "--source", ELLIE]) == ExitCode.CONFIG
-    assert NamespaceLock.load(instance).base_iri == BASE
 
 
 def test_a_dry_run_of_a_move_writes_nothing(instance: Path) -> None:

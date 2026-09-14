@@ -6,19 +6,15 @@ dashboards and other organizations' `skos:exactMatch` triples, so a node is reta
 its last-known statements and marked `sem:status "deprecated"` (spec 3.5). Deletion is the
 one operation this project has no way to undo, which is why nothing here can perform one.
 
-Three rules carry the weight.
+Two rules carry the weight.
 
 *Deprecation is judged against the union of all configured sources* (spec 5.4). Never
 against one source, and never against one model — an entity that vanished from the sales
 model but is still in the finance model has not been deleted, it has moved, and it loses
 one `skos:inScheme` triple. The unit of the question is the object, and the evidence is
-every source the instance configures.
-
-*A run that did not look cannot conclude.* A `--source X` run fetched one source, so it
-knows nothing about objects any other source owns. Those are carried forward **exactly as
-they are** rather than skipped: skipping would leave them out of the files this run
-rewrites, which is not "no deprecation" but silent deletion — the loudest possible version
-of the thing this module exists to prevent.
+every source the instance configures. Every run fetches every configured source (spec
+5.1), so every run can answer the question, and removing a source from the configuration
+deprecates what it owned rather than leaving it in limbo.
 
 *The register is a steward's statement, not the compiler's inference.* Sources usually
 implement a merge by deleting one of the two objects, which on its own is indistinguishable
@@ -40,16 +36,13 @@ from rdflib.namespace import DCTERMS, SKOS
 from rdflib.term import Node
 
 from semprini.build import (
-    SEM_RELATES_TO,
-    SEM_SOURCE,
     SEM_STATUS,
-    SEM_TARGET,
     STATUS_ACTIVE,
     STATUS_DEPRECATED,
     CarriedNode,
 )
 from semprini.identity import IdMap, Registry
-from semprini.model import InternalModel, Issue, IssueError, RunContext, Severity
+from semprini.model import InternalModel, Issue, IssueError, Severity
 
 __all__ = [
     "MERGES_COLUMNS",
@@ -424,9 +417,9 @@ class LifecyclePlan:
     """What lifecycle decided, handed to the build stage (spec 3.5)."""
 
     carried: tuple[CarriedNode, ...] = ()
-    """Every node retained from the previous output: deprecated ones, and — on a partial
-    run — ones this run had no evidence about. Passed to
-    :func:`semprini.build.build` as ``carried``."""
+    """Every node retained from the previous output — all of them deprecated, since a run
+    that fetched every source judges every node. Passed to :func:`semprini.build.build`
+    as ``carried``."""
 
     deprecated: tuple[str, ...] = ()
     """IRIs this run moved from active to deprecated, sorted. A node that was already
@@ -437,9 +430,7 @@ def plan(
     model: InternalModel,
     *,
     registry: Registry,
-    context: RunContext,
     previous: Mapping[str, Graph],
-    sources: Collection[str],
     merges: MergeRegister | None = None,
 ) -> LifecyclePlan:
     """Decide what happens to every node the previous run wrote (spec 3.5, 5.4).
@@ -450,10 +441,10 @@ def plan(
     :func:`semprini.build.read_previous_files` — per file, because a retained node stays
     in the file that held it.
 
-    ``sources`` is every configured source's name. Together with ``context.only_source``
-    it decides the run's *scope*: a full run has looked at everything and may conclude an
-    object is gone, while a ``--source X`` run has looked at one source and may only
-    conclude it about objects that source alone owns.
+    Every run fetches every configured source (spec 5.1), so the question is the same for
+    every node: does any source still report it. One that none does is deprecated,
+    whatever source used to own it — including a source the configuration no longer
+    lists, which reports nothing and so keeps nothing alive (spec 5.4).
 
     Deliberately reads the ID map without resolving the model, so nothing is minted here.
     An object new to this run has no IRI yet, and a node in the previous output always
@@ -462,9 +453,6 @@ def plan(
     register = MergeRegister() if merges is None else merges
     issues = list(register.check_against(registry.id_map))
 
-    fetched = (
-        frozenset({context.only_source}) if context.only_source is not None else frozenset(sources)
-    )
     live = {
         iri
         for object_ in model.objects
@@ -476,21 +464,20 @@ def plan(
     index = _index(previous)
     carried: list[CarriedNode] = []
     deprecated: list[str] = []
-    handled: set[URIRef] = set()
-    frozen_pairs: set[tuple[URIRef, URIRef]] = set()
     for subject in sorted(index, key=str):
         blocks = index[subject]
         if not any(block.defines for block in blocks):
             # Something stated *about* a node rather than a description of it — the
-            # sem:relatesTo shortcut (spec 4.2). Its fate follows the relationship it was
-            # derived from, not its own, so it is dealt with in the second pass below.
+            # sem:relatesTo shortcut (spec 4.2). It is re-derived by the build stage from
+            # the relationship it belongs to, so there is nothing to decide here: if that
+            # relationship survives, build writes the shortcut again, and if it does not,
+            # the shortcut goes with it — which is what a retired relation means.
             continue
         iri = str(subject)
         if iri in live:
             continue
 
-        owners = registry.id_map.owners(iri)
-        if not owners:
+        if not registry.id_map.owners(iri):
             # Generated output holding a node the ID map does not: the row was deleted or
             # the file was hand-edited (spec 4.3). Refused rather than dropped, because
             # dropping it is the deletion this whole module exists to make impossible —
@@ -507,93 +494,13 @@ def plan(
             )
             continue
 
-        handled.add(subject)
-        if all(row.source_name in fetched for row in owners):
-            replacement = register.replacement(iri)
-            carried.extend(_deprecate(subject, blocks, replacement))
-            if any(block.was_active for block in blocks):
-                deprecated.append(iri)
-        else:
-            # Out of scope: this run fetched none of the sources that own the node, or not
-            # all of them, so it has no evidence either way. Carried unchanged rather than
-            # skipped — build rewrites each file whole, so a node left out of the plan is
-            # a node deleted from the instance (spec 5.4).
-            carried.extend(_verbatim(subject, blocks))
-            frozen_pairs.update(_ends(blocks))
-
-    carried.extend(_retained_shortcuts(index, handled, frozen_pairs, _derivable(model, registry)))
+        carried.extend(_deprecate(subject, blocks, register.replacement(iri)))
+        if any(block.was_active for block in blocks):
+            deprecated.append(iri)
 
     if issues:
         raise LifecycleError(issues)
     return LifecyclePlan(carried=tuple(carried), deprecated=tuple(deprecated))
-
-
-def _derivable(model: InternalModel, registry: Registry) -> set[tuple[URIRef, URIRef]]:
-    """The entity pairs this run's own relationships will produce a shortcut for."""
-    pairs = set()
-    for relationship in model.relationships:
-        source = registry.iri(relationship.source)
-        target = registry.iri(relationship.target)
-        if source is not None and target is not None:
-            pairs.add((URIRef(source), URIRef(target)))
-    return pairs
-
-
-def _ends(blocks: Sequence[_PreviousBlock]) -> set[tuple[URIRef, URIRef]]:
-    """The ``(sem:source, sem:target)`` pair of a relationship node, if it is one."""
-    statements = {(p, o) for block in blocks for p, o in block.statements}
-    sources = [o for p, o in statements if p == SEM_SOURCE and isinstance(o, URIRef)]
-    targets = [o for p, o in statements if p == SEM_TARGET and isinstance(o, URIRef)]
-    return {(source, target) for source in sources for target in targets}
-
-
-def _retained_shortcuts(
-    index: Mapping[URIRef, tuple[_PreviousBlock, ...]],
-    handled: Collection[URIRef],
-    frozen_pairs: Collection[tuple[URIRef, URIRef]],
-    derivable: Collection[tuple[URIRef, URIRef]],
-) -> Iterator[CarriedNode]:
-    """Keep a ``sem:relatesTo`` shortcut whose relationship this run did not judge.
-
-    The shortcut is the one statement written away from the node it is about (spec 4.2):
-    its subject is the source entity, but it lives in the relationship's file. So when the
-    entity is still reported and the *relationship* is out of scope, neither of the rules
-    above reaches it — the entity is rebuilt from the model, which no longer contains the
-    relationship, and the shortcut would be quietly dropped while the relationship it
-    derives from was carried forward as active. That is a governed triple deleted by a run
-    that explicitly concluded nothing.
-
-    Two cases are deliberately **not** retained. A pair the model still has a relationship
-    for is re-derived by the build stage, and writing it here as well would put one triple
-    in two files. And a pair whose only relationship was *deprecated* is gone on purpose:
-    ``sem:relatesTo`` carries no status of its own, so leaving it would assert a live
-    relation between two entities on the strength of a retired one.
-    """
-    for subject in sorted(index, key=str):
-        if subject in handled:
-            # Its blocks were carried whole, shortcuts included.
-            continue
-        for block in index[subject]:
-            if block.defines:
-                continue
-            targets = sorted(
-                (
-                    object_
-                    for predicate, object_ in block.statements
-                    if predicate == SEM_RELATES_TO
-                    and isinstance(object_, URIRef)
-                    and (subject, object_) in frozen_pairs
-                    and (subject, object_) not in derivable
-                ),
-                key=str,
-            )
-            if targets:
-                yield CarriedNode(
-                    file=block.file,
-                    subject=subject,
-                    statements=frozenset((SEM_RELATES_TO, target) for target in targets),
-                    defines=False,
-                )
 
 
 def _check_merges_are_gone(register: MergeRegister, live: Collection[str]) -> list[Issue]:
@@ -638,21 +545,6 @@ def _deprecate(
             file=block.file,
             subject=subject,
             statements=frozenset(statements),
-            defines=block.defines,
-        )
-
-
-def _verbatim(subject: URIRef, blocks: Sequence[_PreviousBlock]) -> Iterator[CarriedNode]:
-    """Re-emit a node exactly as it stands, `sem:status` included.
-
-    Only `dcterms:modified` is dropped, and only because the build stage recomputes it for
-    every node it writes: the statements are unchanged, so it computes the same date back.
-    """
-    for block in blocks:
-        yield CarriedNode(
-            file=block.file,
-            subject=subject,
-            statements=frozenset((p, o) for p, o in block.statements if p != DCTERMS.modified),
             defines=block.defines,
         )
 

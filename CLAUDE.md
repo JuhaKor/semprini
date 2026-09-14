@@ -139,7 +139,8 @@ deliberate change to one usually implies changes elsewhere in the spec.
 - **`generated/` is machine-owned**; `overlays/` is the only hand-written RDF. Enforced by the
   `.manifest.json` hash check, not convention.
 - **Deprecation is evaluated against the union of all configured sources**, never one source or
-  model — hence `--source X` runs skip deprecation outside their scope (§5.4).
+  model. Every run fetches every configured source, so every run can answer the question — and
+  a source removed from `config/semprini.yaml` therefore deprecates what it owned (§5.4).
 - **Nothing customer-specific enters this repo** (§9.2 rule 5). Test fixtures are synthetic
   (`tests/fixtures/acme/`); no instance's content is ever used as one.
 - **Extension happens without forking.** New sources are entry-point plugins (§5.2); org-specific

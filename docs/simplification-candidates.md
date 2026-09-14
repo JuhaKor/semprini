@@ -44,7 +44,7 @@ Built for a future the project has not reached. Each is spec-mandated today, so 
 section changes in the same PR (CLAUDE.md: a behaviour change edits the spec in the same
 change).
 
-### A1. Partial runs: `--source <name>`
+### A1. Partial runs: `--source <name>` — **done**
 
 The single largest source of intricacy in the compiler. It exists so that one source can be
 recompiled without fetching the others, and everything outside the fetched scope must then
@@ -74,6 +74,16 @@ disappears entirely, since the build stage re-derives every shortcut from a full
 
 Spec: §5.1 (the `--source` paragraph), §5.4 ("Scope" and the shortcut paragraph), §6.1
 check 6's mention. Estimated removal: 300–400 source lines, 1,000+ test lines.
+
+**Done.** The survey missed that §5.4 carried a *second* out-of-scope case — a full run was
+also barred from deprecating an object whose ID map named a source no longer configured — and
+that case alone would have kept `_verbatim`, `_ends`, `_derivable`, `_retained_shortcuts` and
+`frozen_pairs` alive. It was dropped with the rest: a source that is not configured reports
+nothing, so the union rule reaches its objects like any others, and removing a `sources:` entry
+now deprecates what it owned. `lifecycle.plan()` is live-or-deprecated with no scope test, and
+the `sem:relatesTo` retention rule is gone — build re-derives every shortcut from a full model.
+Net removal: 196 source lines and 242 test lines, after adding the two tests the new rule
+needed. Battery: `tools/mutations/a1_lifecycle.py`.
 
 ### A2. Moving the base IRI: `--force-namespace-change`
 
@@ -304,8 +314,8 @@ still fails with the offending key. Battery: `tools/mutations/c_source_config.py
 ## Suggested order
 
 1. ~~**C** — the `validate_config` inconsistency.~~ Done: check 8, spec §6.1.
-2. **A1–A5**, one PR each, spec edits included, while no instance holds data. A1 first: it
-   is the largest and it simplifies lifecycle and build for everything after it.
+2. ~~**A1** — partial runs.~~ Done. **A2–A5** next, one PR each, spec edits included, while no
+   instance holds data.
 3. **B1, B2, B3** as mechanical refactors under the mutation batteries
    (`python tools/mutate.py <battery> --list` first; anchors will move).
 4. **B4–B9** opportunistically, whenever the file in question is open for another reason.
