@@ -804,7 +804,7 @@ def test_a_lock_that_cannot_be_read_is_refused(tmp_path: Path) -> None:
 
 def test_a_changed_base_iri_is_refused() -> None:
     """Spec 3.4.4: the failure the lock exists to prevent."""
-    with pytest.raises(NamespaceLockError, match="migration, not a configuration edit"):
+    with pytest.raises(NamespaceLockError, match="the base IRI is permanent"):
         lock().verify(InstanceConfig(base_iri="https://elsewhere.example.com/", instance_id="acme"))
 
 
@@ -866,28 +866,31 @@ def test_a_missing_lock_exits_2(instance: Path, capsys: pytest.CaptureFixture[st
     assert "no namespace lock" in capsys.readouterr().err
 
 
-def test_the_mismatch_message_names_the_key_and_the_way_out(
+def test_the_mismatch_message_names_the_key_and_says_the_base_is_permanent(
     instance: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Spec 3.4.4: there is no command that moves an instance, and the message must not
+    hint at one — the way to a different base IRI is a new instance."""
     _rewrite_base_iri(instance, "https://elsewhere.example.com/")
 
     main(["check"])
 
     err = capsys.readouterr().err
     assert "base_iri" in err
-    assert "--force-namespace-change" in err
+    assert "permanent" in err
+    assert "new instance" in err
 
 
-def test_force_namespace_change_is_the_one_run_the_lock_does_not_stop(instance: Path) -> None:
-    """Exit 0 rather than 2: the mismatch this flag exists for is not a mismatch.
-
-    What the move then does to the instance is ``test_run.py``'s; this pins the one thing
-    the lock owns — that every *other* run stops here (spec 3.4.4).
-    """
+def test_no_run_flag_gets_past_the_lock(instance: Path) -> None:
+    """The bypass ``--force-namespace-change`` used to be is gone: argparse refuses the
+    flag, and the lock is checked before any subcommand runs."""
     _rewrite_base_iri(instance, "https://elsewhere.example.com/")
 
-    assert main(["run", "--force-namespace-change"]) == ExitCode.OK
-    assert NamespaceLock.load(instance).base_iri == "https://elsewhere.example.com/"
+    with pytest.raises(SystemExit) as refused:
+        main(["run", "--force-namespace-change"])
+
+    assert refused.value.code == ExitCode.CONFIG
+    assert NamespaceLock.load(instance).base_iri == BASE
 
 
 def _rewrite_base_iri(root: Path, base_iri: str) -> None:
@@ -895,91 +898,6 @@ def _rewrite_base_iri(root: Path, base_iri: str) -> None:
     path.write_text(
         path.read_text(encoding="utf-8").replace(BASE, base_iri), encoding="utf-8", newline="\n"
     )
-
-
-# ------------------------------------------------------------------ moving the namespace
-
-
-def test_planning_a_move_rebases_every_row_and_writes_nothing(instance: Path) -> None:
-    """Spec 3.4.4. Local names survive the move — the same object, in a new namespace.
-
-    Computed and returned rather than saved: the run writes the moved map and lock with
-    the files they describe, so a compile that fails afterwards leaves an instance whose
-    map and ``generated/`` still agree (spec 5.1).
-    """
-    IdMap(
-        (
-            row(f"{BASE}concepts/{CUSTOMER_UUID}"),
-            IdMapRow(
-                iri=f"{BASE}schemes/sales",
-                kind=Kind.SCHEME,
-                source_name=SOURCE,
-                source_key="1234",
-                first_seen=TODAY,
-                note="keep me",
-            ),
-        )
-    ).save(instance)
-    moved_to = "https://vocab.example.org/"
-    _rewrite_base_iri(instance, moved_to)
-
-    changed, moved = identity.plan_namespace_change(
-        config.load(instance), ontology_version="0.1.0", today=TODAY
-    )
-
-    assert changed.base_iri == moved_to
-    assert [r.iri for r in moved] == [
-        f"{moved_to}concepts/{CUSTOMER_UUID}",
-        f"{moved_to}schemes/sales",
-    ]
-    assert moved.rows[1].note == "keep me"
-    assert moved.rows[1].first_seen == TODAY
-    # Nothing on disk has moved: the instance still says it lives where it always did.
-    assert NamespaceLock.load(instance).base_iri == BASE
-    assert all(row.iri.startswith(BASE) for row in IdMap.load(instance))
-
-
-def test_the_flag_moves_the_base_iri_and_nothing_else(instance: Path) -> None:
-    """It is the one invocation that suspends the lock's checks, so it must not become
-    the way another locked value gets quietly adopted (spec 3.4.4)."""
-    _rewrite_base_iri(instance, "https://vocab.example.org/")
-    path = instance / config.CONFIG_PATH
-    path.write_text(
-        path.read_text(encoding="utf-8").replace("instance_id: acme", "instance_id: acme-new"),
-        encoding="utf-8",
-        newline="\n",
-    )
-
-    with pytest.raises(NamespaceLockError, match="base IRI and nothing else"):
-        identity.plan_namespace_change(config.load(instance), ontology_version="0.1.0")
-
-
-def test_a_move_that_changes_nothing_is_refused(instance: Path) -> None:
-    """Rewriting the lock then only discards the record of when the namespace was frozen."""
-    with pytest.raises(NamespaceLockError, match="nothing to move"):
-        identity.plan_namespace_change(config.load(instance), ontology_version="0.1.0")
-
-    assert NamespaceLock.load(instance).date == datetime.date(2026, 8, 6)
-
-
-def test_the_moved_instance_then_verifies_against_its_new_lock(instance: Path) -> None:
-    _rewrite_base_iri(instance, "https://vocab.example.org/")
-    lock, moved = identity.plan_namespace_change(
-        config.load(instance), ontology_version="0.1.0", today=TODAY
-    )
-    moved.save(instance)
-    lock.save(instance)
-
-    identity.verify_namespace_lock(config.load(instance))
-
-
-def test_an_iri_outside_the_locked_base_stops_the_move(instance: Path) -> None:
-    """Leaving it behind would split the instance across two namespaces."""
-    IdMap((row("https://somewhere.else/concepts/x", key="x"),)).save(instance)
-    _rewrite_base_iri(instance, "https://vocab.example.org/")
-
-    with pytest.raises(IdentityError, match="not under the locked base IRI"):
-        identity.plan_namespace_change(config.load(instance), ontology_version="0.1.0")
 
 
 # --------------------------------------------------------- determinism across processes

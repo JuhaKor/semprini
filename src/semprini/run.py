@@ -22,17 +22,14 @@ source still makes and that a consumer loading the directory from Git reads as c
 from __future__ import annotations
 
 import datetime
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from rdflib import Graph, URIRef
-from rdflib.term import Node
-
-from semprini import adapters, build, identity, lifecycle, manifest, ontology_version, report
+from semprini import adapters, build, lifecycle, manifest, report
 from semprini.build import OutputFile
 from semprini.config import InstanceConfig
-from semprini.identity import NamespaceLock, Registry
+from semprini.identity import Registry
 from semprini.model import (
     InternalModel,
     Issue,
@@ -130,7 +127,6 @@ def run(
     settings: InstanceConfig,
     *,
     dry_run: bool = False,
-    force_namespace_change: bool = False,
     today: datetime.date | None = None,
     compiler: str | None = None,
     ontology: str | None = None,
@@ -152,12 +148,7 @@ def run(
 
     previous_files = build.read_previous_files(root)
     merges = lifecycle.MergeRegister.load(root)
-    if force_namespace_change:
-        lock, previous_files, merges, registry = _move_namespace(
-            settings, previous_files, merges, today=today, ontology=ontology
-        )
-    else:
-        lock, registry = None, Registry.load(settings, today=today)
+    registry = Registry.load(settings, today=today)
 
     model, sources = _fetch(settings, context)
 
@@ -203,13 +194,8 @@ def run(
         # memory precisely so that a failure anywhere above leaves the map as it was (spec
         # 5.4). Nothing may come between the two — `generated/` holding IRIs the map does
         # not is a state the next run refuses and only deleting `generated/` recovers from,
-        # so removing stale output waits until identity is safe. The lock follows the map
-        # it describes, so an interrupted namespace move leaves the instance saying it
-        # still lives in the old namespace, which a re-run recovers from (spec 3.4.4).
+        # so removing stale output waits until identity is safe.
         registry.save(root)
-        if lock is not None:
-            merges.save(root)
-            lock.save(root)
         build.remove(stale, root)
 
     return RunResult(
@@ -286,76 +272,6 @@ def _note(summary: str, normalizations: int) -> str:
     values = "value" if normalizations == 1 else "values"
     normalized = f"normalized invisible or decomposed characters in {normalizations} {values}"
     return f"{summary}; {normalized}" if summary else normalized
-
-
-def _move_namespace(
-    settings: InstanceConfig,
-    previous_files: Mapping[str, Graph],
-    merges: lifecycle.MergeRegister,
-    *,
-    today: datetime.date | None,
-    ontology: str | None,
-) -> tuple[NamespaceLock, Mapping[str, Graph], lifecycle.MergeRegister, Registry]:
-    """``--force-namespace-change``: the whole instance, in a new namespace (spec 3.4.4).
-
-    The move is computed in memory and written with the run's other output, so a compile
-    that fails afterwards leaves nothing half-moved. Everything the run then does is
-    ordinary: the registry resolves against the moved map, and the previous state is
-    **rebased** so that lifecycle recognizes the nodes already in ``generated/`` as the
-    nodes they are. Without the rebase every one of them would look like an IRI the ID map
-    has never heard of, which is a refusal (spec 5.4) — and if it were not, every
-    deprecated node in the instance would silently be dropped.
-
-    The **merge register moves with them**, and is the one thing a compile ever writes to
-    `mappings/merges.csv`. Its rows are the one place in an instance where a person typed
-    an IRI, and every one of them names the old base; left behind, each would name an IRI
-    the moved map has never heard of and the run would refuse itself — so the migration
-    could not be performed at all on an instance that had ever recorded a merge. Rebasing
-    changes no decision: a row says the same two objects are one, in the namespace they now
-    live in.
-
-    Rebasing rather than starting fresh is also what keeps `dcterms:modified` honest: the
-    move changes which namespace an object lives in and nothing it says, so the run's diff
-    is every IRI and no dates, and the report says nothing was added or changed. That is
-    exactly the claim a reviewer of a once-ever migration needs to be able to check.
-    """
-    lock, moved = identity.plan_namespace_change(
-        settings,
-        ontology_version=ontology_version() if ontology is None else ontology,
-        today=today,
-    )
-    old_base = NamespaceLock.load(settings.repo_root).base_iri
-    rebased = {
-        name: _rebased(graph, old_base, settings.base_iri) for name, graph in previous_files.items()
-    }
-    registry = Registry(moved, settings.base_iri, repo_root=settings.repo_root, today=today)
-    return lock, rebased, merges.rebased(old_base, settings.base_iri), registry
-
-
-def _rebased(graph: Graph, old_base: str, new_base: str) -> Graph:
-    """The same statements with every IRI under ``old_base`` moved to ``new_base``.
-
-    Local names survive the move (spec 3.4.4), which is the whole point: the object keeps
-    its identity and changes only the namespace it lives in. Nothing outside the old base
-    is touched — `sem:` terms, SKOS, literals — and the ID map has already been checked to
-    hold no IRI outside it.
-    """
-    moved = Graph()
-    for subject, predicate, object_ in graph:
-        moved.add(
-            (
-                _rebased_term(subject, old_base, new_base),
-                _rebased_term(predicate, old_base, new_base),
-                _rebased_term(object_, old_base, new_base),
-            )
-        )
-    return moved
-
-
-def _rebased_term(term: Node, old_base: str, new_base: str) -> Node:
-    if isinstance(term, URIRef) and str(term).startswith(old_base):
-        return URIRef(new_base + str(term)[len(old_base) :])
-    return term
 
 
 def _stale(files: Sequence[OutputFile], root: Path) -> tuple[str, ...]:

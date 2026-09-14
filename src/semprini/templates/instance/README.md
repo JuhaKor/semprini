@@ -23,10 +23,10 @@ Every IRI this repository mints lives under `%%base_iri%%`. That base is **froze
 `semprini check` fails any pull request that edits it without the compiler. Something to
 add by hand belongs in `overlays/`.
 
-**The base IRI is frozen.** `mappings/namespace.lock` records it, and every command
+**The base IRI is permanent.** `mappings/namespace.lock` records it, and every command
 refuses to run against a different one. Editing `base_iri` in `config/semprini.yaml` does
-not move anything: the IRIs already minted stay where they are. Moving a whole instance to
-a new base is `semprini run --force-namespace-change`, expected to happen once, if ever.
+not move anything: the IRIs already minted stay where they are, and there is no command
+that moves them. An organization that needs a different base IRI creates a new instance.
 
 **`mappings/id-map.csv` is append-only.** It is what makes an IRI mean the same object for
 ever, across renames, re-codings and compiler upgrades. A deleted or edited row is a

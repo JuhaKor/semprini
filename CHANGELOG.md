@@ -60,6 +60,14 @@ section, so what is written here is what an adopter reads when deciding whether 
   they always had, and `semprini check` still reports an ID map naming a source that is not
   configured (§6.1 check 6). Adopters who deliberately keep a de-configured source's objects
   live should expect a large deprecation diff on the upgrade.
+- **`semprini run --force-namespace-change` is gone; the base IRI is permanent** (§3.4.4). The
+  flag was the one invocation allowed to disagree with `mappings/namespace.lock`: it rewrote the
+  ID map, the merge register, every generated file and the lock itself in one commit. It was
+  specified as a once-ever event and no instance has ever needed it, and a lock that one flag
+  may suspend is a weaker promise than one nothing suspends. An organization that needs a
+  different base IRI creates a new instance; the old one's IRIs stay published as they were.
+  Editing `base_iri` in `config/semprini.yaml` still exits `2` — the message no longer points
+  at a flag. No compile now writes `mappings/merges.csv` under any circumstance.
 
 #### Added
 
