@@ -1,26 +1,10 @@
-"""The internal model adapters return and the core consumes (spec 5.1, 5.2).
-
-This is the seam between the two halves of the compiler. An adapter knows a source
-system and nothing else: it returns these objects, each carrying the key its source uses,
-and never touches identity, files or RDF (spec 5.2). Everything downstream — identity
-resolution, graph building, lifecycle — reads only what is here, which is what lets a
-third-party adapter be a first-class citizen.
-
-Three properties are load-bearing:
-
-*Immutability.* Adapters run one after another over shared state and must not be able to
-reach back into what an earlier one returned, so every object is a frozen dataclass whose
-collections are tuples and whose ``source_refs`` is a read-only mapping.
-
-*Identity lives in ``source_refs``, not in a field called "id".* An object is identified
-by the ``(source name, source key)`` pairs that produced it, so the same real-world
-concept seen by two sources merges onto one object — and later onto one IRI, since the ID
-map is keyed by exactly that pair (spec 5.4). Cross-object references are ``SourceRef``s
-for the same reason: an adapter has no IRIs to point with.
-
-*Merging is deterministic and refuses to guess.* Set-valued fields union; a scalar the
-two sides disagree on raises ``MergeConflictError`` rather than picking one, because a silently
-chosen label would land in a governed file with nothing in the diff to explain it.
+"""The internal model adapters return and the core consumes (spec 5.1, 5.2). Every object is a
+frozen dataclass with tuple collections and a read-only ``source_refs`` mapping. An object is
+identified by its ``(source name, source key)`` pairs, which is what the ID map is keyed by (spec
+5.4); cross-references are ``SourceRef``s. Merging unions set-valued fields and raises
+``MergeConflictError`` on a scalar disagreement. Throughout this package a frozen dataclass that
+holds a mapping declares the field with ``hash=False``: a mapping is unhashable, and the class
+must still go in a set. ``__eq__`` is unaffected.
 """
 
 from __future__ import annotations
@@ -65,11 +49,7 @@ __all__ = [
 
 
 class Kind(StrEnum):
-    """What a semantic object is, and therefore which namespace it is minted in.
-
-    Recorded in the ID map's ``kind`` column (spec 5.4) and used by identity to choose a
-    namespace — the IRI space is partitioned by kind of thing, permanently (spec 3.1).
-    """
+    """What a semantic object is, hence which namespace it is minted in (spec 3.1, 5.4)."""
 
     ENTITY = "entity"
     ATTRIBUTE = "attribute"
@@ -83,8 +63,7 @@ class Kind(StrEnum):
         return _KIND_PREFIXES[self]
 
 
-# Entities, attributes and business terms share `c:` — spec 3.1 partitions by kind of
-# thing, and all three are concepts in the SKOS sense.
+# Entities and attributes share `c:` (spec 3.1).
 _KIND_PREFIXES = {
     Kind.ENTITY: "c",
     Kind.ATTRIBUTE: "c",
@@ -110,17 +89,12 @@ class Severity(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Issue:
-    """One problem found while validating configuration or content (spec 5.2, 6.1).
-
-    Returned by ``BaseAdapter.validate_config()`` and collected by ``semprini check``, so
-    that a configuration mistake is reported with the key that caused it rather than as a
-    traceback.
-    """
+    """One problem found while validating configuration or content (spec 5.2, 6.1)."""
 
     severity: Severity
     message: str
     location: str | None = None
-    """Where the problem is — a config key, a file and row, a source key."""
+    """Where the problem is: a config key, a file and row, a source key."""
 
     def __str__(self) -> str:
         where = f" ({self.location})" if self.location else ""
@@ -128,27 +102,19 @@ class Issue:
 
     @property
     def sort_key(self) -> tuple[str, str, str]:
-        """A total order over issues, for a report whose order is part of its output.
-
-        Location and message first, because that is the order a reader wants them in.
-        Severity last and never left out: issues are collected in sets — one problem found
-        by two checks is one issue — and a pair that ties on every field in the key comes
-        out in whatever order this run's string hashing produced. Two issues alike but for
-        severity are what a local shape restating a core rule produces (spec 6.1.5).
-        """
+        """A total order over issues: location, message, then severity, so that set
+        iteration order never reaches a report."""
         return (self.location or "", self.message, self.severity)
 
 
 class IssueError(ValueError):
     """An error that carries every :class:`Issue` behind it, not just the first.
 
-    Configuration and identity both fail the same way — a file an operator can fix, read
-    in CI, where one problem per run costs a round trip each. Subclasses differ only in
-    what they are called and which exit code the CLI maps them to (spec 5.1).
+    Subclasses differ only in ``noun`` and in the exit code the CLI maps them to (spec 5.1).
     """
 
     noun: ClassVar[str] = "error"
-    """What the plural line calls them: "3 configuration errors"."""
+    """What the plural line calls them, as in "3 configuration errors"."""
 
     def __init__(self, issues: Sequence[Issue], *, origin: str | None = None) -> None:
         self.issues = tuple(issues)
@@ -168,24 +134,12 @@ _SPACES = frozenset(
     "\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005"
     "\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
 )
-"""Every character Unicode gives general category ``Zs``, ``Zl`` or ``Zp``.
-
-Written out rather than derived at import, because deriving it means walking the whole
-code space; ``test_model.py`` re-derives it from ``unicodedata`` and demands this set
-back, so a Python or Unicode-data upgrade that changes the answer is a failing test
-rather than a silent change of behaviour.
-"""
+"""Every character of Unicode category ``Zs``, ``Zl`` or ``Zp``; ``test_model.py`` re-derives it."""
 
 _REMOVED = frozenset("\u200b\ufeff\u00ad")
-"""Zero-width space, zero-width no-break space (a stray BOM) and the soft hyphen.
+"""Zero-width space, zero-width no-break space and the soft hyphen: deleted, not spaced.
 
-Deleted rather than mapped to a space: they are not spacing, they are invisible. Worse
-than U+00A0 in one specific way — ``str.strip()`` does not touch them, so today they
-survive at *both* ends of a literal, where an NBSP at least loses its edge cases.
-
-U+200C and U+200D are deliberately **not** here. Zero-width non-joiner and joiner are
-meaningful in Indic and Arabic script and in emoji sequences; deleting them would rewrite
-words, which is the thing this function exists to avoid doing.
+U+200C and U+200D are not here; the zero-width joiners carry meaning in several scripts.
 """
 
 _TRANSLATION: Mapping[int, str | None] = {
@@ -197,32 +151,11 @@ _NORMALIZATIONS: ContextVar[list[int] | None] = ContextVar("_NORMALIZATIONS", de
 
 
 def normalize_text(value: str) -> str:
-    """Text as the compiler will hold it: composed, with no invisible characters.
+    """Text as the compiler holds it: NFC, ordinary spaces, no invisible characters, stripped.
 
-    Applied to every text **and every source key** on the way into this model (spec 5.5
-    rule 9). A source key is text too before it is a key, and that is the case that makes
-    this more than tidiness: an interior U+00A0 in an identifier yields a different key,
-    hence a different minted IRI, frozen into ``mappings/id-map.csv`` on the run that
-    mints it (spec 5.4).
-
-    Four steps, in this order so that the function is idempotent — which is what keeps a
-    recompile byte-identical (spec 6.1.7):
-
-    1. **NFC.** Composed and decomposed ``ä`` are different bytes and the same letter, so
-       without this two spellings of one word are two literals, and a diff shows a change
-       no source made. **Not NFKC**: that folds ligatures, superscripts and units, which
-       is content damage rather than normalization.
-    2. Every ``Zs``/``Zl``/``Zp`` character becomes an ordinary space.
-    3. :data:`_REMOVED` is deleted.
-    4. Strip, since 2 and 3 can expose whitespace at an edge that was hidden behind an
-       invisible character.
-
-    Three things it deliberately leaves alone, because they are content: U+2011, the
-    non-breaking hyphen, which is an orthographic choice rather than a paste artefact;
-    tabs and newlines inside a value, which the serializer already writes visibly as
-    ``\\t`` and ``\\n``; and runs of interior whitespace, which are not collapsed. A
-    doubled space left behind by step 2 is at least *visible* in a diff, and collapsing
-    would also rewrite text somebody spaced deliberately.
+    Applied to every text and every source key on the way in (spec 5.5 rule 9), in that
+    order so that it is idempotent. Not NFKC. Leaves interior whitespace runs, tabs,
+    newlines and the non-breaking hyphen alone: they are content.
     """
     normalized = unicodedata.normalize("NFC", value).translate(_TRANSLATION)
     if normalized != value:
@@ -234,16 +167,10 @@ def normalize_text(value: str) -> str:
 
 @contextmanager
 def counting_normalizations() -> Iterator[list[int]]:
-    """Count what :func:`normalize_text` changed, for the run report (spec 5.6).
+    """Count the values :func:`normalize_text` changed inside the block, for the run report (spec
+    5.6).
 
-    A context variable rather than a return value because normalization happens inside
-    ``__post_init__`` of a frozen dataclass, which has nowhere to hand a count back to,
-    and because the count is wanted per *source* — which only ``run`` knows the bounds
-    of. Report-only: nothing here reaches the output, so a caller that never counts
-    compiles the same bytes as one that does.
-
-    Only a value the function actually changed is counted, so re-normalizing something
-    already normalized — which merging does routinely — adds nothing.
+    Report-only; the output does not depend on whether anyone counts.
     """
     tally = [0]
     token = _NORMALIZATIONS.set(tally)
@@ -257,29 +184,22 @@ def counting_normalizations() -> Iterator[list[int]]:
 class SourceRef:
     """One source's key for an object: the pair the ID map is keyed by (spec 5.4).
 
-    Its string form is exactly the value of ``sem:sourceRef`` (spec 3.3), so the RDF and
-    the identity registry cannot drift into telling different stories.
+    Its string form is the value of ``sem:sourceRef`` (spec 3.3).
     """
 
     source: str
-    """The source's configured ``name`` — assigned once and never reused (spec 5.1)."""
+    """The source's configured ``name`` (spec 5.1)."""
 
     key: str
     """The key that source uses for the object: a UUID, a code, a slug."""
 
     def __post_init__(self) -> None:
-        # Normalized *before* emptiness is judged, and before anything else looks at it.
-        # A key that is nothing but a zero-width space is truthy until it is normalized,
-        # and would otherwise pass this check and go on to key an ID-map row that no
-        # steward could see (spec 5.4, 5.5 rule 9). The source name is left alone: it is
-        # a slug validated by configuration loading, which already rejects every
-        # character normalization would touch.
+        # Normalized before emptiness is judged (spec 5.5 rule 9). The source name is a
+        # slug already validated by configuration loading.
         object.__setattr__(self, "key", normalize_text(self.key))
         if not self.source or not self.key:
             raise ValueError(f"a source ref needs both a source name and a key, got {self!r}")
         if ":" in self.source:
-            # The string form would otherwise be ambiguous to split back apart, and the
-            # ID map's CSV columns and sem:sourceRef would disagree about the boundary.
             raise ValueError(f"a source name may not contain ':', got {self.source!r}")
 
     def __str__(self) -> str:
@@ -290,34 +210,20 @@ class SourceRef:
 class Text:
     """A label, definition or note, and the language it is written in (spec 5.5 rule 6).
 
-    Adapters may return a plain ``str`` anywhere one of these is accepted, and every field
-    normalizes it to ``Text(value, language=None)``. ``None`` means *the source did not
-    say*, not *no language*: the instance's ``default_language`` is applied when the graph
-    is built, and a value that arrived with a tag of its own keeps it (spec 11 #5).
-
-    Two texts with the same characters and different languages are **not** equal, which
-    makes them a merge conflict rather than an order-dependent silent choice. That is a
-    real limitation: spec 3.3 allows one ``skos:prefLabel`` per language per node, and a
-    scalar field cannot hold two. No v1 adapter produces one, and failing loudly is the
-    honest way to meet it — the alternative drops a language with nothing in the diff to
-    say so.
+    A plain ``str`` is accepted wherever a ``Text`` is and becomes ``Text(value)``.
+    ``language=None`` means the source did not say; the instance's default is applied when
+    the graph is built (spec 11 #5). Two texts differing only in language are not equal,
+    so a scalar field holding one label per language is a merge conflict: a known v1 limit.
     """
 
     value: str
     language: str | None = None
 
     def __post_init__(self) -> None:
-        # The one place every text in the compiler passes through, which is why the
-        # normalization lives here rather than in an adapter: Ellie carries the same
-        # pasted-from-elsewhere prose a workbook does, and a third-party adapter's author
-        # must not have to know that U+00A0 is a hazard (spec 5.2, 5.5 rule 9).
+        # The one place every text passes through (spec 5.5 rule 9).
         object.__setattr__(self, "value", normalize_text(self.value))
         if not self.value:
-            # Empty is normalized to absent before it gets here (spec 5.3): an empty
-            # definition emits no triple, and a Text that renders as "" would emit one.
-            # Reachable through normalization too — a cell holding one zero-width space
-            # is a non-empty string until it is normalized — so the callers below decide
-            # absence on the *normalized* value rather than the raw one.
+            # Callers decide absence on the normalized value first (spec 5.3).
             raise ValueError("text must not be empty")
         if self.language is not None and not is_language_tag(self.language):
             raise ValueError(f"not a language tag: {self.language!r}")
@@ -327,11 +233,7 @@ class Text:
 
     @property
     def sort_key(self) -> tuple[str, str]:
-        """A total order over texts, tagged and untagged alike.
-
-        Sorting ``Text`` against ``Text`` by field order would compare ``None`` with
-        ``str`` and raise, which the union of two set-valued fields does routinely.
-        """
+        """A total order over texts, tagged and untagged alike."""
         return (self.value, self.language or "")
 
 
@@ -340,16 +242,7 @@ def _as_text(value: str | Text) -> Text:
 
 
 def _has_content(value: str | Text) -> bool:
-    """Whether a value survives normalization as something worth emitting.
-
-    Emptiness is judged on the **normalized** string, never the raw one. A cell holding
-    a single zero-width space is a non-empty string that normalizes to nothing, and the
-    difference decides whether a field is absent or raises from ``Text.__post_init__``
-    several frames away from the source that wrote it (spec 5.5 rule 9).
-
-    A ``Text`` is already normalized and already refused emptiness, so it is content by
-    construction.
-    """
+    """Whether a value survives normalization as something worth emitting (spec 5.5 rule 9)."""
     return True if isinstance(value, Text) else bool(normalize_text(value))
 
 
@@ -371,22 +264,15 @@ def _union_sort_key(value: object) -> tuple[str, str]:
 
 
 class MergeConflictError(ValueError):
-    """Two sources describe one object and disagree about a value.
-
-    Raised rather than resolved: picking a side would put an arbitrary statement into a
-    governed file, and the diff would show a change no source made. Which side wins is a
-    stewardship decision, not the compiler's (spec 1.2).
+    """Two sources describe one object and disagree about a value; the compiler never picks a side
+    (spec 1.2).
     """
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SemanticObject:
-    """Fields every semantic object carries, whatever its kind.
-
-    Keyword-only so that adapters name what they set: these classes gain fields over
-    time, and positional construction would make that a breaking change for every
-    third-party adapter (spec 5.2).
-    """
+    """Fields every semantic object carries, whatever its kind. Keyword-only, so that
+    adding a field breaks no adapter (spec 5.2)."""
 
     kind: ClassVar[Kind]
 
@@ -399,54 +285,33 @@ class SemanticObject:
     )
 
     source_refs: Mapping[str, str] = field(hash=False)
-    """Source name → that source's key. Several entries means several sources produced
-    this object, and it will resolve to one IRI (spec 5.2).
-
-    Excluded from the generated ``__hash__`` (but not from ``__eq__``): a mapping is
-    unhashable, and hashing it would leave a class advertised as frozen that cannot go in
-    a set or key a dict — which is exactly what identity resolution does with these
-    (spec 5.4). Hashing a subset of the compared fields keeps the two consistent."""
+    """Source name → that source's key. Several entries resolve to one IRI (spec 5.2)."""
 
     pref_label: str | Text
-    """``skos:prefLabel``. A plain string means the source did not state a language, and
-    the instance's configured one is applied when the graph is built (spec 5.5 rule 6)."""
+    """``skos:prefLabel``. A plain string carries no language of its own (spec 5.5 rule 6)."""
 
     definition: str | Text | None = None
     """``skos:definition``. ``None`` and empty both emit no triple (spec 5.3)."""
 
     alt_labels: tuple[str | Text, ...] = ()
-    """``skos:altLabel`` — synonyms."""
+    """``skos:altLabel``."""
 
     hidden_labels: tuple[str | Text, ...] = ()
-    """``skos:hiddenLabel`` — misspellings and retired names, matched by search but never
-    displayed."""
+    """``skos:hiddenLabel``."""
 
     scope_notes: tuple[str | Text, ...] = ()
-    """``skos:scopeNote`` — guidance on where the concept's boundaries lie."""
+    """``skos:scopeNote``."""
 
     examples: tuple[str | Text, ...] = ()
-    """``skos:example`` — instances that fall under the concept.
-
-    Set-valued, like the two above and unlike ``definition``: a concept has *the*
-    definition, but two sources each contributing an example are not in conflict, and
-    making these scalars would fail a run over data that agrees (spec 3.3)."""
+    """``skos:example``. Set-valued, unlike ``definition`` (spec 3.3)."""
 
     def __post_init__(self) -> None:
         if not self.source_refs:
-            # An object with no source ref cannot be looked up, minted, or deprecated:
-            # it would be invisible to every later stage.
             raise ValueError(f"{type(self).__name__} must carry at least one source ref")
         if not _has_content(self.pref_label):
-            # Judged after normalization, so that a label of nothing but invisible
-            # characters is refused here — naming the object — rather than raising
-            # "text must not be empty" from Text a frame later (spec 5.5 rule 9).
+            # Judged after normalization, so the message names the object (spec 5.5 rule 9).
             raise ValueError(f"{type(self).__name__} must carry a prefLabel")
-        # Constructed for its validation, and now kept for its normalization too: an
-        # unusable pair must be refused where the adapter built it, not several stages
-        # later where the message could only name the pair and not the object that
-        # carries it. The mapping is rebuilt from the pairs rather than copied, so that
-        # `source_refs` and `refs` cannot disagree about a key — one normalized and the
-        # other not is precisely the drift that would put two IRIs on one object.
+        # Rebuilt from SourceRefs so that the mapping holds the normalized keys too.
         refs = [SourceRef(source, key) for source, key in self.source_refs.items()]
         object.__setattr__(
             self, "source_refs", MappingProxyType({ref.source: ref.key for ref in refs})
@@ -454,9 +319,7 @@ class SemanticObject:
         object.__setattr__(self, "pref_label", _as_text(self.pref_label))
         for name in ("alt_labels", "hidden_labels", "scope_notes", "examples"):
             object.__setattr__(self, name, _as_texts(getattr(self, name)))
-        # Empty and absent are the same statement — neither emits a skos:definition
-        # triple (spec 5.3) — so they are made one state here rather than two that
-        # every later comparison has to know are equivalent.
+        # Empty and absent are one state: neither emits a triple (spec 5.3).
         object.__setattr__(self, "definition", _as_optional_text(self.definition))
 
     @property
@@ -474,17 +337,13 @@ class SemanticObject:
 class SchemeMember(SemanticObject):
     """An object that can belong to schemes (everything except a scheme itself)."""
 
-    # Derived rather than re-spelled: a field added to the base class and forgotten here
-    # would silently become a scalar that two sources have to agree on.
     UNION_FIELDS: ClassVar[tuple[str, ...]] = (*SemanticObject.UNION_FIELDS, "schemes")
 
     schemes: tuple[str, ...] = ()
-    """Slugs of the schemes this object is in — ``skos:inScheme``. Several means the
-    object appears in several domain models, which costs it nothing (spec 5.3)."""
+    """Slugs of the schemes this object is in: ``skos:inScheme`` (spec 5.3)."""
 
     def __post_init__(self) -> None:
-        # Named explicitly rather than through super(): @dataclass(slots=True) rebuilds
-        # the class, and the zero-argument form has bitten that combination before.
+        # Explicit rather than super(): @dataclass(slots=True) rebuilds the class.
         SemanticObject.__post_init__(self)
         object.__setattr__(self, "schemes", tuple(self.schemes))
 
@@ -498,28 +357,13 @@ class Entity(SchemeMember):
     UNION_FIELDS: ClassVar[tuple[str, ...]] = (*SchemeMember.UNION_FIELDS, "broader")
 
     broader: tuple[SourceRef, ...] = ()
-    """Entities this one is a specialization of — ``skos:broader`` (spec 3.3).
-
-    Inheritance, as a modelling tool states it: "Active customer" is narrower than
-    "Customer". Expressed with the reused SKOS property rather than a ``sem:`` term of its
-    own, which keeps a metamodel version bump out of it — and says the right thing, since
-    every entity here is a ``skos:Concept``.
-
-    Set-valued for two reasons. A source may state multiple inheritance, and a scalar
-    field would have to pick one or fail. And the same entity seen in two domain models
-    where only one of them draws the inheritance is not a disagreement — it unions, the
-    way scheme membership does (spec 5.3), rather than raising a merge conflict over
-    something both sources agree about as far as each can see."""
+    """Entities this one specializes: ``skos:broader`` (spec 3.3). Set-valued and unioned
+    on merge, like scheme membership (spec 5.3)."""
 
     def __post_init__(self) -> None:
         SchemeMember.__post_init__(self)
-        # The same coercion every other collection here gets: an adapter handing over a
-        # list would leave the object holding something it can mutate, and two objects
-        # built from the same refs would compare unequal for holding list against tuple.
         object.__setattr__(self, "broader", tuple(self.broader))
         if any(ref in self.refs for ref in self.broader):
-            # Nothing downstream would catch this: skos:broader onto itself is
-            # well-formed RDF and a permanent, meaningless cycle of one.
             raise ValueError(f"{self.refs[0]} cannot be broader than itself")
 
 
@@ -530,24 +374,23 @@ class Attribute(SchemeMember):
     kind: ClassVar[Kind] = Kind.ATTRIBUTE
 
     entity: SourceRef
-    """The entity this is an attribute of — ``sem:attributeOf``."""
+    """The entity this is an attribute of: ``sem:attributeOf``."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Relationship(SchemeMember):
     """A named relationship between two entities — ``sem:Relationship`` (spec 3.2).
 
-    Reified because it carries a verb and an identity of its own; the ``sem:relatesTo``
-    shortcut between the two ends is emitted by the compiler, not carried here.
+    The ``sem:relatesTo`` shortcut between the ends is emitted by the compiler, not carried here.
     """
 
     kind: ClassVar[Kind] = Kind.RELATIONSHIP
 
     source: SourceRef
-    """The source end — ``sem:source``."""
+    """The source end: ``sem:source``."""
 
     target: SourceRef
-    """The target end — ``sem:target``."""
+    """The target end: ``sem:target``."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -557,22 +400,14 @@ class TaxonomyValue(SchemeMember):
     kind: ClassVar[Kind] = Kind.TAXONOMY_VALUE
 
     code: str | None = None
-    """``skos:notation`` — the business code, when the source states one. Mutable in the
-    source: the ID map keeps the IRI stable when it changes (spec 3.4).
-
-    Optional because not every taxonomy format carries a notation. A ragged workbook
-    (spec 5.3) states hierarchy and labels and no code at all, and inventing one from the
-    row's identity key would emit a ``skos:notation`` no source ever said."""
+    """``skos:notation``, when the source states one. Never part of identity (spec 3.4)."""
 
     parent: SourceRef | None = None
-    """The broader value — ``skos:broader``. ``None`` means a top concept."""
+    """The broader value: ``skos:broader``. ``None`` means a top concept."""
 
     def __post_init__(self) -> None:
         SchemeMember.__post_init__(self)
-        # Normalized like any other source text, though it is not a `Text`: a notation is
-        # a code rather than prose (spec 5.5 rule 6 exempts it from language tags), and it
-        # is emitted as a literal all the same. A code carrying a character nobody can see
-        # is a code that matches nothing anyone searches for.
+        # A code is not a Text (spec 5.5 rule 6) but is normalized like one.
         object.__setattr__(self, "code", (normalize_text(self.code) if self.code else "") or None)
 
 
@@ -583,17 +418,13 @@ class Scheme(SemanticObject):
     kind: ClassVar[Kind] = Kind.SCHEME
 
     slug: str
-    """Assigned once at scheme creation and opaque thereafter: renaming the glossary does
-    not change it (spec 3.4)."""
+    """Assigned once at scheme creation and opaque thereafter (spec 3.4)."""
 
     scheme_type: SchemeType
 
     enumerates: SourceRef | None = None
-    """The entity whose values this taxonomy provides — ``sem:enumerates``.
-
-    A source ref like every other cross-reference: the workbook states the entity's key in
-    the modelling tool (spec 5.3), and an adapter has no IRIs to point with (spec 5.2).
-    Resolution and the check that it names an *entity* happen when the graph is built."""
+    """The entity whose values this taxonomy provides: ``sem:enumerates`` (spec 5.3).
+    Resolved, and checked to name an entity, when the graph is built."""
 
     def __post_init__(self) -> None:
         SemanticObject.__post_init__(self)
@@ -603,12 +434,7 @@ class Scheme(SemanticObject):
 
 @dataclass(frozen=True, slots=True)
 class InternalModel:
-    """What one adapter fetched, or what several adapters fetched taken together.
-
-    Kept as separate tuples per kind rather than one heterogeneous list: every later
-    stage works one kind at a time — a file per kind, a namespace per kind — and the type
-    checker then knows what it has.
-    """
+    """What one adapter fetched, or several taken together, one tuple per kind."""
 
     entities: tuple[Entity, ...] = ()
     attributes: tuple[Attribute, ...] = ()
@@ -616,8 +442,6 @@ class InternalModel:
     schemes: tuple[Scheme, ...] = ()
     taxonomy_values: tuple[TaxonomyValue, ...] = ()
 
-    # The per-kind fields, so that walking every kind is one list to keep in step rather
-    # than five call sites that each have to remember a kind added later.
     KIND_FIELDS: ClassVar[tuple[str, ...]] = (
         "entities",
         "attributes",
@@ -627,19 +451,12 @@ class InternalModel:
     )
 
     def __post_init__(self) -> None:
-        # The same coercion the objects do: an adapter handing over a list would leave
-        # the model holding something it can mutate afterwards, and two models built
-        # from the same objects would compare unequal for holding list against tuple.
         for name in self.KIND_FIELDS:
             object.__setattr__(self, name, tuple(getattr(self, name)))
 
     @property
     def objects(self) -> tuple[SemanticObject, ...]:
-        """Every object, kind by kind.
-
-        A tuple rather than a generator: a property that reads like a collection but
-        empties after one pass is a trap for callers that walk it twice.
-        """
+        """Every object, kind by kind."""
         return tuple(item for name in self.KIND_FIELDS for item in getattr(self, name))
 
     def __len__(self) -> int:
@@ -650,10 +467,8 @@ class InternalModel:
         return merge_models(self, other)
 
     def normalized(self) -> InternalModel:
-        """This model with its own duplicates merged and its objects in a stable order.
-
-        An adapter that reports the same object twice — the same entity in two domain
-        models, say — is normal, not an error (spec 5.3).
+        """This model with its own duplicates merged and its objects
+        in a stable order (spec 5.3).
         """
         return merge_models(self)
 
@@ -661,11 +476,8 @@ class InternalModel:
 def merge_models(*models: InternalModel) -> InternalModel:
     """Merge models into one, combining objects that share a source ref (spec 5.2).
 
-    Merging is by identity, not by position: two objects belong together when any source
-    ref is common to them, and that relation is followed transitively, so an object known
-    to source A and one known to source B become one as soon as a third object ties them
-    together. The result is ordered by source ref, so the same inputs in any order give
-    the same model — the determinism the generated files inherit (spec 5.5).
+    Shared refs are followed transitively. The result is ordered by source ref, so the
+    same inputs in any order give the same model (spec 5.5).
     """
     merged = InternalModel(
         entities=_merge_objects([o for m in models for o in m.entities]),
@@ -684,8 +496,7 @@ def _merge_objects[ObjectT: SemanticObject](objects: Sequence[ObjectT]) -> tuple
     by_ref: dict[SourceRef, int] = {}
 
     for object_ in objects:
-        # Every group this object touches becomes one group: identity is transitive, and
-        # an object can be the thing that reveals two earlier ones were always the same.
+        # Every group this object touches becomes one group.
         refs = object_.refs
         indices = sorted({by_ref[ref] for ref in refs if ref in by_ref})
         if not indices:
@@ -695,9 +506,6 @@ def _merge_objects[ObjectT: SemanticObject](objects: Sequence[ObjectT]) -> tuple
             target, *absorbed = indices
             groups[target].append(object_)
             for index in absorbed:
-                # Only the moved members are re-indexed: the target group's own members
-                # already point at it, and re-walking them per arrival would make merging
-                # one object reported n times cost n² ref lookups.
                 for member in groups[index]:
                     for ref in member.refs:
                         by_ref[ref] = target
@@ -725,9 +533,6 @@ def _combine_pair[ObjectT: SemanticObject](first: ObjectT, second: ObjectT) -> O
             f"{type(second).__name__}; one source key is one object"
         )
 
-    # Any, because the combination rules are driven by the field list rather than
-    # written out per class: five kinds each gaining fields over time is five places to
-    # forget one, and forgetting one here means a merged object silently losing data.
     values: dict[str, Any] = {}
     for descriptor in dataclasses.fields(first):
         name = descriptor.name
@@ -737,9 +542,6 @@ def _combine_pair[ObjectT: SemanticObject](first: ObjectT, second: ObjectT) -> O
         elif name in first.UNION_FIELDS:
             values[name] = tuple(sorted(set(left) | set(right), key=_union_sort_key))
         elif left is None or right is None:
-            # One source knowing something the other does not is the ordinary case — a
-            # definition in one tool and none in the other. Empty descriptions never
-            # reach here: they are already None (spec 5.3).
             values[name] = left if left is not None else right
         elif left != right:
             raise MergeConflictError(
@@ -763,11 +565,8 @@ def _combined_refs(first: SemanticObject, second: SemanticObject) -> Mapping[str
 
 
 def _check_refs_are_unique_across_kinds(model: InternalModel) -> None:
-    """No source ref may name objects of two kinds.
-
-    The ID map is keyed by ``(source_name, source_key)`` alone — ``kind`` is a recorded
-    column, not part of the key (spec 5.4) — so the same pair used for an entity and for a
-    scheme would resolve to one row and one IRI for two different things.
+    """No source ref may name objects of two kinds: the ID map is keyed by the pair alone (spec
+    5.4).
     """
     seen: dict[SourceRef, SemanticObject] = {}
     for object_ in model.objects:
@@ -784,12 +583,7 @@ _LANGUAGE_TAG = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*")
 
 
 def is_language_tag(value: str) -> bool:
-    """Whether ``value`` is a well-formed BCP 47 tag.
-
-    Well-formed, not registered: the shape is what decides whether the compiler can emit
-    it. Public because configuration loading rejects a bad tag with the key that carries
-    it, and both places must agree on what a tag is (spec 11 #5).
-    """
+    """Whether ``value`` is a well-formed BCP 47 tag. Well-formed, not registered (spec 11 #5)."""
     return _LANGUAGE_TAG.fullmatch(value) is not None
 
 
@@ -797,22 +591,19 @@ def is_language_tag(value: str) -> bool:
 class RunContext:
     """Everything a run knows about the instance it is compiling (spec 5.1, 5.2).
 
-    Handed to every adapter, and deliberately read-only: an adapter reads the instance's
-    settings, and mints, writes and fetches nothing it was not configured to (spec 5.2).
-    The ID map is **not** here — identity resolution is the core's job.
+    Handed read-only to every adapter. The ID map is not here.
     """
 
     base_iri: str
-    """Frozen by the namespace lock; every content IRI is minted under it (spec 3.4)."""
+    """Frozen by the namespace lock (spec 3.4)."""
 
     instance_id: str
 
     repo_root: Path = field(default_factory=Path.cwd)
-    """The instance repository. Commands operate on the working directory (spec 5.1)."""
+    """The instance repository (spec 5.1)."""
 
     default_language: str = "en"
-    """Applied when the graph is built to every label and definition that carries no
-    language of its own; one that does keeps it (spec 5.5 rule 6, 11 #5)."""
+    """Applied to every text that carries no language of its own (spec 5.5 rule 6, 11 #5)."""
 
     dry_run: bool = False
 
@@ -820,11 +611,8 @@ class RunContext:
         if not self.instance_id:
             raise ValueError("an instance id is required")
         if not is_language_tag(self.default_language):
-            # An unusable tag would otherwise surface as unparseable Turtle at the end
-            # of a long run, rather than as a configuration error at the start.
             raise ValueError(f"not a language tag: {self.default_language!r}")
-        # Validates the base IRI the same way the serializer does, at the start of a run
-        # rather than when the first file is written.
+        # The serializer's own base-IRI check, at the start of the run.
         serialize.namespaces(self.base_iri)
 
     @property
@@ -833,9 +621,5 @@ class RunContext:
         return serialize.namespaces(self.base_iri)
 
     def iri(self, kind: Kind, local_name: str) -> str:
-        """The IRI a local name has in ``kind``'s namespace.
-
-        Composition only — deciding *which* local name an object gets is identity's job
-        (spec 3.4, 5.4), and adapters do neither.
-        """
+        """The IRI a local name has in ``kind``'s namespace. Composition only (spec 3.4, 5.4)."""
         return f"{self.namespaces[kind.prefix]}{local_name}"

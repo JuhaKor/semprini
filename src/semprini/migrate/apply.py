@@ -1,44 +1,11 @@
-"""``semprini migrate --to`` — an upgrade an adopter can read (spec 5.1, 7).
+"""``semprini migrate --to`` — rewrite what is committed for a new release (spec 5.1, 7).
 
-The problem this solves is not that files need rewriting. It is that an adopter upgrading
-the plane otherwise cannot tell an unexplained reflow from a change of meaning. The drift
-check (spec 6.1 check 3) puts a stop sign there — an instance compiled by 0.1.0 will not
-quietly pass CI under 0.2.0 — and this command is the only thing on the far side of it: it
-rewrites what is committed into what the new release would have written, records who did it,
-and stops if the rewrite would have cost the instance any identity.
-
-**It does not read the sources, and that is the point.** Everything here is derived from
-``generated/`` and ``mappings/id-map.csv``, so the diff an adopter reviews is provably about
-the upgrade and nothing else. Two consequences worth being explicit about. A migration is
-not a recompile: if the new release would *also* emit different content from the same
-sources, the next scheduled compile is what brings that in, in its own pull request. And a
-recompile is not a migration: nodes no source reports any more are re-emitted verbatim from
-the previous run's output (spec 3.5), so recompiling carries their old statements forward
-and would miss exactly the objects nobody is watching.
-
-**Nothing is written until everything is known**, as in :mod:`semprini.run` and for the same
-reason: a migration that failed half way through would leave an instance in a state no
-release produced, with a manifest describing neither.
-
-**Four refusals, and they are the task.** Spec 7 promises that migrations never mint new
-IRIs for existing objects and never remove ID-map rows. A promise a release makes about code
-it has not written yet is worth what enforces it, so the promise is checked after the steps
-run and before anything is written:
-
-1. the set of subjects in ``generated/`` is **unchanged** — a migration changes what is said
-   about the instance's objects, never which objects exist;
-2. every ``dcterms:modified`` is unchanged — the date says when the instance's knowledge of
-   an object changed, and how that knowledge is written down is not knowledge;
-3. the ID map gained no row, lost none, had none rewritten
-   (:meth:`~semprini.identity.IdMap.check_append_only`) and came back **in the same order** —
-   which between them leave a step able to write the ``note`` column stewards own and nothing
-   else. Order is checked because neither of the other two can see it: one looks a row up by
-   its ref and the other is a set difference, so the same rows shuffled would pass both and be
-   saved as a rewritten identity registry;
-4. every file name a step returned is a ``.ttl`` file directly inside ``generated/``.
-
-Widening any of those is a deliberate change to this module, in a release whose CHANGELOG
-says so — not something a step gets to do quietly.
+Derived from ``generated/`` and ``mappings/id-map.csv`` only, never the sources, so the
+diff is about the upgrade and nothing else. Nothing is written until every step has run
+and four refusals have passed: the set of subjects is unchanged, every ``dcterms:modified``
+is unchanged, the ID map gained, lost, rewrote and reordered no row (only ``note`` may
+change), and every file name a step returned is a ``.ttl`` directly inside ``generated/``.
+Widening any of those is a deliberate change to this module.
 """
 
 from __future__ import annotations
@@ -92,15 +59,9 @@ class FileChange:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MigrationReport:
-    """``generated/.report.md``, written by a migration instead of by a compile (spec 5.6).
+    """``generated/.report.md``, written by a migration instead of a compile (spec 5.6).
 
-    The committed report is always the report of whatever produced the files beside it. A
-    migration produced them, so it writes the report — a compile report left in place would
-    name the release that no longer wrote a single byte in the directory, and would state a
-    version the manifest next to it contradicts.
-
-    The next compile that changes anything replaces this with an ordinary run report. One
-    that changes nothing writes none (spec 5.6), and this stays, correctly.
+    The next compile that changes anything replaces it with an ordinary run report.
     """
 
     from_compiler: str
@@ -113,11 +74,8 @@ class MigrationReport:
     id_map_rows: int
 
     notes_changed: int = 0
-    """Rows whose ``note`` a step rewrote — the one ID-map column a migration may write.
-
-    Reported rather than assumed absent. The guards permit this one edit (spec 5.4 gives the
-    column to stewards, and the append-only check ignores it), so a report claiming the map was
-    untouched would contradict the diff beside it on the one occasion it mattered."""
+    """Rows whose ``note`` a step rewrote, the one ID-map column a migration may write (spec 5.4).
+    """
 
     def render(self) -> str:
         lines = [
@@ -186,18 +144,13 @@ class MigrationReport:
         )
 
     def to_file(self) -> OutputFile:
-        """The report as one of the migration's output files.
-
-        Returned this way so that :func:`semprini.build.write_all` writes it, like every
-        other file the compiler owns — one writer, one answer about encoding and line
-        endings. ``graph`` is ``None``: it is prose.
-        """
+        """The report as one of the migration's output files."""
         return OutputFile(name=REPORT_FILE, text=self.render())
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MigrationResult:
-    """What a migration did — or, when there was nothing to do, that there was not."""
+    """What a migration did, or that there was nothing to do."""
 
     from_compiler: str
     to_compiler: str
@@ -217,11 +170,8 @@ class MigrationResult:
         return self.report is not None
 
     def summary(self) -> tuple[str, ...]:
-        """The migration in a few lines, for an operator watching a terminal or a CI log.
-
-        Deliberately ASCII, like :meth:`semprini.run.RunResult.summary`: a redirected
-        Windows console still encodes as cp1252, and a decorative character would raise
-        *after* the files were written.
+        """The migration in a few lines for a terminal or CI log.
+        ASCII only, for a cp1252 console.
         """
         if not self.migrated:
             return (
@@ -259,16 +209,10 @@ def migrate(
 ) -> MigrationResult:
     """Migrate the instance ``settings`` describes to version ``to`` (spec 5.1, 7).
 
-    ``to`` must be the compiler version actually installed. It is not a choice of how far to
-    go — the steps live in the package, so the installed release is the only version whose
-    migrations exist, and the manifest records the release that wrote the files. Requiring
-    the operator to name it is the point: a workflow that pinned one version and installed
-    another is caught before a byte is rewritten, rather than by whoever reads the manifest
-    later.
-
-    ``migrations``, ``compiler`` and ``ontology`` are injected so that the suite can pin
-    them; production callers pass none of the three and get the shipped steps and the
-    versions actually running (spec 7).
+    ``to`` must be the installed compiler version; naming it catches a workflow that pinned
+    one version and installed another. ``migrations``, ``compiler`` and ``ontology`` let
+    the suite pin them. Raises :class:`MigrationError` for a manifest mismatch, a
+    downgrade, a failed step, or any of the module's four refusals.
     """
     root = settings.repo_root
     running_compiler = compiler_version() if compiler is None else compiler
@@ -291,9 +235,7 @@ def migrate(
     recorded = Manifest.load(root)
     mismatched = recorded.verify(root)
     if mismatched:
-        # Refused rather than migrated: a migration rewrites what the compiler wrote, and
-        # migrating a directory that disagrees with its manifest would launder a hand edit
-        # into a manifest recording the new version as its author (spec 4.3).
+        # Migrating a hand-edited directory would launder the edit (spec 4.3).
         raise MigrationError(
             [
                 Issue(
@@ -317,16 +259,7 @@ def migrate(
         and recorded.ontology_version == running_ontology
         and build.unchanged([build.ontology_file()], root)
     ):
-        # Idempotent, so that re-running one after a failure or a retry is safe, and so that
-        # a workflow may call it unconditionally.
-        #
-        # The copied metamodel is compared as **bytes**, not only by recorded version, because
-        # check 7 does (spec 6.1): it holds `generated/ontology.ttl` against the packaged
-        # document verbatim. A release that edited `sem.ttl` without moving its version would
-        # otherwise leave every instance failing a check that this is the only command able to
-        # clear, with this one answering "nothing to migrate". A hand edit cannot reach here —
-        # the manifest verification above refuses it — so a difference means the *packaged*
-        # document moved.
+        # Idempotent. The ontology copy is compared as bytes, as check 7 does (spec 6.1).
         return MigrationResult(
             from_compiler=recorded.compiler_version,
             to_compiler=running_compiler,
@@ -342,9 +275,6 @@ def migrate(
 
     files = _rendered(after, settings.base_iri)
     files += (Manifest.create(files, compiler=compiler, ontology=ontology).to_file(),)
-    # The report is kept rather than counted stale even though it is not in `files` yet: it
-    # is appended below, and stale files are removed *after* everything is written, so
-    # listing it here would delete the report this migration had just written.
     stale = build.stale(files, root, keep=(REPORT_FILE,))
     run_report = MigrationReport(
         from_compiler=recorded.compiler_version,
@@ -359,16 +289,9 @@ def migrate(
     )
     files += (run_report.to_file(),)
 
-    # **The map first here, which is the opposite of what a run does**, and the reason is worth
-    # writing down because the divergence looks like a mistake. A run writes the files first
-    # because it *mints*: generated/ holding an IRI the map has never heard of is a state only
-    # deleting generated/ recovers from. A migration mints nothing — the subject set is
-    # invariant, checked above — so that hazard does not exist, and the other one does. The
-    # manifest is written with the files, so a crash between the two calls would leave an
-    # instance whose recorded version is already the new one, and the up-to-date test would then
-    # answer "nothing to migrate" on the re-run: whatever the step did to the map would be lost
-    # silently. In this order a crash leaves a saved map and an unstamped manifest, which the
-    # re-run migrates as though nothing had happened.
+    # The map first, the opposite of a run: a migration mints nothing, and a crash after the
+    # manifest was restamped would make the re-run answer "nothing to migrate" with the
+    # step's map edits lost. In this order a crash leaves an unstamped manifest to re-run on.
     after.id_map.save(root)
     build.write_all(files, root)
     build.remove(stale, root)
@@ -386,12 +309,7 @@ def migrate(
 
 
 def _applied(step: Migration, state: InstanceState) -> InstanceState:
-    """Run one step, and hold it to returning a state.
-
-    A step is this project's own code, so its exceptions are this project's bugs — but they
-    surface in an adopter's repository, where a traceback through ``rdflib`` says nothing
-    about which upgrade failed. Named here, where the step is known.
-    """
+    """Run one step, naming it in any failure, and hold it to returning a state."""
     try:
         result = step.apply(state)
     except Exception as error:
@@ -420,20 +338,14 @@ def _applied(step: Migration, state: InstanceState) -> InstanceState:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Snapshot:
-    """What the instance said before any step ran, copied out of the mutable objects.
-
-    The reason this is a snapshot rather than the state itself: an ``rdflib`` graph and an
-    :class:`~semprini.identity.IdMap` are both mutable, so a step that edits what it was
-    handed — rather than returning a new state — would leave every check below comparing an
-    object with itself, and all four refusals would pass on a migration that had just
-    minted an IRI. The one place that could go wrong silently, so it does not depend on a
-    step behaving.
-    """
+    """What the instance said before any step ran, copied out of the mutable objects so
+    that a step editing its input in place cannot pass the checks by comparing an object
+    with itself."""
 
     subjects: frozenset[URIRef]
     dates: Mapping[URIRef, frozenset[Node]]
     id_map: IdMap
-    """Rebuilt from the loaded rows, which are frozen; the loaded map itself is not."""
+    """Rebuilt from the loaded rows; the loaded map itself is mutable."""
 
     @classmethod
     def of(cls, state: InstanceState) -> _Snapshot:
@@ -445,10 +357,8 @@ class _Snapshot:
 
 
 def _check_identity(before: _Snapshot, after: InstanceState) -> None:
-    """Hold the migration to spec 7's promise, before anything is written.
-
-    Every violation is reported, not the first: an adopter reading this in CI would
-    otherwise fix one and find the next.
+    """Hold the migration to spec 7's promise before anything is written; every violation is
+    reported.
     """
     issues: list[Issue] = []
 
@@ -486,9 +396,7 @@ def _check_identity(before: _Snapshot, after: InstanceState) -> None:
         if before_dates.get(iri, frozenset()) != after_dates.get(iri, frozenset())
     )
 
-    # B4's own definition of "this file was not edited", called rather than re-derived: it
-    # compares every column but `note`, the one stewards own. Between it and the two checks
-    # below, a step is left able to edit that column and nothing else.
+    # Compares every column but `note`; with the two checks below, a step may edit only that.
     issues.extend(after.id_map.check_append_only(before.id_map))
     known = {row.ref for row in before.id_map}
     issues.extend(
@@ -501,13 +409,8 @@ def _check_identity(before: _Snapshot, after: InstanceState) -> None:
         for ref in sorted(row.ref for row in after.id_map if row.ref not in known)
     )
 
-    # Order, which neither check above can see: one looks rows up by ref and the other is a set
-    # difference, so a step that returned the same rows shuffled passes both. It would then be
-    # saved as a rewritten `mappings/id-map.csv` — a whole-file diff in the identity registry,
-    # in the one command whose entire claim is that its diff is about nothing but the upgrade.
-    # The file's order is its history (spec 5.4: rows are in append order).
-    # Asked only when the rows are otherwise the same set: a removal or an addition changes the
-    # order too, and is already reported above by the check that knows what it was.
+    # Order, which neither check above can see (spec 5.4). Asked only when the rows are
+    # otherwise the same set; an addition or removal is already reported.
     if {row.ref for row in after.id_map} == known and [row.ref for row in before.id_map] != [
         row.ref for row in after.id_map
     ]:
@@ -525,19 +428,15 @@ def _check_identity(before: _Snapshot, after: InstanceState) -> None:
 
 
 def _notes_changed(before: IdMap, after: IdMap) -> int:
-    """How many rows a step rewrote the ``note`` of. Reached only once the guards have passed,
-    so both maps are known to hold the same rows in the same order."""
+    """How many rows a step rewrote the ``note`` of. Called after the guards have passed."""
     return sum(
         1 for row in after if (found := before.row(row.ref)) is not None and found.note != row.note
     )
 
 
 def _subjects(graphs: Mapping[str, Graph]) -> frozenset[URIRef]:
-    """Every subject written anywhere in ``generated/``.
-
-    Across all files rather than per file, because a subject legitimately spans two of them
-    (spec 4.2) and a migration is allowed to move one — what it may not do is add or lose an
-    object.
+    """Every subject written anywhere in ``generated/``; a migration may move one between files
+    (spec 4.2).
     """
     return frozenset(
         subject
@@ -564,18 +463,13 @@ def _shown(dates: frozenset[Node]) -> str:
 def _rendered(state: InstanceState, base_iri: str) -> tuple[OutputFile, ...]:
     """Serialize the migrated state, refusing a file name or a graph no run could write.
 
-    The ontology copy comes from the metamodel *this* compiler carries rather than from what
-    the previous release copied — refreshing it is half of what an ontology version bump
-    means, and check 7 compares the committed copy against the packaged one.
+    The ontology copy is refreshed from the metamodel this compiler carries (spec 6.1 check 7).
     """
     issues: list[Issue] = []
     files: list[OutputFile] = [build.ontology_file()]
     for name, graph in sorted(state.graphs.items()):
         location = f"{GENERATED_DIR.as_posix()}/{name}"
         if not manifest.is_generated_file_name(name) or not name.endswith(".ttl"):
-            # A migration composes paths under generated/ out of names a step returned, so
-            # the escape C1 refuses for a scheme slug and C2 for a manifest key is refused
-            # here too — one directory, bounded in every module that writes into it.
             issues.append(
                 Issue(
                     Severity.ERROR,
@@ -598,8 +492,7 @@ def _rendered(state: InstanceState, base_iri: str) -> tuple[OutputFile, ...]:
         try:
             text = serialize.serialize(graph, base_iri)
         except ValueError as error:
-            # A blank node or a literal subject: legal RDF the canonical serializer refuses
-            # (spec 5.5 rules 2 and 7), so no compile could have produced this file either.
+            # A blank node or a literal subject (spec 5.5 rules 2 and 7).
             issues.append(
                 Issue(Severity.ERROR, f"the migrated graph cannot be serialized: {error}", location)
             )

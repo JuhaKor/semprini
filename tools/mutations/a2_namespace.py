@@ -60,9 +60,9 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
     (
         "a missing lock is treated as an instance with nothing to check",
         IDENTITY,
-        "        except FileNotFoundError:\n            # Refused, not assumed absent",
+        "        except FileNotFoundError:\n            # Deleting the file must not be",
         "        except FileNotFoundError:\n            raise SystemExit(0)\n"
-        "            # Refused, not assumed absent",
+        "            # Deleting the file must not be",
     ),
     (
         "the refusal names the flag that no longer exists instead of the way out",

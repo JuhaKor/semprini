@@ -1,25 +1,9 @@
 """ID map, IRI minting and the namespace lock (spec 3.4, 5.4).
 
-Identity is the one thing an instance can never redo. Generated files are rewritten on
-every run and a bad serialization is a migration away from being fixed, but an IRI that
-has been published is permanent: it is what a query, a dashboard or another organization's
-`skos:exactMatch` points at. Everything here exists to make that survivable.
-
-*The ID map, not the formula, is authoritative* (spec 5.4). Minting is a fallback used
-once per object, on the run that first sees it; from then on the answer comes from
-``mappings/id-map.csv``. That is what lets a taxonomy code change, a minting rule be
-rewritten, or a compiler be upgraded without any of it reaching the IRIs an instance has
-already published.
-
-*The base IRI is frozen* (spec 3.4). ``mappings/namespace.lock`` records what the instance
-minted under, and every run compares it to ``config/semprini.yaml``. Without that check an
-edited base IRI would not fail — it would quietly mint a parallel universe of IRIs beside
-an ID map still holding the old ones, and the two would never be reconciled.
-
-Two error types, because the CLI's exit codes distinguish them (spec 5.1):
-:class:`NamespaceLockError` is a configuration error (exit 2) and subclasses
-:class:`~semprini.config.ConfigError` for exactly that reason; :class:`IdentityError` is a
-compile failure (exit 1), which is what spec 6.1 check 6 reports.
+The ID map, not the minting formula, is authoritative: minting happens once per object,
+on the run that first sees it. The base IRI is frozen by ``mappings/namespace.lock``.
+:class:`NamespaceLockError` is a configuration error (exit 2); :class:`IdentityError` is a
+compile failure (exit 1).
 """
 
 from __future__ import annotations
@@ -71,57 +55,35 @@ NAMESPACE_LOCK_PATH = Path("mappings") / "namespace.lock"
 """The frozen base IRI (spec 3.4, 4.2), relative to the instance root."""
 
 ID_MAP_COLUMNS = ("iri", "kind", "source_name", "source_key", "first_seen", "note")
-"""Exactly the columns of spec 5.4, in that order. The header is checked on load: a
-column quietly renamed or reordered would make every lookup miss and every object mint a
-second IRI."""
+"""Exactly the columns of spec 5.4, in that order; checked on load."""
 
 NAMESPACE_SEMPRINI = UUID("8865c94a-2211-5f26-8887-6d6d5cbaa1e0")
 """The UUIDv5 namespace every minted local name derives from (spec 3.4.2).
 
-Its value is ``uuid5(NAMESPACE_URL, "https://w3id.org/semprini/ontology#")`` — derived
-once, then written down. **It is permanent for every instance in existence.** Changing it
-would mint a different IRI for every object first seen after the change, while the ID map
-went on holding the old ones; that is why it is a literal here and not a computation
-someone could adjust in passing.
+``uuid5(NAMESPACE_URL, "https://w3id.org/semprini/ontology#")``, written down once.
+Permanent for every instance in existence.
 """
 
 UUID_PATTERN = r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 """What a minted local name looks like, for everything but a scheme (spec 3.4.2).
 
-Lower case only, unlike :data:`_CANONICAL_UUID` below: that one reads what a *source*
-wrote and normalizes it, while this describes what :func:`mint_local_name` produced and
-froze. The SHACL IRI policy (spec 6.1.5) is written against it, so the two halves of
-"an IRI is opaque" — how a local name is minted and what one is allowed to look like —
-have one definition between them. Written without ``(?:`` so that it stays valid in the
-XPath regex dialect SHACL's ``sh:pattern`` is defined against.
+Lower case only. Also used as ``sh:pattern`` (spec 6.1.5), so written without ``(?:``.
 """
 
 _ISO_DATE = "%Y-%m-%d"
 
-# A UUID as a source is expected to write one: the canonical 8-4-4-4-12 form. Case is
-# tolerated and normalized away, since a source that switches to upper case must not mint
-# a second IRI for one object.
+# A UUID as a source writes one: canonical 8-4-4-4-12, either case.
 _CANONICAL_UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 
 
 class IdentityError(IssueError):
-    """Identity the compiler refuses to act on — CLI exit code 1 (spec 5.1, 6.1 check 6).
-
-    A compile failure rather than a configuration error: a collision, a lost row or a
-    malformed ID map means the repository's identity state and the sources disagree, and
-    no amount of editing ``config/semprini.yaml`` addresses it.
-    """
+    """Identity the compiler refuses to act on — CLI exit code 1 (spec 5.1, 6.1 check 6)."""
 
     noun = "identity error"
 
 
 class NamespaceLockError(ConfigError):
-    """The base IRI does not match the lock — CLI exit code 2 (spec 3.4, 5.1).
-
-    A :class:`~semprini.config.ConfigError` on purpose: the exit-code contract makes
-    "configuration or namespace-lock error" one category, and the lock *is* frozen
-    configuration — the one setting an instance may not edit after bootstrap.
-    """
+    """The base IRI does not match the lock — CLI exit code 2 (spec 3.4, 5.1)."""
 
     noun = "namespace-lock error"
 
@@ -130,23 +92,17 @@ class NamespaceLockError(ConfigError):
 class IdMapRow:
     """One row of ``mappings/id-map.csv``: one source's key for one IRI (spec 5.4).
 
-    A row, not an object: an object known to two sources has two rows carrying one IRI,
-    which is how ``sem:sourceRef`` and the registry end up telling the same story
-    (spec 3.3).
+    An object known to two sources has two rows carrying one IRI.
     """
 
     iri: str
     kind: Kind
-    """Recorded, not part of the key — the map is keyed by ``(source_name, source_key)``
-    alone (spec 5.4). Kept so that a reader can tell what a row is about, and so that a
-    source key changing kind is caught rather than silently reusing an IRI."""
+    """Recorded, not part of the key (spec 5.4). A source key changing kind is refused."""
 
     source_name: str
     source_key: str
     first_seen: datetime.date
-    """The run date this IRI was minted on. The only date in an instance's committed
-    state, and deliberately nowhere near ``generated/`` — output carries no run
-    timestamps (spec 5.5 rule 8)."""
+    """The run date this IRI was minted on (spec 5.5 rule 8 keeps dates out of ``generated/``)."""
 
     note: str = ""
     """Free text for stewards; the compiler writes none and preserves what it finds."""
@@ -170,10 +126,8 @@ class IdMapRow:
 class IdMap:
     """``mappings/id-map.csv`` in memory: append-only, keyed by source and key (spec 5.4).
 
-    Append-only is enforced rather than documented — :meth:`append` refuses a duplicate
-    key or an IRI already owned by someone else, and :meth:`check_append_only` compares
-    against the base revision so that a row deleted in an editor fails CI (spec 6.1
-    check 6). Nothing here removes a row; there is no method that could.
+    :meth:`append` refuses a duplicate key or a kind clash, :meth:`check_append_only`
+    compares against a base revision (spec 6.1 check 6), and nothing removes a row.
     """
 
     def __init__(self, rows: Iterable[IdMapRow] = (), *, origin: str | None = None) -> None:
@@ -190,17 +144,10 @@ class IdMap:
 
     @classmethod
     def load(cls, repo_root: Path | None = None) -> IdMap:
-        """Read ``<repo_root>/mappings/id-map.csv``.
-
-        A missing file is an empty map, not an error: the first run of a freshly
-        initialized instance mints everything it sees.
-        """
+        """Read ``<repo_root>/mappings/id-map.csv``. A missing file is an empty map."""
         path = (Path.cwd() if repo_root is None else Path(repo_root)) / ID_MAP_PATH
         try:
-            # utf-8-sig, not utf-8: stewards open this CSV in Excel, which saves it with a
-            # byte-order mark. Left in place the BOM joins the first column name, and the
-            # header check then reports two lists of columns that look identical. It is a
-            # no-op for a file that has none.
+            # utf-8-sig: Excel saves CSV with a byte-order mark.
             text = path.read_text(encoding="utf-8-sig")
         except FileNotFoundError:
             return cls(origin=str(path))
@@ -221,8 +168,6 @@ class IdMap:
         try:
             header = next(reader)
         except StopIteration:
-            # An empty file, as opposed to an absent one: `semprini init` writes headers
-            # (spec 5.7 step 3), so a file with none is damaged.
             raise IdentityError(
                 [Issue(Severity.ERROR, "the ID map is empty; it must carry a header row")],
                 origin=origin,
@@ -251,8 +196,6 @@ class IdMap:
         if issues:
             raise IdentityError(issues, origin=origin)
 
-        # Built row by row so that the append-only guards apply to a file someone edited
-        # by hand exactly as they apply to a run: a pasted duplicate is caught on load.
         try:
             return cls(rows, origin=origin)
         except IdentityError as error:
@@ -262,7 +205,7 @@ class IdMap:
 
     @property
     def rows(self) -> tuple[IdMapRow, ...]:
-        """Every row, in file order — append order, which is the file's history."""
+        """Every row, in file order."""
         return tuple(self._rows)
 
     def __len__(self) -> int:
@@ -280,7 +223,7 @@ class IdMap:
         return None if row is None else row.iri
 
     def owners(self, iri: str) -> tuple[IdMapRow, ...]:
-        """Every row that claims ``iri`` — one per source that knows the object."""
+        """Every row that claims ``iri``, one per source that knows the object."""
         return tuple(self._by_iri.get(iri, ()))
 
     def source_names(self) -> frozenset[str]:
@@ -289,15 +232,10 @@ class IdMap:
     # ------------------------------------------------------------------ appending
 
     def append(self, row: IdMapRow) -> None:
-        """Add a row, refusing anything that would break identity (spec 5.4).
+        """Add a row (spec 5.4).
 
-        Two rules, and they are the reason this is a method and not a list append. One
-        ``(source_name, source_key)`` maps to one IRI for ever — even a byte-identical
-        second row is refused rather than absorbed, because collapsing it would delete a
-        line from the next compile PR that nobody asked to have deleted. And rows sharing
-        an IRI must agree on what kind of thing it is: several rows on one IRI are the
-        several sources of one object, which :class:`Registry` establishes before
-        recording them, and one object has one kind.
+        Raises :class:`IdentityError` if the key is already mapped, even identically, or
+        if rows sharing the IRI disagree about its kind.
         """
         existing = self._by_ref.get(row.ref)
         if existing is not None:
@@ -333,15 +271,8 @@ class IdMap:
     def check_append_only(self, base: IdMap) -> tuple[Issue, ...]:
         """Compare against the base revision of the same file (spec 5.4, 6.1 check 6).
 
-        A row that vanished is an IRI that has lost its meaning: whatever published it
-        still points at it, and the next run would mint a second IRI for the same object.
-        A row that was edited is the same failure written differently.
-
-        Every column is compared except ``note``, which is the one field stewards own and
-        are expected to edit. ``kind`` matters as much as ``iri`` here: it is what
-        :class:`Registry` checks a source key against when it arrives describing something
-        else, so a rewritten ``kind`` disables that guard — and for an object no source
-        reports any more, this is the only place it would ever be noticed.
+        A vanished row or an edited one is an issue. Every column is compared except
+        ``note``, which stewards own.
         """
         issues: list[Issue] = []
         for row in base:
@@ -373,12 +304,7 @@ class IdMap:
         return tuple(issues)
 
     def check_sources_are_configured(self, configured: Collection[str]) -> tuple[Issue, ...]:
-        """Every ``source_name`` in the map must still be a configured source (spec 5.4).
-
-        Renaming a source in ``config/semprini.yaml`` breaks identity resolution — every
-        lookup misses and every object mints again — so the rename is a deliberate
-        procedure that rewrites this column, not a config edit.
-        """
+        """Every ``source_name`` in the map must still be a configured source (spec 5.4)."""
         unknown = sorted(self.source_names() - frozenset(configured))
         listed = ", ".join(sorted(configured)) or "none"
         return tuple(
@@ -395,10 +321,8 @@ class IdMap:
     # ------------------------------------------------------------------ writing
 
     def dumps(self) -> str:
-        """Render the map as CSV — LF-terminated, whatever platform wrote it."""
+        """Render the map as CSV, LF-terminated on every platform (spec 5.5 rule 5)."""
         buffer = io.StringIO(newline="")
-        # csv's own default is CRLF, which would make the same map two different files on
-        # two machines and put a whole-file diff in front of a reviewer (spec 5.5 rule 5).
         writer = csv.writer(buffer, lineterminator="\n")
         writer.writerow(ID_MAP_COLUMNS)
         writer.writerows(row.values for row in self._rows)
@@ -413,7 +337,7 @@ class IdMap:
 
 
 def _row_from_csv(values: Sequence[str], location: str, issues: list[Issue]) -> IdMapRow | None:
-    """Build one row, appending an issue instead of raising, so every bad row is seen."""
+    """Build one row, appending an issue instead of raising."""
     if len(values) != len(ID_MAP_COLUMNS):
         issues.append(
             Issue(
@@ -432,9 +356,6 @@ def _row_from_csv(values: Sequence[str], location: str, issues: list[Issue]) -> 
     try:
         parsed_kind = Kind(kind)
     except ValueError:
-        # Rejected rather than carried through as text: a kind this compiler does not
-        # know means the file was written by a version that mints differently, and
-        # guessing would put the wrong namespace in front of the next new object.
         issues.append(
             Issue(
                 Severity.ERROR,
@@ -475,23 +396,11 @@ def _row_from_csv(values: Sequence[str], location: str, issues: list[Issue]) -> 
 
 
 def mint_local_name(object_: SemanticObject) -> str:
-    """The local name a new object gets, per spec 3.4.2.
+    """The local name a new object gets, per spec 3.4.2; used once per object (spec 5.4).
 
-    Used **once** per object, on the run that first sees it; the ID map answers every
-    time after that (spec 5.4). That is the whole point of this being a fallback: the
-    rules below can change without any instance's existing IRIs moving.
-
-    Three rules, one per row of spec 3.4.2:
-
-    - A source that provides a stable UUID has already done the work — the UUID is used
-      as the local name, normalized to its canonical lower-case form so that a source
-      switching to upper case does not mint a second IRI.
-    - A scheme takes its slug, assigned once at creation and opaque thereafter: renaming
-      the glossary does not rename the scheme.
-    - Anything else derives a UUIDv5 from :data:`NAMESPACE_SEMPRINI`, over the scheme
-      slug and the source's row key for a taxonomy value, and over the source name and
-      key otherwise. Deriving rather than randomizing is what makes two machines
-      compiling the same input agree.
+    A scheme takes its slug. A source-provided UUID is used as is, lower-cased. Anything
+    else is a UUIDv5 under :data:`NAMESPACE_SEMPRINI` over the scheme slug and row key for
+    a taxonomy value, and over the source ref otherwise.
     """
     if isinstance(object_, Scheme):
         return _checked_slug(object_.slug, object_)
@@ -509,9 +418,7 @@ def mint_local_name(object_: SemanticObject) -> str:
                     )
                 ]
             )
-        # Sorted, not "the first one given": arrival order must not reach an IRI. A value
-        # in several taxonomies is unusual, and the map freezes whichever answer the
-        # first run gave anyway.
+        # Sorted: arrival order must not reach an IRI.
         name = f"{sorted(object_.schemes)[0]}|{ref.key}"
         return str(uuid5(NAMESPACE_SEMPRINI, name))
 
@@ -522,14 +429,9 @@ def mint_local_name(object_: SemanticObject) -> str:
 
 
 def _as_uuid(key: str) -> UUID | None:
-    """``key`` as a UUID if it is written as one, else ``None``.
+    """``key`` as a UUID if written in canonical form, else ``None``.
 
-    Deliberately narrower than ``UUID()``, which also accepts ``urn:uuid:`` prefixes,
-    braces and bare 32-hex. Two of those matter. A 32-digit numeric business code is not
-    a UUID, and reading one as though it were would freeze a local name the source never
-    issued; and the spec's rule is about what the *source* provides (spec 3.4.2), which a
-    canonical UUID is evidence of and an arbitrary hex string is not. Anything not in this
-    form is still minted — it takes the derived UUIDv5 path, which is equally stable.
+    Narrower than ``UUID()``: a bare 32-digit code is a business code, not a UUID (spec 3.4.2).
     """
     if _CANONICAL_UUID.fullmatch(key) is None:
         return None
@@ -540,15 +442,8 @@ def _as_uuid(key: str) -> UUID | None:
 
 
 def _checked_slug(name: str, object_: SemanticObject) -> str:
-    """Refuse a scheme slug that must not be frozen into an IRI.
-
-    A slug reaches here straight from an adapter's own configuration, unvalidated by
-    ``config`` because the ``config:`` subtree belongs to the adapter (spec 5.2). It is
-    held to the same shape as every other slug in an instance — an instance id, a source
-    name — for two reasons beyond the IRI itself: ``Sales`` and ``sales`` would otherwise
-    be two permanent IRIs for one taxonomy that no collision check could tell apart, and
-    the slug names a file in ``generated/`` (spec 4.2), where a case-insensitive
-    filesystem would make that same pair one file.
+    """Refuse a scheme slug that is not a slug; it would be frozen into an IRI and a file name (spec
+    3.4.2, 4.2).
     """
     if not is_slug(name):
         raise IdentityError(
@@ -571,9 +466,7 @@ def _checked_slug(name: str, object_: SemanticObject) -> str:
 class Registry:
     """Resolves objects to IRIs: the ID map first, minting only on a miss (spec 5.4).
 
-    Held for the length of a run. Rows accumulate in memory and reach the file only when
-    :meth:`save` is called, so a ``--dry-run`` or a failure part-way through leaves the
-    instance's identity state exactly as it was.
+    New rows accumulate in memory and reach the file only in :meth:`save`.
     """
 
     def __init__(
@@ -587,25 +480,17 @@ class Registry:
         self.id_map = id_map
         self.base_iri = base_iri
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
-        """The instance :meth:`save` writes back to — remembered rather than resolved
-        again at save time, so that the map cannot be read from one instance and written
-        to another."""
+        """The instance :meth:`save` writes back to."""
 
         self.today = datetime.date.today() if today is None else today
-        """The date new rows record as ``first_seen``. Injected so that a test pins it —
-        and so that nothing else in the compiler reads a clock."""
+        """The date new rows record as ``first_seen``. Injected so that a test can pin it."""
 
         self._namespaces = serialize.namespaces(base_iri)
         self._minted: list[IdMapRow] = []
 
     @classmethod
     def load(cls, config: InstanceConfig, *, today: datetime.date | None = None) -> Registry:
-        """The registry for a configured instance, with its namespace lock verified.
-
-        Verification happens here rather than being left to the caller: a registry that
-        minted under a base IRI the lock does not name is the failure the lock exists to
-        prevent, and there must be no way to obtain one (spec 3.4).
-        """
+        """The registry for a configured instance, with its namespace lock verified (spec 3.4)."""
         verify_namespace_lock(config)
         return cls(
             IdMap.load(config.repo_root),
@@ -616,7 +501,7 @@ class Registry:
 
     @property
     def minted(self) -> tuple[IdMapRow, ...]:
-        """Rows this run added — what the run report counts as new objects (spec 5.6)."""
+        """Rows this run added (spec 5.6)."""
         return tuple(self._minted)
 
     def iri(self, ref: SourceRef) -> str | None:
@@ -626,14 +511,8 @@ class Registry:
     def resolve(self, model: InternalModel) -> Mapping[SemanticObject, str]:
         """Resolve every object in ``model``, minting and recording what is new.
 
-        Walks the model in its own order, which :func:`~semprini.model.merge_models` has
-        already made independent of the order adapters ran in — so two machines mint the
-        same IRIs and append the same rows in the same order (spec 5.5).
-
-        The result is checked to be **injective**: distinct objects get distinct IRIs.
-        :meth:`iri_for` cannot see that on its own — a lookup that hits returns a recorded
-        IRI without ever consulting another object — so the one place the question can be
-        asked is here, over the whole model.
+        Walks the model in its own, already deterministic, order (spec 5.5). Raises
+        :class:`IdentityError` if two objects resolve to one IRI.
         """
         resolved = {object_: self.iri_for(object_) for object_ in model.objects}
         self._check_iris_are_unique(resolved)
@@ -642,17 +521,8 @@ class Registry:
     def _check_iris_are_unique(self, resolved: Mapping[SemanticObject, str]) -> None:
         """Refuse two objects that resolved to one IRI (spec 5.4).
 
-        Reachable only through the ID map, and only from a history that was once correct:
-        several rows share an IRI exactly when several sources described one object, which
-        is legitimate and is what :meth:`iri_for` records. If the cross-reference that
-        merged them later disappears from the sources — a mapping table edited, an
-        adapter's alias dropped — those rows are still there and the two objects that
-        arrive now both resolve onto the one IRI. Nothing downstream would notice: the
-        graph builder would emit a single node wearing two labels, and the collision would
-        look like a modelling mistake rather than a lost identity.
-
-        The merge register is where a steward says these are one object, or the sources
-        are where they say they are two; the compiler decides neither (spec 5.4).
+        Happens when the cross-reference that once merged two source keys onto one IRI
+        has since left the sources. The steward settles it; the compiler does not.
         """
         claimants: dict[str, list[SemanticObject]] = {}
         for object_, iri in resolved.items():
@@ -667,8 +537,6 @@ class Registry:
                 f"the sources, or record the merge in mappings/merges.csv",
                 str(objects[0].refs[0]),
             )
-            # Sorted so that the report is the same on every machine, whatever order the
-            # model happened to be walked in.
             for iri, objects in sorted(claimants.items())
             if len(objects) > 1
         ]
@@ -682,9 +550,7 @@ class Registry:
 
         iris = {row.iri for row in known.values()}
         if len(iris) > 1:
-            # The sources agree this is one object; the map already says it is two. Only
-            # a steward can say which IRI survives, and the merge register is where that
-            # is recorded (spec 5.4) — the compiler must not pick.
+            # The sources say one object, the map says two; a steward picks (spec 5.4).
             raise IdentityError(
                 [
                     Issue(
@@ -716,9 +582,7 @@ class Registry:
         iri = self._namespaces[object_.kind.prefix] + mint_local_name(object_)
         owners = self.id_map.owners(iri)
         if owners:
-            # Two different objects claiming one IRI: two schemes given one slug, two
-            # taxonomy rows given one code. Caught here rather than in the output, where
-            # it would look like one object that mysteriously has two labels.
+            # Two schemes given one slug, or two taxonomy rows given one code.
             raise IdentityError(
                 [
                     Issue(
@@ -748,12 +612,7 @@ class Registry:
                 )
 
     def save(self, repo_root: Path | None = None) -> Path:
-        """Write the ID map back to the instance it was read from (spec 5.1).
-
-        Defaults to :attr:`repo_root` rather than to the working directory: reading one
-        instance's map and writing it into another would lose every row the run appended
-        and silently re-mint them on the next one.
-        """
+        """Write the ID map back to the instance it was read from (spec 5.1)."""
         return self.id_map.save(self.repo_root if repo_root is None else repo_root)
 
 
@@ -762,18 +621,14 @@ class Registry:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NamespaceLock:
-    """``mappings/namespace.lock`` — the frozen base IRI (spec 3.4.4).
-
-    Written once at bootstrap and compared on every subsequent run. It is the only file
-    an instance holds whose purpose is to refuse a change.
-    """
+    """``mappings/namespace.lock`` — the frozen base IRI (spec 3.4.4). Written once at
+    bootstrap, compared on every run."""
 
     base_iri: str
     instance_id: str
     ontology_version: str
-    """The metamodel version in force when the lock was written. Recorded, not compared:
-    upgrading the ontology is expected and is what the manifest's drift check governs
-    (spec 6.1 check 3). Rewriting the base IRI is not."""
+    """The metamodel version when the lock was written. Recorded, not compared (spec 6.1 check 3).
+    """
 
     date: datetime.date
 
@@ -782,13 +637,9 @@ class NamespaceLock:
         """Read the lock, or explain that the instance has none (exit code 2)."""
         path = (Path.cwd() if repo_root is None else Path(repo_root)) / NAMESPACE_LOCK_PATH
         try:
-            # utf-8-sig for the same reason as the ID map: an editor's byte-order mark
-            # would otherwise reach json.loads and be reported as invalid JSON at
-            # character 0, which says nothing about how to fix it.
             text = path.read_text(encoding="utf-8-sig")
         except FileNotFoundError:
-            # Refused, not assumed absent: without the lock nothing stops a base IRI
-            # edit, and "delete the file" must not be a way around a permanent decision.
+            # Deleting the file must not be a way around a permanent decision.
             raise NamespaceLockError(
                 [
                     Issue(

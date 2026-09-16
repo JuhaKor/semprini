@@ -1,21 +1,8 @@
 """Instance configuration — ``config/semprini.yaml`` (spec 5.1).
 
-The first thing every command does, and therefore the first thing that can go wrong. A
-mistake here is a *configuration* error (exit code 2), reported with the key that caused
-it: an instance operator editing YAML in a CI log deserves ``sources[1].name`` and not a
-traceback from three stages later.
-
-Two rules shape the module.
-
-*Credentials never enter configuration* (spec 5.1). A source names an environment
-variable — ``token_env`` — and the value is read from the environment at fetch time by
-:meth:`SourceConfig.secret`. Nothing in this module stores a secret, so a config object
-is safe to log, and a config file with a token written into it is **rejected** rather
-than quietly honoured.
-
-*Everything reportable is reported.* Validation collects issues rather than raising at
-the first one, so an operator fixing a fresh config sees every problem in one run
-instead of one per attempt.
+A mistake here is a configuration error (exit code 2) located by the key that caused it,
+and every problem is reported at once. Credentials never enter configuration: a source
+names an environment variable and :meth:`SourceConfig.secret` reads it at fetch time.
 """
 
 from __future__ import annotations
@@ -47,8 +34,7 @@ __all__ = [
 ]
 
 CONFIG_PATH = Path("config") / "semprini.yaml"
-"""Where an instance keeps its configuration (spec 4.2). Commands operate on the
-working directory (spec 5.1), so this is always relative to the repository root."""
+"""Where an instance keeps its configuration, relative to the repository root (spec 4.2, 5.1)."""
 
 DEFAULT_LANGUAGE = "en"
 """Applied where a label carries no language of its own (spec 5.5 rule 6, 11 #5)."""
@@ -57,36 +43,25 @@ _TOP_LEVEL_KEYS = frozenset({"semprini", "sources"})
 _INSTANCE_KEYS = frozenset({"base_iri", "instance_id", "default_language"})
 _SOURCE_KEYS = frozenset({"adapter", "name", "config"})
 
-# A slug: what an instance id and a source name may look like. Both end up in file
-# names, IRIs and the ID map's columns, so they stay to characters that need no
-# escaping anywhere (spec 5.4).
 SLUG_PATTERN = r"[a-z0-9]+([-_][a-z0-9]+)*"
-"""The slug rule as a pattern, for the one caller that needs it as text rather than as a
-question: a scheme's IRI ends in its slug, and the SHACL shape that says so (spec 6.1.5)
-carries a regex, not a function. Written without ``(?:`` so that it stays valid in the
-XPath regex dialect SHACL's ``sh:pattern`` is defined against."""
+"""What an instance id, a source name and a scheme slug may look like (spec 5.4). Also
+used as ``sh:pattern`` (spec 6.1.5), so written without ``(?:``."""
 
 _SLUG = re.compile(SLUG_PATTERN)
 
-# The shape of an environment variable name, as opposed to the value of one. A
-# `token_env` holding `sk-live-...` is a credential written into configuration by an
-# operator who misread the field, which is the mistake this catches.
+# The shape of an environment variable name, as opposed to the value of one.
 _ENV_VAR_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
-# Key segments that name a credential rather than an address. Matched per segment so
-# `base_url` and `source_key` pass while `api_key` and `auth_token` do not.
+# Key segments that name a credential. Per segment, so `source_key` passes and `api_key` does not.
 _CREDENTIAL_WORDS = frozenset(
     {"token", "secret", "password", "passwd", "pwd", "credential", "credentials", "apikey"}
 )
 _CREDENTIAL_PAIRS = frozenset({("api", "key"), ("access", "key"), ("private", "key")})
 
-# The escape hatch, and the only one: a key ending in `_env` names an environment
-# variable, so `token_env` is exactly how a credential is *supposed* to be configured.
+# A key ending in `_env` names an environment variable, which is how a credential is configured.
 _ENV_SUFFIX = "env"
 
-# Key separators. `accessToken` has to split the same way `access_token` does, or the
-# guard would depend on an adapter author's naming style rather than on what the key
-# means.
+# Key separators; `accessToken` splits the same way `access_token` does.
 _KEY_SEPARATOR = re.compile(r"[-_]")
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
@@ -94,29 +69,14 @@ _MERGE_TAG = "tag:yaml.org,2002:merge"
 
 
 def is_slug(value: str) -> bool:
-    """Whether ``value`` is a slug: lower-case letters, digits, ``-`` and ``_``.
-
-    Public because a *scheme* slug is validated elsewhere — it lives in an adapter's own
-    ``config:`` subtree, which this module passes through uninterpreted (spec 5.2), and is
-    checked where it becomes an IRI local name (spec 3.4.2). One definition, so that an
-    instance id, a source name and a scheme slug cannot mean three different things.
-    """
+    """Whether ``value`` is a slug: lower-case letters, digits, ``-`` and ``_`` (spec 3.4.2)."""
     return _SLUG.fullmatch(value) is not None
 
 
 def escapes_the_instance(raw: str) -> bool:
-    """Whether a configured path could reach outside the instance repository.
+    """Whether a configured path could reach outside the instance repository (spec 4.2, 5.3).
 
-    Public for the same reason :func:`is_slug` is: several adapters configure a file to
-    read (spec 5.3), and every one of them has to refuse a path leading out of the
-    repository. Source files are committed with the instance and reviewed with it
-    (spec 4.2), so a path pointing elsewhere reads content nobody reviewed.
-
-    Judged under **both** path flavours, not the running platform's. ``config/semprini.yaml``
-    is committed and travels: a path written on one operating system is validated on
-    whatever CI runs, and ``/etc/passwd`` is not absolute to :class:`pathlib.PureWindowsPath`
-    while ``C:\\keys`` is not absolute to :class:`pathlib.PurePosixPath`. Judging only the
-    local flavour makes the guard depend on where it happens to run.
+    Judged under both POSIX and Windows path rules, since the configuration travels.
     """
     for flavour in (PurePosixPath, PureWindowsPath):
         candidate = flavour(raw)
@@ -128,11 +88,7 @@ def escapes_the_instance(raw: str) -> bool:
 
 
 class ConfigError(IssueError):
-    """Configuration the compiler refuses to run on — CLI exit code 2 (spec 5.1).
-
-    Carries every issue found, not just the first: a half-fixed config file that fails
-    again on the next key wastes a CI round trip per mistake.
-    """
+    """Configuration the compiler refuses to run on — CLI exit code 2 (spec 5.1)."""
 
     noun = "configuration error"
 
@@ -142,23 +98,14 @@ class SourceConfig:
     """One entry of the ``sources:`` list (spec 5.1)."""
 
     adapter: str
-    """Entry-point name of an installed adapter — the ``semprini.adapters`` group
-    (spec 5.2)."""
+    """Entry-point name of an installed adapter (spec 5.2)."""
 
     name: str
-    """The source name. Appears in ``sem:sourceRef`` and in the ID map, and is assigned
-    once and **never** changed or reused (spec 5.1, 5.4)."""
+    """The source name, as it appears in ``sem:sourceRef`` and the ID map; never changed
+    or reused (spec 5.1, 5.4)."""
 
     settings: Mapping[str, Any] = field(default_factory=dict, hash=False)
-    """The adapter's own ``config:`` subtree, passed through uninterpreted (spec 5.2).
-
-    Deep-frozen — nested mappings are read-only and nested sequences are tuples — so an
-    adapter cannot edit configuration that a later stage, or the run report, still reads.
-
-    Excluded from the generated ``__hash__`` (but not from ``__eq__``) for the same
-    reason as ``SemanticObject.source_refs``: a mapping is unhashable, and hashing it
-    would leave a class advertised as frozen that cannot go in a set or key a dict.
-    """
+    """The adapter's own ``config:`` subtree, uninterpreted and deep-frozen (spec 5.2)."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "settings", _freeze(dict(self.settings)))
@@ -166,15 +113,10 @@ class SourceConfig:
     def secret(
         self, setting: str = "token_env", *, environ: Mapping[str, str] | None = None
     ) -> str | None:
-        """Read the credential whose *variable name* is configured under ``setting``.
+        """Read the credential whose variable name is configured under ``setting``.
 
-        Returns ``None`` when the source configures no such variable — plenty of sources
-        need no credential. Raises :class:`ConfigError` when one is named but unset in
-        the environment, since that is a configuration mistake (exit 2) and not an
-        unreachable source (exit 3).
-
-        The value is returned, never stored: it exists only in the caller's frame, so no
-        config object, run report or exception message can leak it.
+        Returns ``None`` when no variable is configured. Raises :class:`ConfigError` when
+        one is named but unset. The value is returned, never stored.
         """
         variable = self.settings.get(setting)
         if variable is None:
@@ -188,8 +130,6 @@ class SourceConfig:
                         Severity.ERROR,
                         f"environment variable {variable!r} is unset or empty; it holds "
                         f"the credential for source {self.name!r}",
-                        # Named, not indexed: a source knows its name and not its
-                        # position in a list it was loaded from.
                         f"sources.{self.name}.config.{setting}",
                     )
                 ]
@@ -240,10 +180,7 @@ class InstanceConfig:
 def load(
     repo_root: Path | None = None, *, known_adapters: Collection[str] | None = None
 ) -> InstanceConfig:
-    """Load and validate ``<repo_root>/config/semprini.yaml``.
-
-    Raises :class:`ConfigError` — the CLI's exit code 2 — for anything unusable.
-    """
+    """Load and validate ``<repo_root>/config/semprini.yaml``. Raises :class:`ConfigError`."""
     root = Path.cwd() if repo_root is None else Path(repo_root)
     path = root / CONFIG_PATH
     try:
@@ -259,9 +196,6 @@ def load(
             ]
         ) from None
     except UnicodeDecodeError:
-        # A ValueError, not an OSError, so the handler below would miss it — and an
-        # editor that saved the file in the system codepage is an ordinary mistake, not
-        # a reason to show a traceback.
         raise ConfigError(
             [
                 Issue(
@@ -285,12 +219,10 @@ def loads(
     repo_root: Path | None = None,
     known_adapters: Collection[str] | None = None,
 ) -> InstanceConfig:
-    """Validate configuration held in a string.
+    """Validate configuration held in a string. Raises :class:`ConfigError`.
 
-    ``known_adapters`` is injected rather than discovered: entry-point discovery is the
-    adapter subsystem's job (spec 5.2, task D1), and this module must not grow a second
-    copy of it. Passing ``None`` skips the adapter-name check — which is what a bare
-    ``semprini check`` does today, since no adapter is registered yet.
+    ``known_adapters`` is injected rather than discovered (spec 5.2); ``None`` skips the
+    adapter-name check.
     """
     document = _parse(text, origin)
     issues: list[Issue] = []
@@ -318,26 +250,19 @@ def loads(
 
 
 class _StrictLoader(yaml.SafeLoader):
-    """``SafeLoader`` that refuses duplicate mapping keys.
-
-    YAML's own rule is last-one-wins, so two ``name:`` keys in one source would silently
-    discard the first — in a file whose whole purpose is to say which sources exist.
-    """
+    """``SafeLoader`` that refuses duplicate mapping keys instead of letting the last one win."""
 
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
         seen: set[Any] = set()
         for key_node, _ in node.value:
             if key_node.tag == _MERGE_TAG:
-                # `<<: *anchor` is not a key: SafeConstructor expands it, and overriding
-                # a merged value with an explicit one is the whole point of a merge, so
-                # it must not read here as a duplicate.
+                # `<<: *anchor` is expanded by SafeConstructor and is not a duplicate.
                 continue
             key = self.construct_object(key_node, deep=deep)
             try:
                 duplicate = key in seen
             except TypeError:
-                # An unhashable key (`? [a, b]`). SafeConstructor refuses it with a
-                # proper YAML error; raising TypeError here would escape every handler.
+                # An unhashable key; SafeConstructor refuses it with a proper YAML error.
                 continue
             if duplicate:
                 raise yaml.constructor.ConstructorError(
@@ -387,11 +312,7 @@ def _section(document: Mapping[str, Any], key: str, issues: list[Issue]) -> Mapp
 def _reject_unknown_keys(
     mapping: Mapping[str, Any], allowed: Collection[str], prefix: str, issues: list[Issue]
 ) -> None:
-    """Unknown keys are errors, not extras.
-
-    A misspelled key that is merely ignored is the worst kind of configuration bug: the
-    run succeeds and does the wrong thing.
-    """
+    """Unknown keys are errors, not extras."""
     for key in mapping:
         if key not in allowed:
             listed = ", ".join(sorted(allowed))
@@ -414,8 +335,6 @@ def _base_iri(instance: Mapping[str, Any], issues: list[Issue]) -> str | None:
         issues.append(Issue(Severity.ERROR, "the base IRI must be a string", location))
         return None
     try:
-        # Validated by the serializer's own rule, so a base IRI that loads here cannot
-        # fail when the first file is written (spec 3.1, 5.5).
         serialize.namespaces(value)
     except ValueError as error:
         issues.append(Issue(Severity.ERROR, str(error), location))
@@ -424,7 +343,7 @@ def _base_iri(instance: Mapping[str, Any], issues: list[Issue]) -> str | None:
 
 
 def _slug(mapping: Mapping[str, Any], key: str, location: str, issues: list[Issue]) -> str | None:
-    """A validated slug, or ``None`` — reported, and not to be used further."""
+    """A validated slug, or ``None`` after reporting."""
     value = mapping.get(key)
     if value is None:
         issues.append(Issue(Severity.ERROR, f"'{key}' is required", location))
@@ -488,8 +407,6 @@ def _sources(
             )
         if name is not None:
             if name in seen:
-                # Two sources under one name would share ID-map rows and sem:sourceRef
-                # values, so their objects would merge into each other (spec 5.4).
                 issues.append(
                     Issue(
                         Severity.ERROR,
@@ -517,11 +434,7 @@ def _reject_inline_credentials(
 ) -> None:
     """Refuse a credential written into the file, at any depth (spec 5.1).
 
-    Keyed on the *name*, not on the value: no heuristic recognizes every token, but the
-    operator who pastes one has to put it under a key that says what it is. The one legal
-    way to configure a credential — a ``*_env`` key naming an environment variable — is
-    checked too, since a token pasted into ``token_env`` is the same mistake wearing the
-    right key.
+    Judged by key name, not value. A ``*_env`` key must hold a variable name.
     """
     for key, value in settings.items():
         location = f"{prefix}.{key}"
@@ -529,8 +442,7 @@ def _reject_inline_credentials(
         names_a_credential = any(segment in _CREDENTIAL_WORDS for segment in segments) or any(
             pair in _CREDENTIAL_PAIRS for pair in itertools.pairwise(segments)
         )
-        # `token_env` names a variable; a bare `env: staging` is an ordinary setting that
-        # happens to share the word, and must not be forced into variable-name shape.
+        # A bare `env: staging` is an ordinary setting, not a variable name.
         names_a_variable = len(segments) > 1 and segments[-1] == _ENV_SUFFIX
         if names_a_credential and not names_a_variable:
             issues.append(
@@ -554,11 +466,7 @@ def _reject_inline_credentials(
 
 
 def _scan_for_credentials(value: Any, location: str, issues: list[Issue]) -> None:
-    """Follow a value into whatever nests below it.
-
-    Every container is descended, not only a mapping directly under a mapping: a
-    credential is no less committed for sitting two lists down.
-    """
+    """Follow a value into every container nested below it."""
     if isinstance(value, dict):
         _reject_inline_credentials(value, location, issues)
     elif isinstance(value, list):

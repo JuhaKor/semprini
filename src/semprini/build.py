@@ -1,25 +1,9 @@
 """Internal model → the graphs that become ``generated/`` (spec 3.2, 3.3, 4.2).
 
-The stage where the compiler stops thinking in source systems and starts thinking in RDF.
-Everything upstream — adapters, merging, identity — exists to hand this module objects
-that already know what they are and which IRI they own; everything downstream is bytes.
-
-Three things here are load-bearing.
-
-*One triple is written in exactly one place.* Output is partitioned by scheme (spec 4.2),
-and an object belongs to the file of its first scheme rather than to every file it could
-appear in. Duplicating a subject across files would still load to the same graph, but it
-would make one changed label several changed hunks, and PR diffs are the governance
-interface (spec 1.2).
-
-*``dcterms:modified`` reflects content, not runs.* A node's date is carried forward from
-the previous output unless its other statements actually changed (spec 3.3). Without that,
-every scheduled compile would rewrite every date and produce a diff no human caused —
-which would train reviewers to skim exactly the file they are meant to read.
-
-*Nothing here decides identity or bytes.* IRIs come from the registry (spec 5.4) and
-ordering from the canonical serializer (spec 5.5); this module chooses statements and
-files, and nothing else.
+Chooses statements and files, nothing else: IRIs come from the registry (spec 5.4) and
+bytes from the canonical serializer (spec 5.5). Output is partitioned by scheme, every
+triple is written in exactly one file (spec 4.2), and ``dcterms:modified`` is carried
+forward unless a node's other statements changed (spec 3.3).
 """
 
 from __future__ import annotations
@@ -78,14 +62,11 @@ GENERATED_DIR = Path("generated")
 """Machine-owned, overwritten wholesale on every run (spec 4.3)."""
 
 ONTOLOGY_FILE = "ontology.ttl"
-"""A verbatim copy of the pinned metamodel, so that a consumer can load an instance from
-Git alone without installing the package (spec 4.2)."""
+"""A verbatim copy of the pinned metamodel (spec 4.2)."""
 
 SEM = serialize.SEM_NAMESPACE
 
-# The metamodel terms this module emits (spec 3.3). Written out rather than reached
-# through a namespace object so that a typo is an import-time name error here, not a
-# silently invented IRI in an instance's committed output.
+# The metamodel terms this module emits (spec 3.3).
 SEM_ATTRIBUTE_OF = URIRef(f"{SEM}attributeOf")
 SEM_ENUMERATES = URIRef(f"{SEM}enumerates")
 SEM_RELATES_TO = URIRef(f"{SEM}relatesTo")
@@ -100,15 +81,11 @@ SEM_ATTRIBUTE = URIRef(f"{SEM}Attribute")
 SEM_RELATIONSHIP = URIRef(f"{SEM}Relationship")
 
 STATUS_ACTIVE = "active"
-"""The status of every node this stage builds from the model: a source still reports it.
-
-Deprecation is not decided here. Whether an object is gone is a question about the *union*
-of all configured sources and about the state this run replaces (spec 3.5, 5.4), which is
-:mod:`semprini.lifecycle`'s to answer; it arrives as :class:`CarriedNode`s."""
+"""The status of every node built from the model. Deprecation is :mod:`semprini.lifecycle`'s
+decision and arrives as :class:`CarriedNode`s (spec 3.5, 5.4)."""
 
 STATUS_DEPRECATED = "deprecated"
-"""The status lifecycle gives a node no source reports any more (spec 3.5). Written here
-beside its opposite so that the two values have one definition between them."""
+"""The status lifecycle gives a node no source reports any more (spec 3.5)."""
 
 _CLASSES: Mapping[type[SemanticObject], URIRef] = {
     Entity: SEM_ENTITY,
@@ -120,31 +97,21 @@ _CLASSES: Mapping[type[SemanticObject], URIRef] = {
 
 
 class BuildError(IdentityError):
-    """The model cannot be expressed as RDF — CLI exit code 1 (spec 5.1).
-
-    An :class:`~semprini.identity.IdentityError` because it is the same category of
-    failure and the same exit code: the run reached a state no output can honestly
-    represent, and it names the source ref that caused it rather than failing in the file.
-    """
+    """The model cannot be expressed as RDF — CLI exit code 1 (spec 5.1)."""
 
     noun = "build error"
 
 
 @dataclass(frozen=True, slots=True)
 class OutputFile:
-    """One file of ``generated/``, rendered but not yet written.
-
-    Rendered here rather than at write time so that ``--dry-run`` and the determinism
-    check see exactly the bytes a real run would commit, without a filesystem in the way
-    (spec 5.1, 6.1 check 7).
+    """One file of ``generated/``, rendered to its exact bytes but not yet written (spec 5.1, 6.1
+    check 7).
     """
 
     name: str
     text: str
     graph: Graph | None = None
-    """The graph ``text`` was serialized from — ``None`` for the verbatim ontology copy,
-    which is not serializer output and must never be round-tripped through one (spec 3.1:
-    the published document carries its term comments)."""
+    """The graph ``text`` was serialized from; ``None`` for the verbatim ontology copy."""
 
     @property
     def path(self) -> Path:
@@ -155,29 +122,21 @@ class OutputFile:
 class CarriedNode:
     """One node's statements as the previous run wrote them, re-emitted (spec 3.5).
 
-    A node no source reports any more is **retained**, not dropped: whatever published its
-    IRI still points at it, so the compiler goes on writing its last-known statements and
-    marks it deprecated. It is not in the model — no adapter returned it — so it cannot be
-    built from one, and it arrives here already decided.
-
-    :func:`semprini.lifecycle.plan` produces these, which is where every judgement lives:
-    whether the node is really gone (a question about the union of all configured sources,
-    never one of them) and what the merge register says replaces it. This stage only
-    writes them.
+    Produced by :func:`semprini.lifecycle.plan`, which makes every judgement; this stage
+    only writes them.
     """
 
     file: str
-    """The ``generated/`` file that held these statements. A deprecated node stays where
-    it was, so its deprecation is one changed line rather than a move between files."""
+    """The ``generated/`` file that held these statements; a deprecated node stays put."""
 
     subject: URIRef
     statements: frozenset[tuple[URIRef, Node]]
-    """Without ``dcterms:modified``: the date is recomputed like every other node's, so a
-    node whose statements did not move keeps the date it had (spec 3.3)."""
+    """Without ``dcterms:modified``, which is recomputed like every other node's (spec 3.3)."""
 
     defines: bool
-    """Whether this is the block that *describes* the node — the one carrying its label,
-    and so the one dated. A node's statements can span two files (spec 4.2)."""
+    """Whether this block describes the node, carrying its label; only that block is dated (spec
+    4.2).
+    """
 
 
 def build(
@@ -191,15 +150,10 @@ def build(
 ) -> tuple[OutputFile, ...]:
     """Turn a resolved model into the files ``generated/`` should hold (spec 4.2).
 
-    ``previous`` is the union of the instance's current generated graphs, used only to
-    carry ``dcterms:modified`` forward (spec 3.3); pass ``None`` on a first compile.
-    ``today`` is injected so that a test pins it and so that nothing but this stage reads
-    a clock.
-
-    ``carried`` are the nodes lifecycle decided to retain (spec 3.5): objects no
-    configured source reports any more. They are written alongside what the model produced
-    and are dated by the same rule, so a deprecation is a changed ``sem:status`` line and
-    nothing else.
+    ``previous`` is the union of the current generated graphs, used to carry
+    ``dcterms:modified`` forward (spec 3.3); ``None`` on a first compile. ``today`` is the
+    only clock. ``carried`` are the nodes lifecycle retained (spec 3.5), written and dated
+    by the same rules. Raises :class:`BuildError` with every problem found.
     """
     builder = _Builder(
         model=model,
@@ -213,21 +167,14 @@ def build(
 
 
 def read_previous_files(repo_root: Path | None = None) -> Mapping[str, Graph]:
-    """Parse each of the instance's generated Turtle files into its own graph.
+    """Parse each generated Turtle file into its own graph, keyed by file name (spec 3.5).
 
-    Keyed by file name, because lifecycle needs to know *where* a statement was written:
-    a node it retains stays in the file that held it (spec 3.5), and a node that moved
-    between files would otherwise be deleted from one and added to another with nothing
-    in the diff tying the two hunks together.
-
-    ``generated/ontology.ttl`` is skipped: it is the metamodel, identical in every
-    deployment, and none of its subjects is an instance's to date or to deprecate.
+    ``ontology.ttl`` is skipped. Raises :class:`BuildError` for a file that does not parse.
     """
     root = Path.cwd() if repo_root is None else Path(repo_root)
     directory = root / GENERATED_DIR
     graphs: dict[str, Graph] = {}
     if not directory.is_dir():
-        # A first compile, or an instance whose generated/ has not been created yet.
         return graphs
     issues: list[Issue] = []
     for path in sorted(directory.glob("*.ttl")):
@@ -237,10 +184,7 @@ def read_previous_files(repo_root: Path | None = None) -> Mapping[str, Graph]:
         try:
             graph.parse(path, format="turtle")
         except (OSError, UnicodeDecodeError, SyntaxError) as error:
-            # Reported as an issue rather than left to surface as an rdflib traceback:
-            # unparseable output in generated/ is exactly the hand-edit spec 4.3 exists to
-            # catch, and the operator needs the file named. rdflib raises its own
-            # ``BadSyntax``, which subclasses SyntaxError.
+            # rdflib's BadSyntax subclasses SyntaxError.
             issues.append(
                 Issue(Severity.ERROR, f"cannot read generated output: {error}", str(path))
             )
@@ -252,13 +196,7 @@ def read_previous_files(repo_root: Path | None = None) -> Mapping[str, Graph]:
 
 
 def union_of(graphs: Iterable[Graph]) -> Graph:
-    """Every graph loaded together — what a consumer of the instance sees.
-
-    Public because a run needs the previous state both ways at once: per file for
-    lifecycle, and unioned for ``dcterms:modified`` and the report. Parsing the directory
-    twice to get both would be the kind of waste that only shows up on the instances big
-    enough to care.
-    """
+    """Every graph loaded together."""
     union = Graph()
     for graph in graphs:
         union += graph
@@ -266,29 +204,15 @@ def union_of(graphs: Iterable[Graph]) -> Graph:
 
 
 def read_previous(repo_root: Path | None = None) -> Graph:
-    """Parse the instance's current generated output into one graph (spec 3.3).
-
-    One graph, because a subject's statements are deliberately spread across files — a
-    ``sem:relatesTo`` shortcut sits with the relationship that produced it, not with the
-    entity it is about — and "did this node change" is a question about the node, not
-    about a file. Lifecycle asks the other question and reads
-    :func:`read_previous_files` instead.
-    """
+    """Parse the instance's current generated output into one graph (spec 3.3)."""
     return union_of(read_previous_files(repo_root).values())
 
 
 def statements_by_subject(graph: Graph) -> dict[URIRef, set[tuple[URIRef, Node]]]:
-    """Group a graph's statements by subject, **excluding** ``dcterms:modified``.
+    """Group a graph's statements by subject, excluding ``dcterms:modified``.
 
-    The one definition of "what is said about this node", shared by the
-    ``dcterms:modified`` carry-forward below and by the run report's new/changed counts
-    (spec 5.6). Two answers to one question would eventually disagree, and the way they
-    would disagree is the worst available: a report saying nothing changed beside a file
-    whose dates all moved.
-
-    The date is excluded because including it makes the comparison meaningless — a node
-    compared against its own previous state *including* its date differs from itself
-    whenever the previous run happened to be a different day.
+    The one definition of "what is said about this node", shared by the date
+    carry-forward and the run report (spec 5.6).
     """
     statements: dict[URIRef, set[tuple[URIRef, Node]]] = {}
     for subject, predicate, object_ in graph:
@@ -301,24 +225,10 @@ def statements_by_subject(graph: Graph) -> dict[URIRef, set[tuple[URIRef, Node]]
 
 
 def unchanged(files: Sequence[OutputFile], repo_root: Path | None = None) -> bool:
-    """Whether every produced file is already on disk with exactly these bytes.
+    """Whether every produced file is already on disk with exactly these bytes (spec 5.6).
 
-    What decides whether a run writes ``generated/.report.md`` at all (spec 5.6), and so
-    whether a scheduled compile that found nothing new opens a pull request containing
-    only a report saying it found nothing new.
-
-    **Pass the manifest's own file, not only the Turtle.** It carries the compiler and
-    ontology versions (spec 4.3), so a recompile after a plane upgrade produces identical
-    Turtle and a *different* manifest — a real change, and one whose report must be
-    rewritten. Comparing the Turtle alone would commit a manifest saying 0.2.0 produced
-    these files beside a report whose header says 0.1.0 did, which is exactly the
-    disagreement the report is supposed to be incapable of.
-
-    A file the run did *not* produce is not consulted here: whether such a file is stale
-    output to be removed or the report, which is written on different terms, is
-    :mod:`semprini.run`'s question (spec 4.3). A run that removes one has changed the
-    instance even though every file it produced was already on disk, so the caller folds
-    that answer in rather than this function guessing at it.
+    Pass the manifest too: a plane upgrade changes it and nothing else. Files the run did
+    not produce are :func:`stale`'s question.
     """
     root = Path.cwd() if repo_root is None else Path(repo_root)
     for file in files:
@@ -334,23 +244,9 @@ def unchanged(files: Sequence[OutputFile], repo_root: Path | None = None) -> boo
 def stale(
     files: Sequence[OutputFile], repo_root: Path | None = None, *, keep: Collection[str] = ()
 ) -> tuple[str, ...]:
-    """Files in ``generated/`` that were not among ``files`` (spec 4.3).
+    """Files under ``generated/``, recursively, that were not among ``files`` (spec 4.3).
 
-    ``generated/`` is machine-owned and overwritten wholesale, so anything left over is
-    output of a run that no longer describes the instance — a scheme whose objects are now
-    written to a differently named file, or a directory somebody added by hand. Left in
-    place it would be loaded by every consumer that reads the directory from Git, and would
-    fail the manifest's own unrecorded-file check (spec 6.1 check 2) on the next PR.
-
-    Walked recursively, and compared by path relative to ``generated/``: the directory is
-    flat by spec, so a nested file is by definition not this run's, and anything reading
-    the tree would still read it.
-
-    ``keep`` names files that are written on their own terms and are therefore never stale even
-    when this caller did not produce them. Both callers pass ``.report.md``, for two different
-    reasons that arrive at the same rule: a compile that changed nothing writes no report (spec
-    5.6) and has not thereby stopped producing the one that is committed, and a migration writes
-    its report *after* asking this question, so listing it would delete what it then wrote.
+    ``keep`` names files that are never stale; both callers pass ``.report.md`` (spec 5.6).
     """
     root = Path.cwd() if repo_root is None else Path(repo_root)
     directory = root / GENERATED_DIR
@@ -376,26 +272,13 @@ def remove(names: Sequence[str], repo_root: Path | None = None) -> None:
 
 
 def ontology_file() -> OutputFile:
-    """The pinned metamodel as one of ``generated/``'s files, copied verbatim (spec 4.2).
-
-    Copied, never re-serialized: ``sem.ttl`` is hand-written and its term comments are the
-    vocabulary's published documentation, which the canonical serializer would strip
-    (spec 5.5 governs an instance's own output, not this document).
-
-    Public because a compile is not the only thing that writes it: a migration refreshes
-    the copy from the metamodel the upgraded plane carries (spec 7), and two places
-    composing this file could disagree about whether it is copied or rendered.
-    """
+    """The pinned metamodel as one of ``generated/``'s files, copied verbatim, never
+    re-serialized (spec 4.2). Shared with migrations (spec 7)."""
     return OutputFile(name=ONTOLOGY_FILE, text=ONTOLOGY_PATH.read_text(encoding="utf-8"))
 
 
 def write_all(files: Sequence[OutputFile], repo_root: Path | None = None) -> tuple[Path, ...]:
-    """Write every file into ``<repo_root>/generated/``.
-
-    Writes with an explicit LF, like every other file the compiler owns: the platform
-    default would make the same graph produce different bytes on different machines and
-    fail the determinism check (spec 5.5 rule 5).
-    """
+    """Write every file into ``<repo_root>/generated/`` with LF line endings (spec 5.5 rule 5)."""
     root = Path.cwd() if repo_root is None else Path(repo_root)
     directory = root / GENERATED_DIR
     directory.mkdir(parents=True, exist_ok=True)
@@ -421,12 +304,7 @@ class _Previous:
                 self._modified[subject] = object_
 
     def modified(self, subject: URIRef, statements: set[tuple[URIRef, Node]]) -> Literal | None:
-        """The date to carry forward, or ``None`` if this node's content changed.
-
-        Compared against everything *except* the date itself, which is the only way the
-        answer can be stable: comparing a node to its own previous state including its
-        date would make every run that touched it disagree with every run that did not.
-        """
+        """The date to carry forward, or ``None`` if this node's content changed."""
         if self._statements.get(subject) != statements:
             return None
         return self._modified.get(subject)
@@ -441,21 +319,16 @@ class _Builder:
     today: datetime.date
     carried: tuple[CarriedNode, ...] = ()
     issues: list[Issue] = field(default_factory=list)
-    """Problems found so far. Collected rather than raised one at a time: these are read
-    in CI, where one problem per run costs a round trip each (spec 5.2)."""
+    """Problems found so far; raised together."""
 
     references: list[_Reference] = field(default_factory=list)
-    """Every cross-reference that resolved, kept until the blocks are assembled — whether
-    the run actually *writes* the node pointed at is a question about the whole output and
-    cannot be answered one statement at a time (:meth:`_check_references_are_written`)."""
+    """Every cross-reference that resolved, checked against the whole output in
+    :meth:`_check_references_are_written`."""
 
     def build(self) -> tuple[OutputFile, ...]:
         resolved = self.registry.resolve(self.model)
 
-        # Two batches, and the split is forced rather than chosen: everything below
-        # decides which *file* an object is written to, so the second batch cannot run
-        # until the first is clean — _file_name would raise KeyError on a scheme no
-        # source defined. Within each batch every problem is reported.
+        # Two batches: the second decides files and needs the scheme index clean.
         schemes = self._scheme_index()
         self._check_memberships(schemes)
         self._check_enumerated_entities()
@@ -464,18 +337,11 @@ class _Builder:
 
         blocks = self._blocks(resolved, schemes) + self._carried_blocks()
         self._check_nothing_is_written_twice(blocks)
-        # Cross-references are collected while blocks are built, not raised at the first
-        # dangling one. Nothing is assembled or written until after this, so the
-        # placeholder _reference() returns for a broken ref cannot escape into a file.
+        # Raises before any graph is built, so _reference()'s placeholder never reaches a file.
         self._check_references_are_written(blocks)
         self._raise_collected()
 
-        # What this run says about each subject, gathered across every file it is written
-        # in. A subject is deliberately not confined to one file — a sem:relatesTo
-        # shortcut is a statement about an entity that lives with the relationship which
-        # produced it — and "did this node change" is a question about the node. Comparing
-        # one file's share of a subject would refresh dcterms:modified on every run for
-        # every entity that happens to be one end of a relationship.
+        # Per subject across every file, since "did this node change" is about the node.
         emitted: dict[URIRef, set[tuple[URIRef, Node]]] = {}
         for block in blocks:
             emitted.setdefault(block.subject, set()).update(block.statements)
@@ -486,8 +352,6 @@ class _Builder:
             for predicate, object_ in block.statements:
                 graph.add((block.subject, predicate, object_))
             if block.defines:
-                # Only the block that *defines* a node dates it: a shortcut states
-                # something about an entity, it does not describe it.
                 graph.add(
                     (
                         block.subject,
@@ -525,15 +389,8 @@ class _Builder:
                 )
             )
             if isinstance(object_, Relationship):
-                # The shortcut lives with the relationship that produced it, not with the
-                # entity it is about: the two change together, and a reviewer reading a
-                # relationship diff sees both halves in one hunk (spec 3.2).
-                #
-                # Keyed by the pair, because sem:relatesTo says only *that* two entities
-                # are related — several relationships between one pair derive the same
-                # triple. Written once, in the lexicographically first of their files, so
-                # that deleting one of them does not show a removed relatesTo line for a
-                # fact that still holds, and so the choice cannot depend on model order.
+                # The sem:relatesTo shortcut lives with its relationship (spec 3.2), once per
+                # entity pair, in the lexicographically first of their files.
                 pair = (
                     self._reference(object_, object_.source, "source"),
                     self._reference(object_, object_.target, "target"),
@@ -551,12 +408,7 @@ class _Builder:
         return tuple(blocks)
 
     def _carried_blocks(self) -> tuple[_Block, ...]:
-        """The retained nodes, as blocks of the files they were already written in.
-
-        Deliberately not re-derived from anything: these statements are what the previous
-        run wrote, and re-deciding them would mean compiling an object out of a model that
-        no longer contains it.
-        """
+        """The retained nodes, as blocks of the files they were already written in."""
         return tuple(
             _Block(
                 name=node.file,
@@ -570,7 +422,7 @@ class _Builder:
     # ------------------------------------------------------------------ file partitioning
 
     def _ontology(self) -> OutputFile:
-        """The pinned metamodel, copied verbatim (spec 4.2) — see :func:`ontology_file`."""
+        """The pinned metamodel, copied verbatim (spec 4.2); see :func:`ontology_file`."""
         return ontology_file()
 
     def _file_name(self, object_: SemanticObject, schemes: Mapping[str, _SchemeEntry]) -> str:
@@ -587,13 +439,7 @@ class _Builder:
         return f"concepts-{slug}.ttl"
 
     def _home_scheme(self, object_: SemanticObject) -> str:
-        """The one scheme whose file an object is written in.
-
-        An object in several schemes carries several ``skos:inScheme`` triples but is
-        written once, in the lexicographically first of them. Sorted rather than "the
-        first one given", so that the file an object lands in cannot depend on the order
-        an adapter happened to report its schemes in.
-        """
+        """The one scheme whose file an object is written in: the lexicographically first."""
         assert isinstance(object_, SchemeMember)
         return sorted(object_.schemes)[0]
 
@@ -626,10 +472,7 @@ class _Builder:
                 (SKOS.inScheme, URIRef(schemes[slug].iri)) for slug in object_.schemes
             )
         if isinstance(object_, Entity):
-            # Inheritance, stated with the reused SKOS property rather than a sem: term
-            # (spec 3.3): every entity is a skos:Concept, and a specialization of one is
-            # narrower than it. Only this direction is emitted — skos:narrower would state
-            # the same fact a second time, in the other entity's file (spec 5.5 rule 4).
+            # skos:broader only; the inverse would state one fact twice (spec 3.3, 5.5 rule 4).
             statements.update(
                 (SKOS.broader, self._reference(object_, ref, "broader")) for ref in object_.broader
             )
@@ -645,10 +488,7 @@ class _Builder:
     def _scheme_statements(self, scheme: Scheme) -> Iterator[tuple[URIRef, Node]]:
         yield (SEM_SCHEME_TYPE, Literal(str(scheme.scheme_type)))
         if scheme.enumerates is not None:
-            # Resolvable by now: _check_enumerated_entities ran in the earlier batch and
-            # build() raised if it did not resolve. Re-checked rather than asserted, since
-            # `python -O` strips an assert and the fallthrough would be URIRef(None) — a
-            # TypeError from inside rdflib instead of a build error naming the scheme.
+            # Resolvable by now: _check_enumerated_entities ran first. Re-checked, not asserted.
             iri = self.registry.iri(scheme.enumerates)
             if iri is None:  # pragma: no cover - guarded by _check_enumerated_entities
                 raise BuildError(
@@ -666,20 +506,16 @@ class _Builder:
         schemes: Mapping[str, _SchemeEntry],
     ) -> Iterator[tuple[URIRef, Node]]:
         if value.code is not None:
-            # Untagged and plain: a notation is a code, not prose in a language.
             yield (SKOS.notation, Literal(value.code))
         if value.parent is not None:
             yield (SKOS.broader, self._reference(value, value.parent, "parent"))
         else:
-            # A value with no parent is a top concept of its own taxonomy. Only
-            # skos:topConceptOf is emitted, not its skos:hasTopConcept inverse: both would
-            # state one fact in two files, and one changed fact must be one changed line
-            # (spec 5.5 rule 4).
+            # skos:topConceptOf only; the inverse would state one fact twice (spec 5.5 rule 4).
             for slug in sorted(value.schemes):
                 yield (SKOS.topConceptOf, URIRef(schemes[slug].iri))
 
     def _modified(self, subject: URIRef, statements: set[tuple[URIRef, Node]]) -> Literal:
-        """This node's ``dcterms:modified`` — carried forward unless its content moved."""
+        """This node's ``dcterms:modified``, carried forward unless its content moved."""
         carried = self.previous.modified(subject, statements)
         if carried is not None:
             return carried
@@ -688,35 +524,18 @@ class _Builder:
     # ------------------------------------------------------------------ resolution
 
     def _text(self, value: str | Text) -> Literal:
-        """A label, definition or note as a literal, tagged (spec 5.5 rule 6).
-
-        The instance's ``default_language`` is applied per value rather than to all of
-        them, so that a source which already knows its languages does not have to discard
-        them: a value that arrived carrying a tag keeps it, and only an untagged one takes
-        the default. The Excel taxonomy adapter states tags per cell (spec 5.3), so both
-        branches are reachable.
-        """
+        """A label, definition or note as a tagged literal; the default language applies
+        only to an untagged value (spec 5.5 rule 6)."""
         text = value if isinstance(value, Text) else Text(value)
         return Literal(text.value, lang=text.language or self.context.default_language)
 
     def _reference(self, object_: SemanticObject, ref: SourceRef, role: str) -> URIRef:
-        """The IRI of another object this one points at.
+        """The IRI of another object this one points at (spec 5.2).
 
-        An adapter has no IRIs, so it points with source refs (spec 5.2); resolving them
-        is the core's job and a dangling one is a compile failure rather than a triple
-        pointing at nothing.
-
-        Resolution goes through the registry, which also knows IRIs minted on *previous*
-        runs, so this answers only "has this instance ever minted an IRI for that ref".
-        The stricter question — is the node this points at in the output the run is about
-        to write — is :meth:`_check_references_are_written`'s, and has to wait until the
-        blocks exist: a reference to an object no source reports any more is legitimate
-        precisely because lifecycle retains it (spec 3.5).
-
-        A dangling ref is recorded and a placeholder returned rather than raised on the
-        spot, so that a model with several of them reports them all in one run. The
-        placeholder never reaches a file: :meth:`build` raises as soon as the blocks are
-        assembled, before a single graph is built.
+        Answers only whether the instance ever minted an IRI for ``ref``; whether the run
+        writes that node is :meth:`_check_references_are_written`'s question. A dangling
+        ref is recorded and a placeholder returned, which :meth:`build` raises on before
+        any graph is built.
         """
         iri = self.registry.iri(ref)
         if iri is None:
@@ -732,20 +551,8 @@ class _Builder:
     def _scheme_index(self) -> Mapping[str, _SchemeEntry]:
         """Slug → the scheme's IRI and type, with the slug itself checked.
 
-        A scheme slug is assigned once and opaque thereafter (spec 3.4.2), and it names
-        two things: the local name of the scheme's IRI, and the file every member of that
-        scheme is written to (spec 4.2). Only the first is frozen by the ID map, so
-        nothing but this check stops the second from moving underneath it — identity
-        validates a slug on the run that *mints* it, and every later run gets its answer
-        from the map without looking at the slug again.
-
-        Both failures are reachable from an ordinary edit of ``config/semprini.yaml``.
-        Renaming ``scheme_slug`` silently moves ``concepts-<slug>.ttl`` to a new file
-        while the scheme's IRI stays what it always was — the ID map and the output then
-        disagree about what the scheme is called. And a slug that is not a slug at all is
-        a path: ``../../x`` composes a filename that resolves outside ``generated/``
-        entirely, which is a machine-owned directory the manifest is supposed to bound
-        (spec 4.3).
+        The slug names the scheme's file as well as its IRI (spec 3.4.2, 4.2), and only the
+        IRI is frozen by the ID map, so a renamed or malformed slug is refused here.
         """
         index: dict[str, _SchemeEntry] = {}
         for scheme in self.model.schemes:
@@ -775,11 +582,7 @@ class _Builder:
         return index
 
     def _check_memberships(self, index: Mapping[str, _SchemeEntry]) -> None:
-        """Every object is in a scheme, and in the right kind of one.
-
-        Enforced here rather than left to SHACL because both decide which *file* an
-        object is written to, and so cannot wait for validation.
-        """
+        """Every object is in a scheme, and in the right kind of one; both decide its file."""
         for object_ in self.model.objects:
             if isinstance(object_, Scheme):
                 continue
@@ -814,18 +617,8 @@ class _Builder:
                     )
 
     def _check_enumerated_entities(self) -> None:
-        """``sem:enumerates`` names another source's object, so its target is checked.
-
-        A taxonomy pointing at something no run ever compiled would otherwise reach the
-        output as a triple pointing into empty space. This is the ordinary case while an
-        instance is being brought up rather than an exotic one: a workbook names the
-        entity by its key in the modelling tool (spec 5.3), so a taxonomy compiled before
-        that tool's source is configured has nothing to point at yet, and the message has
-        to be plain enough to say so.
-
-        The *kind* is checked too, from the ID map's own column: ``sem:enumerates`` runs
-        scheme → **entity** (spec 3.3), and a key copied from the wrong place is a
-        plausible mistake that would otherwise produce a well-formed, wrong statement.
+        """``sem:enumerates`` must name a compiled object, and it must
+        be an entity (spec 3.3, 5.3).
         """
         known = {row.iri: row.kind for row in self.registry.id_map}
         for scheme in self.model.schemes:
@@ -848,20 +641,10 @@ class _Builder:
                 )
 
     def _check_carried_are_gone(self, resolved: Mapping[SemanticObject, str]) -> None:
-        """A retained node must be one the model no longer *describes* (spec 3.5).
+        """A retained node must be one the model no longer describes (spec 3.5).
 
-        Carrying a node the run also compiled would write one subject twice — the model's
-        statements and the previous run's, unioned into one graph — so the node would wear
-        two labels and be marked both active and deprecated, and the file would be
-        internally contradictory rather than merely wrong. Lifecycle selects carried nodes
-        precisely from what the model does *not* contain, so this catches a caller that
-        assembled the two halves from different runs.
-
-        Only *defining* blocks are checked. A block that merely states something about a
-        live node is the ``sem:relatesTo`` shortcut, whose subject is an entity the run
-        compiled while the relationship it derives from was retained (spec 4.2) — that is
-        a legitimate pairing, and :meth:`_check_nothing_is_written_twice` is what keeps it
-        from producing the same triple twice.
+        Defining blocks only: a carried ``sem:relatesTo`` shortcut about a live entity is
+        legitimate (spec 4.2).
         """
         live = {iri: object_ for object_, iri in resolved.items()}
         for subject in sorted({str(node.subject) for node in self.carried if node.defines}):
@@ -875,27 +658,10 @@ class _Builder:
                 )
 
     def _check_references_are_written(self, blocks: Sequence[_Block]) -> None:
-        """Every cross-reference must point at a node this run actually writes.
-
-        The ID map answers a weaker question — whether the instance has *ever* minted that
-        IRI — and a row can outlive the node: an object whose source was reconfigured away,
-        or one minted by a run that never got as far as writing its files. Emitting the
-        triple anyway would put a `sem:target` in a governed file pointing into space, and
-        nothing downstream would catch it; a SHACL shape sees only what is in the graph, so
-        the dangling half is invisible there too.
-
-        Asked over the whole output rather than per statement, because the legitimate
-        answers arrive from two places: the model, and the nodes lifecycle retained (spec
-        3.5) — a relationship may point at an entity no source reports any more, which is
-        exactly what deprecation-not-deletion is for.
-        """
-        # Defining blocks only. A file that merely *mentions* a node — the ``sem:relatesTo``
-        # shortcut (spec 4.2) — is not a description of it, and a reference resolving onto
-        # one would point at a subject with no label, type or status.
+        """Every cross-reference must point at a node this run writes, from the model or
+        retained by lifecycle (spec 3.5). An ID-map row can outlive its node."""
         described = {block.subject for block in blocks if block.defines}
-        # Deduplicated: a relationship's source and target are each resolved twice, once
-        # for the statement and once to key the shortcut by entity pair, and one broken
-        # reference reported twice is one problem an operator reads as two.
+        # Deduplicated: a relationship's ends are each resolved twice.
         for reference in sorted(set(self.references), key=lambda item: (str(item.iri), item.role)):
             if reference.iri in described:
                 continue
@@ -908,15 +674,7 @@ class _Builder:
             )
 
     def _check_nothing_is_written_twice(self, blocks: Sequence[_Block]) -> None:
-        """No statement may be written into two files (spec 4.2, 5.5 rule 4).
-
-        The invariant the whole partitioning scheme rests on: one changed fact is one
-        changed line, which it stops being the moment a triple lives in two places. It is
-        checked rather than assumed because the model and the retained nodes are assembled
-        from different evidence — a shortcut the previous run wrote and this one also
-        derives would otherwise appear in both files, and the second copy would only show
-        up as a diff hunk nobody could explain.
-        """
+        """No statement may be written into two files (spec 4.2, 5.5 rule 4)."""
         seen: dict[tuple[URIRef, URIRef, Node], str] = {}
         for block in sorted(blocks, key=lambda item: item.name):
             for predicate, object_ in sorted(block.statements, key=lambda item: str(item)):
@@ -948,35 +706,27 @@ class _Builder:
 
 @dataclass(frozen=True, slots=True)
 class _Block:
-    """Statements about one subject, tagged with the file they are written in.
-
-    The unit of partitioning, and deliberately not "a subject". One subject legitimately
-    spans two files — a ``sem:relatesTo`` shortcut is a statement about an entity that
-    lives with the relationship which produced it — so a file is a property of the
-    statements, not of the node they are about.
-    """
+    """Statements about one subject, tagged with the file they are written in. One
+    subject may span two files (spec 4.2)."""
 
     name: str
     """The ``generated/`` file this block belongs in (spec 4.2)."""
 
     subject: URIRef
     statements: set[tuple[URIRef, Node]] = field(hash=False)
-    """Excluded from the generated ``__hash__``, not from ``__eq__``: a set is unhashable,
-    and a frozen dataclass that cannot be hashed is a trap for the next caller that puts
-    one in a set — the same pattern ``SemanticObject.source_refs`` follows."""
+    """A set, hence ``hash=False`` (see :mod:`semprini.model`)."""
 
     defines: bool
-    """Whether this block *describes* its subject, as opposed to merely stating something
-    about it. Only a defining block carries ``dcterms:modified``: a node is dated once, in
-    the file that introduces it, however many files mention it."""
+    """Whether this block describes its subject rather than merely mentioning it. Only a
+    defining block carries ``dcterms:modified``."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Reference:
-    """One resolved cross-reference, kept so the output can be asked about it later."""
+    """One resolved cross-reference."""
 
     about: SemanticObject
-    """The object that points, so a failure names the source ref an operator can find."""
+    """The object that points."""
 
     ref: SourceRef
     role: str

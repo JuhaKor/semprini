@@ -172,8 +172,10 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
     (
         "an unusable shapes graph escapes as a traceback",
         VALIDATE,
-        """    except Exception as error:""",
-        """    except ZeroDivisionError as error:""",
+        """    except Exception as error:
+        # Broad on purpose: unusable SHACL""",
+        """    except ZeroDivisionError as error:
+        # Broad on purpose: unusable SHACL""",
     ),
     (
         "an unusable local shape is swallowed instead of reported",

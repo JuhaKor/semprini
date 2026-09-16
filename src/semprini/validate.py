@@ -1,49 +1,12 @@
-"""SHACL and structural checks behind ``semprini check`` (spec 6.1).
-
-This module is ``semprini check``: all eight checks of spec 6.1, in order, and the one
-place that decides whether an instance is committable. Every check lives here rather than
-in workflow YAML (spec 6.3), so an adopter on GitLab or Azure DevOps ports a config file
-instead of reimplementing the checks, and a failure reproduces identically on a laptop
-and in CI.
-
-Two properties shape the sequence.
-
-*One run reports everything wrong with the instance.* These are read in CI, where one
-problem per round trip is the difference between one fix and five, so every check runs
-and every check collects rather than raising at the first violation. The exception is
-check 1: content that does not parse cannot be asked any of the questions checks 4 to 7 ask,
-so those are reported as not run rather than answered from a graph that is missing files.
-
-*The checks call the modules that own them, and re-derive nothing.* Append-only and
-configured sources belong to the ID map, hashes and versions to the manifest, the merge
-register to lifecycle, the shapes to this module. A second implementation of any of them
-would drift from the one a run enforces, and the way it would drift is the worst
-available: ``semprini check`` passing on an instance ``semprini run`` refuses.
-
-The one check that needs something outside the instance is the ID map's append-only
-comparison (check 6): "append-only" is a claim about a *change*, so it needs the base
-revision, and that comes from git. Everything else answers from the working tree alone.
-
-Three graphs, deliberately kept apart.
-
-*The generated graph* — ``generated/`` without ``ontology.ttl`` — is what the core shapes
-judge. It is the compiler's own output, so every rule of spec 6.1.5 applies to it without
-exception, and the IRI-policy shapes apply to it alone: a generated subject that is not
-under the instance's namespaces is a defect, while an overlay's own ``x:`` term is the
-whole point of spec 3.6.
-
-*The overlay graph* — every ``.ttl`` under ``overlays/`` — is judged only on what spec
-6.1.5 forbids an overlay to do: restate the label, the status or the scheme membership of
-a generated node. The core shapes are **not** applied to it, because ``overlays/external/``
-holds curated subsets of standard vocabularies (spec 4.2) whose concepts carry no
-``sem:status`` and are nobody's to deprecate. Judging them against the compiler's own
-guarantees would report dozens of violations for using overlays exactly as intended.
-
-*Local shapes* — ``shapes/local/`` — are the organization's own rules, and are applied to
-the generated and overlay graphs together, which is the data as its stewards see it. They
-are **additive only** (spec 3.6, 6.1.5): :func:`check_additive` refuses one that edits a
-core shape, redefines a ``sem:`` term, writes a constraint that constrains nothing, or
-derives statements the instance does not hold, and a refused file's rules are not applied.
+"""The eight checks behind ``semprini check`` (spec 6.1), all in the CLI (spec 6.3). Every check
+runs and collects, so one run reports everything; checks 4 to 7 are reported as not run when
+check 1 finds Turtle that does not parse. Each check calls the module that owns the rule rather
+than re-deriving it. Check 6 is the only one that needs git. Three graphs are kept apart. The
+generated graph, without ``ontology.ttl``, is judged by the core shapes and the IRI policy. The
+overlay graph is judged only on what an overlay may not restate about a generated node; the core
+shapes are not applied to it, since ``overlays/external/`` holds standard vocabularies (spec
+4.2). Local shapes are applied to both together and must be additive (spec 3.6, 6.1.5); a refused
+file's rules are not applied.
 """
 
 from __future__ import annotations
@@ -95,19 +58,13 @@ __all__ = [
 ]
 
 SHAPES_DIR = Path(__file__).parent / "shapes"
-"""The core shapes shipped with the compiler (spec 6.1.5). Every ``.ttl`` in here is
-loaded, so splitting the file later costs nothing."""
+"""The core shapes shipped with the compiler (spec 6.1.5); every ``.ttl`` here is loaded."""
 
 SHAPES_NAMESPACE = "https://w3id.org/semprini/shapes#"
-"""Where the core shapes' own IRIs live.
-
-Not the ``sem:`` namespace: that one resolves to the metamodel document, whose term
-inventory is fixed by spec 3.2/3.3, and a shape IRI there would be a term the published
-ontology does not declare. ``/semprini/shapes`` is the path the w3id entry already
-reserves for them (task A2)."""
+"""Where the core shapes' own IRIs live; the w3id path reserved for them."""
 
 OVERLAYS_DIR = Path("overlays")
-"""Hand-written RDF — the only kind an instance has (spec 4.2, 4.3)."""
+"""The only hand-written RDF an instance has (spec 4.2, 4.3)."""
 
 LOCAL_SHAPES_DIR = Path("shapes") / "local"
 
@@ -118,11 +75,8 @@ SKOS_PREF_LABEL = URIRef("http://www.w3.org/2004/02/skos/core#prefLabel")
 SEM_STATUS = URIRef(f"{SEM}status")
 
 TAXONOMY_VALUE_TARGET = URIRef(f"{SHAPES_NAMESPACE}TaxonomyValueTarget")
-"""The SPARQL target ``core.ttl`` defines for a plain ``skos:Concept``.
-
-Referenced by the generated IRI-policy shape rather than restated, since a second copy of
-that query would be a second answer to "what is a taxonomy value". It is the one reason
-:func:`instance_shapes` must be applied together with :func:`core_shapes`."""
+"""The SPARQL target ``core.ttl`` defines for a plain ``skos:Concept``. The IRI-policy
+shape references it, which is why :func:`instance_shapes` needs :func:`core_shapes`."""
 
 LOCAL_NAME_PATTERNS: Mapping[Kind, str] = {
     Kind.ENTITY: UUID_PATTERN,
@@ -131,40 +85,26 @@ LOCAL_NAME_PATTERNS: Mapping[Kind, str] = {
     Kind.TAXONOMY_VALUE: UUID_PATTERN,
     Kind.SCHEME: SLUG_PATTERN,
 }
-"""What a local name looks like, per kind — the other half of spec 3.4.2's minting rules.
-
-Read from the two modules that own the definitions rather than spelled again here: a
-scheme takes the slug ``config`` validates, everything else takes a UUID identity mints.
-"""
+"""What a local name looks like, per kind (spec 3.4.2)."""
 
 _PROTECTED_OF_A_GENERATED_NODE: Sequence[tuple[URIRef, str]] = (
     (SKOS_PREF_LABEL, "skos:prefLabel"),
     (SEM_STATUS, "sem:status"),
     (SKOS_IN_SCHEME, "skos:inScheme"),
 )
-"""What an overlay may add statements *about* a generated node but never restate for one
-(spec 6.1.5). These three decide what the node is called, whether it is still current,
-and which domain it belongs to — the answers the compiler owns."""
+"""What an overlay may never restate for a generated node (spec 6.1.5)."""
 
 
 class ValidationError(IssueError):
-    """Content that cannot be validated at all — CLI exit code 1 (spec 5.1).
-
-    Raised for a file the checks cannot read, never for a constraint a graph fails:
-    violations are returned as :class:`~semprini.model.Issue`s, so one run reports every
-    problem rather than the first (spec 6.1).
+    """A file the checks cannot read — CLI exit code 1 (spec 5.1). Violations are returned, not
+    raised.
     """
 
     noun = "validation error"
 
 
 def core_shapes() -> Graph:
-    """The shapes shipped with the compiler (spec 6.1.5).
-
-    Parsed on each call rather than cached: a shared, mutable graph handed to several
-    callers is a trap, and the file is small enough that the copy costs less than the
-    class of bug it removes.
-    """
+    """The shapes shipped with the compiler (spec 6.1.5), parsed afresh on each call."""
     graph = Graph()
     for path in sorted(SHAPES_DIR.glob("*.ttl")):
         graph.parse(path, format="turtle")
@@ -172,19 +112,8 @@ def core_shapes() -> Graph:
 
 
 def instance_shapes(base_iri: str) -> Graph:
-    """The IRI policy, which only exists once an instance has a base IRI (spec 6.1.5).
-
-    IRIs are opaque and permanent (spec 3.1, 3.4), and these shapes are what says so about
-    the output: a generated subject lives under this instance's namespace for its kind,
-    and its local name is the UUID or slug spec 3.4.2 mints. A subject that is neither is
-    either a hand edit or a compiler defect, and both are things ``generated/`` exists to
-    make impossible to commit unnoticed.
-
-    Applied **together with** :func:`core_shapes` — the taxonomy-value shape reuses the
-    SPARQL target defined there.
-    """
-    # Validates the base IRI the same way a run does, so a shapes graph is never built
-    # around something that could not have minted the IRIs it is about to judge.
+    """The IRI policy for one instance (spec 3.1, 3.4.2, 6.1.5): every generated subject is
+    in its kind's namespace with a minted local name. Apply together with :func:`core_shapes`."""
     namespaces = serialize.namespaces(base_iri)
     graph = Graph()
     for kind, classes, described in _IRI_POLICY_TARGETS:
@@ -213,15 +142,8 @@ def instance_shapes(base_iri: str) -> Graph:
 
 
 def overlay_shapes(base_iri: str) -> Graph:
-    """What an overlay may not say about a generated node (spec 6.1.5).
-
-    Applied to the overlay graph **alone**, which is the only way the question can be
-    asked: "this label was written by hand" is a fact about the file a statement came
-    from, and their union no longer knows it.
-
-    An overlay adds freely otherwise — that is what overlays are for (spec 4.2) — and may
-    say anything at all about its own ``x:`` terms (spec 3.6). Only the three properties
-    that decide what a generated node *is* are refused.
+    """What an overlay may not say about a generated node (spec 6.1.5). Apply to the overlay graph
+    alone.
     """
     namespaces = serialize.namespaces(base_iri)
     generated = "|".join(
@@ -250,15 +172,7 @@ def overlay_shapes(base_iri: str) -> Graph:
 
 
 def read_overlays(repo_root: Path | None = None) -> Graph:
-    """Parse every ``.ttl`` under ``overlays/`` into one graph (spec 4.2).
-
-    Recursive, because overlays are filed by provenance — ``external/``, ``ext/``,
-    ``patches/`` — and a steward adding a directory is doing what the layout invites.
-
-    One graph rather than one per file, unlike the local shapes below: the overlay rules
-    ask what the overlays say about a generated node, which is a question about the tree
-    and not about any file in it.
-    """
+    """Parse every ``.ttl`` under ``overlays/``, recursively, into one graph (spec 4.2)."""
     root = _root(repo_root)
     return build.union_of(_parse_files(root / OVERLAYS_DIR, "overlay", root).values())
 
@@ -266,59 +180,24 @@ def read_overlays(repo_root: Path | None = None) -> Graph:
 def read_local_shape_files(repo_root: Path | None = None) -> Mapping[str, Graph]:
     """The instance's own shapes, one graph per file, keyed by path from the instance root.
 
-    Kept apart rather than unioned because a local shape is *accepted or refused as a
-    file* (spec 6.1.5): the file is what a steward wrote and what they edit, so it is what
-    a rejection has to name, and a file that is refused must not have its rules applied
-    while the others still are. Their union is :func:`read_local_shapes`.
+    Per file because a local shape is accepted or refused as a file (spec 6.1.5).
     """
     root = _root(repo_root)
     return _parse_files(root / LOCAL_SHAPES_DIR, "local shape", root)
 
 
 def read_local_shapes(repo_root: Path | None = None) -> Graph:
-    """Every local shape as one graph — what is applied, once the refused files are out."""
+    """Every local shape as one graph."""
     return build.union_of(read_local_shape_files(repo_root).values())
 
 
 def check_additive(files: Mapping[str, Graph]) -> tuple[Issue, ...]:
     """Refuse a local shape that is not additive (spec 3.6, 6.1.5).
 
-    A local shape adds rules about an organization's own data. It may target a ``sem:``
-    class, say anything about the organization's own ``x:`` terms, and be as strict as its
-    stewards like. What it may not do is reach back into what the plane defines, and
-    "additive only" is that rule made precise — four refusals, each of which an adopter
-    can check by reading their own file:
-
-    1. **A statement about a core IRI.** Anything in the ``sem:`` namespace (a metamodel
-       term, spec 3.2/3.3) or in :data:`SHAPES_NAMESPACE` (a core shape) is the plane's,
-       and every instance answers to the same copy of it. This is the refusal that catches
-       the likeliest attempt by far — ``core.ttl`` copied into ``shapes/local/`` and
-       edited — as well as ``sem:Entity a sh:NodeShape``, which is SHACL's implicit class
-       target and turns a metamodel class into a shape, and ``shp:Node sh:deactivated
-       true``, which reads as switching a core rule off. Naming a core IRI as an *object*
-       is untouched: ``sh:targetClass sem:Entity`` is how a local rule says what it is
-       about.
-    2. **A constraint parameter that constrains nothing** — ``sh:minCount 0``,
-       ``sh:uniqueLang false``, ``sh:closed false``. Each is a no-op in SHACL, so refusing
-       it blocks no rule anyone meant to write; what it reads as is "this is optional
-       now", which is the relaxation an adopter would reach for. Refusing it says the true
-       thing: validation is conjunctive, so a local file cannot subtract, and the core
-       rule applies whatever this one says.
-    3. **A SHACL rule.** ``sh:rule`` derives triples into the graph being validated, so a
-       local file could make its own rules pass against statements no file in the instance
-       holds — and would license exactly what spec 6.1.5's last sentence forbids the day
-       anyone validates the two shape sets together. Hand-written statements belong in
-       ``overlays/`` (spec 4.2), where they are visible and reviewable.
-    4. **A reference to a core shape**, in any position. This is the first thing an
-       adopter tries after refusal 1, and it never works: local shapes are validated as
-       their own graph, which does not hold the core ones (spec 6.1.5). What it does
-       instead depends on where it was written — ``sh:node shp:Node`` silently matches
-       everything, while ``sh:target shp:TaxonomyValueTarget`` aborts the validator — and
-       neither is what the author meant, so both are refused with the reason.
-
-    Returns issues rather than raising: a file that cannot be *read* is a
-    :class:`ValidationError`, but a file that reads fine and breaks the rule is a finding,
-    and one run reports every one of them (spec 6.1).
+    Four refusals: a statement whose subject is a ``sem:`` term or a core shape (naming
+    one as an object is fine); a constraint parameter at its no-op value, such as
+    ``sh:minCount 0``; a ``sh:rule``; and a reference to a core shape in any position,
+    since local shapes are validated as their own graph. Returned as issues, not raised.
     """
     issues: list[Issue] = []
     for name, graph in files.items():
@@ -327,37 +206,26 @@ def check_additive(files: Mapping[str, Graph]) -> tuple[Issue, ...]:
 
 
 def shacl(data: Graph, shapes: Graph) -> tuple[Issue, ...]:
-    """Validate ``data`` against ``shapes``, as issues rather than as a report.
+    """Validate ``data`` against ``shapes``, as deduplicated, sorted issues.
 
-    ``sh:Violation`` becomes an error and everything softer a warning, so that the
-    missing-definition rule of spec 6.1.5 reports without failing a run. pyshacl's own
-    ``conforms`` flag is deliberately ignored: it answers "were there any results at all",
-    which would make a warning block a compile.
-
-    Results are deduplicated and sorted. A node reached by two shapes with the same
-    message is one problem, and CI output that reorders between runs is output nobody can
-    diff.
+    ``sh:Violation`` is an error and anything softer a warning (spec 6.1.5); pyshacl's
+    ``conforms`` flag is ignored. Raises :class:`ValidationError` for a shapes graph that
+    cannot be applied.
     """
     try:
         _, report, _ = _run_shacl(
             data,
             shacl_graph=shapes,
-            # The core shapes select taxonomy values with a SPARQL target, which is a
-            # SHACL advanced feature. Without this, that target matches nothing and the
-            # rules built on it pass silently — every constraint they carry would be
-            # reported as clean.
+            # The core shapes use a SPARQL target, an advanced feature; without this it matches
+            # nothing.
             advanced=True,
-            # Nothing here reaches the network: no ontology is fetched, no owl:imports is
-            # followed. A check that dialled out would fail differently on a laptop and in
-            # CI, which is exactly what spec 6.3 promises it cannot do.
+            # Nothing reaches the network (spec 6.3).
             do_owl_imports=False,
             inference="none",
             js=False,
         )
     except RecursionError as error:
-        # rdflib walks skos:broader+ recursively, so a chain around a thousand deep
-        # exhausts the stack — in the cycle rule, which is the one thing an unreadable
-        # traceback here would be hiding. Named instead: the depth is the finding.
+        # rdflib walks skos:broader+ recursively.
         raise ValidationError(
             [
                 Issue(
@@ -369,15 +237,7 @@ def shacl(data: Graph, shapes: Graph) -> tuple[Issue, ...]:
             ]
         ) from error
     except Exception as error:
-        # A shapes graph that parses as Turtle can still be unusable as SHACL, and
-        # `shapes/local/` is hand-written (spec 4.2, 6.1.5): a property shape with no
-        # path, two paths on one, a reference to a shape that is not there, a pattern that
-        # is not a regex, a sh:select that is not a query. Deliberately broad, and the
-        # breadth is the point — those five raise from three libraries (pyshacl, `re` and
-        # pyparsing) and nothing promises what the sixth will raise. Enumerating them
-        # would be a promise this module cannot keep, and every gap in the enumeration is
-        # a traceback in somebody's CI instead of a finding. `check_shapes` turns this
-        # into an issue against the file that caused it.
+        # Broad on purpose: unusable SHACL raises from pyshacl, `re` and pyparsing alike.
         raise ValidationError(
             [Issue(Severity.ERROR, f"cannot be applied as SHACL: {_one_line(error)}")]
         ) from error
@@ -400,23 +260,11 @@ def check_shapes(
     overlays: Graph | None = None,
     local: Mapping[str, Graph] | None = None,
 ) -> tuple[Issue, ...]:
-    """Check 5 of spec 6.1, end to end: core shapes, IRI policy, overlays, local shapes.
+    """Check 5 of spec 6.1: core shapes, IRI policy, overlays, local shapes.
 
-    Returns every violation and warning found, sorted; raises only when a file cannot be
-    read. Whether the result fails the command is the caller's decision — warnings do
-    not (spec 6.1.5), and :func:`check` owns the exit code.
-
-    The graphs may be passed in already parsed. :func:`check` does, because it has read
-    them for check 1 and four of the eight checks ask questions about the same bytes: an
-    instance large enough for check 5 to be slow is one where parsing ``generated/`` four
-    more times is felt. Omitted, they are read from ``repo_root`` as before, which is what
-    a caller wanting check 5 alone means. ``local`` is per file rather than one graph,
-    because a local shape is accepted or refused as a file (:func:`check_additive`).
-
-    A refused file's rules are **not applied**, which is what "rejected" means in spec
-    6.1.5 — reporting a shape as forbidden and then obeying it would leave an instance
-    whose verdict depends on a file the plane says it will not honour. The other files
-    still run: one steward's mistake does not switch off an organization's rules.
+    Returns every violation and warning, sorted; raises only for a file that cannot be
+    read. The graphs may be passed in already parsed, or are read from ``repo_root``.
+    A local shape file :func:`check_additive` refuses has its rules left unapplied.
     """
     generated = (
         build.union_of(build.read_previous_files(repo_root).values())
@@ -432,12 +280,8 @@ def check_shapes(
 
     not_additive = check_additive(local)
     issues += not_additive
-    # Only an error refuses a file. Every refusal is one today, so this filter changes
-    # nothing — it is here because the alternative is a rule added later at warning
-    # severity silently switching off the file it is about.
+    # Only an error refuses a file.
     refused = {issue.location for issue in not_additive if issue.severity is Severity.ERROR}
-    # The org's own rules see the org's whole graph, generated and hand-written together:
-    # a local shape about an x: term would otherwise be unable to see it.
     issues += _apply_local(generated + overlays, local, refused)
     return tuple(sorted(set(issues), key=lambda issue: issue.sort_key))
 
@@ -447,22 +291,12 @@ def _apply_local(
 ) -> tuple[Issue, ...]:
     """Run the local shapes that were not refused, naming a file that cannot be run.
 
-    A shapes file is hand-written, so "this is not usable SHACL" is an ordinary thing for
-    it to be — and the validator says so about the whole graph it was handed, in a message
-    that often names nothing at all. So the union is tried once, and only when it fails is
-    each file run on its own to find which one is responsible. The retry costs a
-    validation pass per file and happens only on the path where the alternative is an
-    operator reading "None of these types match a TargetType:" and opening five files.
-
-    Reported as issues rather than raised, like everything else check 5 finds: the files
-    that *do* load are validated in the same pass, so one run still reports every problem
-    the instance has (spec 6.1).
+    The union is tried once; only when it fails is each file run alone to find which one
+    is responsible, and the files that do load are still validated. Reported as issues.
     """
     applied = {name: graph for name, graph in files.items() if name not in refused}
     union = build.union_of(applied.values())
     if not len(union):
-        # No files, or none with anything in them. A `shapes/local/` holding one empty
-        # file is not a reason to run a validator over the whole instance.
         return ()
     try:
         return shacl(data, union)
@@ -476,9 +310,7 @@ def _apply_local(
                 blamed = True
                 issues.extend(Issue(issue.severity, issue.message, name) for issue in error.issues)
         if not blamed:
-            # Every file loads on its own but their union does not — one shape referring
-            # to another across files, most likely. The directory is then the honest
-            # location, since no single file is the answer.
+            # Every file loads alone but the union does not; no single file is the answer.
             issues.extend(
                 Issue(issue.severity, issue.message, LOCAL_SHAPES_DIR.as_posix())
                 for issue in union_failed.issues
@@ -498,17 +330,7 @@ CHECKS: Sequence[str] = (
     "determinism",
     "source configuration",
 )
-"""The eight checks of spec 6.1, in the order they run and numbered from 1.
-
-Named here rather than in each function so that the sequence is readable in one place and
-so that "check 4" means the same thing in this module, in the spec and in what an operator
-reads. Order is not arbitrary: check 1 is what makes checks 4 to 7 answerable at all, and the
-cheap file-level checks come before the SHACL run, which is the slow one (6.1.5).
-
-Check 8 is last in the numbering and asks nothing about RDF, which is why it is the one
-check that still answers when check 1 fails: a configured source with a bad key is a
-finding an operator can act on whether or not the committed Turtle parses.
-"""
+"""The eight checks of spec 6.1, in the order they run and numbered from 1."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -519,13 +341,7 @@ class CheckOutcome:
     name: str
     issues: tuple[Issue, ...] = ()
     skipped: str | None = None
-    """Why the check did not run, if it did not.
-
-    A check that could not be performed is never reported as a check that passed: the two
-    are indistinguishable in an exit code, and the whole value of this command is that a
-    green run means something. It does not fail the command either — a fresh instance with
-    no git history is an ordinary instance, not a broken one — so it is said out loud.
-    """
+    """Why the check did not run, if it did not. Neither a pass nor a failure; said out loud."""
 
     @property
     def errors(self) -> tuple[Issue, ...]:
@@ -564,17 +380,8 @@ class CheckResult:
         return not self.errors
 
     def summary(self) -> tuple[str, ...]:
-        """The result as an operator reads it, one check per section.
-
-        Every check is listed, passing ones included: a check silently dropped from the
-        sequence has to be visible as a missing line rather than as one fewer thing
-        failing.
-
-        These lines carry text this project did not write — a shape's message quotes the
-        node it is about, and a label is whatever a modeller typed — so they cannot be
-        kept ASCII the way a run's summary is. Printing them safely on a console that
-        cannot encode them is :func:`semprini.cli._say`'s.
-        """
+        """The result as an operator reads it, every check listed. Not ASCII-only: the lines
+        quote labels this project did not write, and :func:`semprini.cli._say` copes."""
         lines: list[str] = []
         for outcome in self.outcomes:
             counted = ", ".join(
@@ -590,16 +397,10 @@ class CheckResult:
                 headline = "ok"
             lines.append(f"{outcome.number}. {outcome.name}: {headline}")
             if counted and outcome.skipped is not None:
-                # A check can both find something and be unable to finish — check 6
-                # answers three questions from the working tree and a fourth only from
-                # git. Neither half may hide the other: the findings are what an operator
-                # fixes, and the part that did not run is what they would otherwise assume
-                # had passed.
+                # Check 6 can both find something and be unable to finish.
                 lines.append(f"  - not run: {outcome.skipped}")
-            # Printed in the order the outcome holds them, not sorted again here. An
-            # outcome sorts its issues when it is built, and a second sort at the render
-            # point would make the ordering guarantee untestable through the only output
-            # anyone reads — which is how a mutation of the real sort survived this suite.
+            # Not sorted again here: an outcome sorts its issues when built, and a second
+            # sort would make that untestable through the output.
             lines.extend(f"  - {issue}" for issue in outcome.issues)
         errors, warnings = len(self.errors), len(self.warnings)
         if not errors and not warnings:
@@ -616,33 +417,15 @@ def check(
     compiler: str | None = None,
     ontology: str | None = None,
 ) -> CheckResult:
-    """Run every check of spec 6.1 against the instance ``settings`` describes.
+    """Run every check of spec 6.1 against the instance ``settings`` describes. Writes nothing.
 
-    Reads the instance and writes nothing: ``semprini check`` is what runs on every pull
-    request, so it must be safe to point at a repository it is not allowed to modify, and
-    it must reach the same verdict as the run that produced the files.
-
-    Check 8 constructs every configured adapter and calls ``validate_config()`` on it
-    (spec 5.2, 6.1). That is the one point in this command where third-party code runs, and
-    it runs under the contract that construction has no side effects and reads nothing —
-    an adapter that breaks the contract is reported as a finding against its source, never
-    as a traceback.
-
-    ``base`` is the git revision the ID map's append-only rule is judged against (check 6);
-    omitted, it is discovered. ``compiler`` and ``ontology`` are injected for the same
-    reason a run injects them — the plane's own fixture instance pins the versions its
-    committed manifest records — and a production caller passes neither (spec 7).
-
-    Raises only for a configuration or namespace-lock error, which is exit 2 and a
-    different category from anything the checks find; everything else comes back as an
-    :class:`~semprini.model.Issue`.
+    ``base`` is the git revision check 6 compares the ID map against; omitted, it is
+    discovered. ``compiler`` and ``ontology`` let the fixture builder pin the versions
+    (spec 7). Raises only for a configuration or namespace-lock error (exit 2); every
+    finding comes back as an :class:`~semprini.model.Issue`.
     """
     root = settings.repo_root
-    # Ahead of check 1, and raising rather than collecting: the lock is frozen
-    # configuration (spec 3.4), so a base IRI that disagrees with it is exit 2 and is not
-    # a finding about content. The CLI has already done this when loading configuration;
-    # done here too, so that any caller of `check` gets the whole of check 4 rather than
-    # only the half that reads graphs.
+    # Exit 2, not a finding (spec 3.4); done here so every caller gets the whole of check 4.
     verify_namespace_lock(settings)
 
     content, syntax = _read_content(root)
@@ -657,14 +440,10 @@ def check(
     )
 
     if syntax:
-        # Checks 4-7 all ask questions about the parsed content, and it did not parse.
-        # Answering them from the files that happened to load would report a subject as
-        # missing from the ID map because the file naming it is the one that is broken —
-        # a second, invented problem on top of the real one.
+        # Checks 4-7 ask about parsed content; answering from the files that did load
+        # would invent a second problem. Check 8 reads configuration, not RDF.
         unparsed = "the instance's Turtle does not parse (check 1)"
         outcomes.extend(_skipped(number, unparsed) for number in (4, 5, 6, 7))
-        # Check 8 reads configuration, not RDF, so it is answered here too: an operator
-        # with an unparseable file and a mistyped source key should see both in one run.
         outcomes.append(_outcome(8, _check_source_config(settings)))
         return CheckResult(tuple(outcomes))
 
@@ -683,8 +462,6 @@ def check(
         )
     )
     outcomes.append(_check_identity(root, generated, settings, base=base))
-    # Asked of the recorded version rather than read out of check 3's messages: a check
-    # that parsed another check's prose would break the day someone reworded it.
     running = ontology_version() if ontology is None else ontology
     drifted = recorded is not None and recorded.ontology_version != running
     outcomes.append(
@@ -699,11 +476,8 @@ def check(
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Content:
-    """Every RDF file of the instance, parsed once and asked several questions.
-
-    ``generated`` is keyed by file name and excludes ``ontology.ttl``: the determinism
-    check compares file against file, and the metamodel copy is the one generated file the
-    serializer did not produce (spec 4.2).
+    """Every RDF file of the instance, parsed once. ``generated`` excludes ``ontology.ttl`` (spec
+    4.2).
     """
 
     generated: Mapping[str, Graph]
@@ -712,18 +486,11 @@ class _Content:
 
     overlays: Graph
     local: Mapping[str, Graph]
-    """The local shapes per file, since one is accepted or refused as a file (spec 6.1.5)."""
+    """The local shapes per file (spec 6.1.5)."""
 
 
 def _read_content(root: Path) -> tuple[_Content, tuple[Issue, ...]]:
-    """Check 1: parse every ``.ttl`` the instance holds, and keep what parsed.
-
-    The three trees are the three kinds of RDF an instance has (spec 4.2): what the
-    compiler wrote, what stewards wrote, and the shapes they wrote to judge it by. A
-    syntax error in any of them is reported with the file named — including in
-    ``generated/``, where it is not a typo but evidence that something other than the
-    compiler has written there (spec 4.3).
-    """
+    """Check 1: parse every ``.ttl`` the instance holds, and keep what parsed (spec 4.2, 4.3)."""
     issues: list[Issue] = []
     generated: Mapping[str, Graph] = {}
     try:
@@ -734,13 +501,11 @@ def _read_content(root: Path) -> tuple[_Content, tuple[Issue, ...]]:
     ontology: str | None = None
     ontology_path = root / build.GENERATED_DIR / build.ONTOLOGY_FILE
     try:
-        # Read untranslated: check 7 compares this against what a run would have written,
-        # and a copy whose line endings were rewritten is a copy no run produced.
+        # Untranslated bytes, for check 7.
         ontology = _committed(ontology_path)
         Graph().parse(data=ontology, format="turtle")
     except FileNotFoundError:
-        # Absent rather than broken: the manifest records it, so check 2 reports it as a
-        # recorded file that is missing, which says the actionable thing.
+        # Check 2 reports a recorded file that is missing.
         ontology = None
     except (OSError, UnicodeDecodeError, SyntaxError) as error:
         ontology = None
@@ -763,14 +528,7 @@ def _read_content(root: Path) -> tuple[_Content, tuple[Issue, ...]]:
 
 
 def _load_manifest(root: Path) -> tuple[Manifest | None, tuple[Issue, ...]]:
-    """Check 2, first half: the manifest itself has to be readable before it can be used.
-
-    A missing or malformed manifest is returned as issues rather than raised, so that the
-    checks that do not depend on it still run and the operator sees the whole picture. It
-    does stop checks 2 and 3 from saying anything more: an instance whose manifest cannot
-    be parsed has no recorded hashes to compare against and no recorded versions to
-    compare with.
-    """
+    """Check 2, first half: the manifest, or the issues that stop checks 2 and 3 saying more."""
     try:
         return Manifest.load(root), ()
     except ManifestError as error:
@@ -780,16 +538,8 @@ def _load_manifest(root: Path) -> tuple[Manifest | None, tuple[Issue, ...]]:
 def _check_namespace(generated: Graph, base_iri: str) -> tuple[Issue, ...]:
     """Check 4, second half: every generated subject lives under the instance's base IRI.
 
-    The first half — that the configured base IRI matches ``mappings/namespace.lock`` — is
-    :func:`~semprini.identity.verify_namespace_lock`, and is exit 2 rather than a finding.
-    This half is what makes the lock mean anything about content: a lock nothing is
-    compared against would let an instance's files drift into a second namespace one
-    hand-edited subject at a time.
-
-    Deliberately weaker than check 5's IRI policy, which also demands the namespace of the
-    subject's *kind* and the local name spec 3.4.2 mints. Both are in spec 6.1 and both are
-    reported: this one holds even for a subject no shape targets, since it asks nothing
-    about what the node is.
+    The first half is :func:`~semprini.identity.verify_namespace_lock`. Weaker than check
+    5's IRI policy, and holds even for a subject no shape targets.
     """
     issues: list[Issue] = []
     for subject in set(generated.subjects()):
@@ -809,30 +559,15 @@ def _check_namespace(generated: Graph, base_iri: str) -> tuple[Issue, ...]:
 def _check_identity(
     root: Path, generated: Graph, settings: InstanceConfig, *, base: str | None
 ) -> CheckOutcome:
-    """Check 6: the ID map, the merge register, and what ``generated/`` says about both.
-
-    Four questions, three of which the working tree answers on its own:
-
-    *Is every row still there, unedited?* Only a comparison with the base revision can
-    say, so it is the one check that needs git — and the one that can report itself not
-    run.
-
-    *Does the map contradict itself?* A duplicate source ref, or one IRI recorded under
-    two kinds, is refused when the file is parsed (spec 5.4), so loading it is the check.
-
-    *Does ``generated/`` hold an IRI the map does not?* That is a deleted row or a hand
-    edit, and the compiler could not say which source the node came from (spec 5.4). It is
-    checked here without reference to git, so it holds for a local run too.
-
-    *Is every ``source_name`` still configured, and does the merge register name IRIs that
-    exist?* The map and the register own both answers; this asks them.
+    """Check 6: the ID map, the merge register, and what ``generated/`` says about both (spec 5.4).
+    The map loads without contradiction, every source name is configured, every generated subject
+    is mapped, the register names known IRIs, and, when git can supply the base revision, no row
+    was removed or edited. Only the last needs git and can report itself not run.
     """
     issues: list[Issue] = []
     try:
         id_map = IdMap.load(root)
     except IdentityError as error:
-        # Nothing below can be asked of a map that would not parse, and every one of those
-        # questions would answer "no" for the same single reason.
         return _outcome(6, error.issues)
 
     issues.extend(id_map.check_sources_are_configured([source.name for source in settings.sources]))
@@ -844,11 +579,7 @@ def _check_identity(
 
     committed, skipped = _base_id_map(root, base)
     if committed is None:
-        # Recorded on the check rather than as an issue of its own: the other three
-        # questions were answered, and what an operator needs to know is which one was
-        # not. It does not fail the command — an instance can legitimately have no base
-        # revision, and a check that refused to run in a fresh clone would be a check
-        # people learn to skip — but it is never reported as a check that passed.
+        # The other questions were answered; this one is recorded as not run.
         return CheckOutcome(
             number=6,
             name=CHECKS[5],
@@ -884,23 +615,10 @@ def _check_subjects_are_mapped(generated: Graph, id_map: IdMap) -> tuple[Issue, 
 def _check_determinism(
     root: Path, content: _Content, base_iri: str, *, ontology_drifted: bool
 ) -> tuple[Issue, ...]:
-    """Check 7: re-serialize what is committed and demand the same bytes.
+    """Check 7: re-serialize what is committed and demand the same bytes (spec 5.5).
 
-    The check that does not trust the manifest. Every other guarantee about ``generated/``
-    is recorded in a file the compiler also wrote, so a hand edit that recomputes the hash
-    defeats it; this one re-derives the content from the graph and compares. It is what
-    makes spec 5.5's determinism auditable by an adopter rather than merely asserted.
-
-    ``ontology.ttl`` is compared against the packaged metamodel instead of re-serialized:
-    it is copied verbatim and is deliberately not serializer output (spec 4.2), so
-    round-tripping it through the canonical serializer would strip the term comments that
-    are the vocabulary's published documentation. The comparison is skipped when check 3
-    found the recorded ontology version drifting from the running one — the committed copy
-    is then *expected* to differ, and saying so twice adds nothing.
-
-    The committed text is read here rather than carried from check 1, because this is the
-    one check whose question is about bytes: everything else asks about statements, and a
-    file read for its statements is a file whose bytes nobody looked at.
+    ``ontology.ttl`` is compared against the packaged metamodel instead, and not at all
+    when check 3 found the ontology version drifting (spec 4.2).
     """
     issues: list[Issue] = []
     for name, graph in sorted(content.generated.items()):
@@ -908,8 +626,7 @@ def _check_determinism(
         try:
             expected = serialize.serialize(graph, base_iri)
         except ValueError as error:
-            # A blank node or a literal subject: legal RDF that the canonical serializer
-            # refuses (spec 5.5 rules 7 and 2), so no run could have written this file.
+            # A blank node or a literal subject (spec 5.5 rules 2 and 7).
             issues.append(
                 Issue(Severity.ERROR, f"cannot be produced by the compiler: {error}", location)
             )
@@ -942,44 +659,21 @@ def _check_determinism(
 
 
 def _check_source_config(settings: InstanceConfig) -> tuple[Issue, ...]:
-    """Check 8: every configured source's own settings, asked of the adapter itself.
+    """Check 8: every configured adapter's ``validate_config()``, each source asked independently
+    (spec 5.2, 6.1).
 
-    Configuration loading validates what the compiler can see — that a source names an
-    installed adapter, that no key holds a credential (spec 5.1). Only the adapter knows
-    whether the sheet name exists in the workbook's shape it expects, or whether a model
-    allowlist is usable. So every configured adapter is constructed and asked, which is
-    what :meth:`~semprini.adapters.BaseAdapter.validate_config` is for and why an
-    adapter's construction is required to be free of side effects (spec 5.2).
-
-    Reported as ordinary findings — exit 1 — rather than the exit 2 a namespace lock or a
-    credential in configuration raises. Those two abort before any check runs, because
-    nothing else this command said would be meaningful under them; a source whose sheet
-    name is wrong invalidates none of checks 1 to 7, and the operator wants those answers
-    in the same round trip.
-
-    Each source is asked independently: one adapter that cannot even be constructed must
-    not hide a second source's mistake, for the same reason discovery keeps a broken
-    plugin from hiding the others (spec 5.2).
+    Ordinary findings, exit 1, not the exit 2 of a configuration error.
     """
     context = settings.run_context(dry_run=True)
     return tuple(issue for source in settings.sources for issue in _asked_of(source, context))
 
 
 def _asked_of(source: SourceConfig, context: RunContext) -> tuple[Issue, ...]:
-    """One source's ``validate_config()``, with every way it can fail turned into issues.
-
-    This is the only point in ``semprini check`` where third-party code runs, and the
-    contract it runs under is unenforceable — a plugin may raise from ``__init__``, raise
-    from ``validate_config()``, or return something that is not a list of issues. Each is
-    a defect in that adapter, and each is reported against the source that configured it:
-    a traceback out of ``semprini check`` names a file in someone else's distribution and
-    tells the operator nothing about which of their sources to look at.
-    """
+    """One source's ``validate_config()``, with every way a plugin can misbehave turned
+    into an issue against the source that configured it."""
     try:
         adapter = adapters.create(source, context)
     except adapters.AdapterError as error:
-        # Already phrased for an operator by discovery, and about the installation rather
-        # than about this source's keys; passed through rather than wrapped.
         return (Issue(Severity.ERROR, _one_line(error), source.name),)
     except Exception as error:
         return (
@@ -1005,14 +699,8 @@ def _asked_of(source: SourceConfig, context: RunContext) -> tuple[Issue, ...]:
     if not isinstance(reported, list):
         return (_not_issues(source, type(reported).__name__),)
     for item in reported:
-        # Checked per member rather than only on the container: a list holding a string
-        # passes a type check on the list and then fails an attribute away, as a traceback
-        # naming `severity` — which tells an operator nothing about which plugin is at
-        # fault.
         if not isinstance(item, Issue):
             return (_not_issues(source, f"a list holding {type(item).__name__}"),)
-    # An adapter names the offending key as the location where it can; where it cannot,
-    # the source is the least an operator needs in order to know which file to open.
     return tuple(
         Issue(issue.severity, issue.message, issue.location or source.name) for issue in reported
     )
@@ -1029,14 +717,7 @@ def _not_issues(source: SourceConfig, returned: str) -> Issue:
 
 
 def _committed(path: Path) -> str:
-    """A generated file exactly as it is on disk, newlines included.
-
-    ``newline=""`` so that Python does not translate a CRLF into an LF on the way in: a
-    file whose line endings were rewritten — by an editor, or by a ``git`` configured to
-    normalize them — parses to precisely the right statements and is precisely not the
-    bytes any run wrote (spec 5.5 rule 5). Read with the translation on, this check would
-    pass on a file no compiler could produce.
-    """
+    """A generated file exactly as it is on disk, line endings untranslated (spec 5.5 rule 5)."""
     with path.open(encoding="utf-8", newline="") as handle:
         return handle.read()
 
@@ -1044,27 +725,14 @@ def _committed(path: Path) -> str:
 # --------------------------------------------------------- the base revision, from git
 
 ENVIRONMENT_BASE_REF = "GITHUB_BASE_REF"
-"""The pull request's target branch, as GitHub Actions sets it.
-
-The one platform this project reads an environment variable from, and only as a default:
-``--base`` is what an adopter on GitLab or Azure DevOps passes, which is why the check is
-portable at all (spec 6.3). Read as a *branch name* and looked up on ``origin``, since a
-CI checkout has the base branch as a remote ref rather than a local one.
-"""
+"""The pull request's target branch, as GitHub Actions sets it. A default only; ``--base``
+is the portable route (spec 6.3)."""
 
 
 def _base_id_map(root: Path, requested: str | None) -> tuple[IdMap | None, str]:
-    """The ID map as the base revision holds it, for check 6's append-only comparison.
+    """The ID map as the base revision holds it, or ``None`` and the reason there is none.
 
-    "Append-only" is a claim about a change rather than about a state, so this is the one
-    question in ``semprini check`` the working tree cannot answer. When there is no base
-    revision to compare against — no git, no history, no remote — the answer is *no
-    answer*, and the check reports itself not run rather than passing quietly.
-
-    A base revision that predates the instance's ID map is not a failure: the map is
-    absent there, which is an empty map, which every current map is an append to. That is
-    the first pull request of an instance's life, and it must not fail the check that
-    exists to protect what it is creating.
+    A base revision that predates the map yields an empty map, not a failure.
     """
     revision = _base_revision(root, requested)
     if revision is None:
@@ -1074,9 +742,7 @@ def _base_id_map(root: Path, requested: str | None) -> tuple[IdMap | None, str]:
             f"or fetch enough history for CI to resolve one"
         )
 
-    # git addresses a blob from the *repository* root, and an instance is not always one:
-    # a monorepo holding several instances is an ordinary layout, and the prefix is what
-    # makes `<rev>:mappings/id-map.csv` name this instance's map rather than nothing.
+    # git addresses a blob from the repository root, which in a monorepo is not the instance.
     prefix = _git(root, "rev-parse", "--show-prefix")
     path = f"{(prefix or '').strip()}{ID_MAP_PATH.as_posix()}"
     committed = _git_output(root, "show", f"{revision}:{path}")
@@ -1084,22 +750,14 @@ def _base_id_map(root: Path, requested: str | None) -> tuple[IdMap | None, str]:
         # Resolvable revision, no ID map in it: the instance did not exist yet there.
         return IdMap(origin=f"{revision}:{path}"), ""
     try:
-        # utf-8-sig for the reason `IdMap.load` uses it: stewards open this file in Excel,
-        # which writes a byte-order mark, and the committed revision holds whatever they
-        # committed.
         return IdMap.loads(committed.decode("utf-8-sig"), origin=f"{revision}:{path}"), ""
     except (IdentityError, UnicodeDecodeError) as error:
         return None, f"the ID map at {revision} could not be read ({error})"
 
 
 def _base_revision(root: Path, requested: str | None) -> str | None:
-    """Resolve the revision the ID map is compared against, or ``None`` if there is none.
-
-    The merge base rather than the branch tip, and deliberately so: another pull request
-    merged into the base branch since this one forked adds rows this branch has never seen,
-    and comparing against the tip would report every one of them as a row this change
-    deleted. The fork point is the only revision this change is responsible for.
-    """
+    """The merge base with the first resolvable candidate, or ``None``. The merge base, not
+    the tip: rows another pull request added since the fork are not this change's."""
     for candidate in _base_candidates(root, requested):
         if _git(root, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}") is None:
             continue
@@ -1111,14 +769,7 @@ def _base_revision(root: Path, requested: str | None) -> str | None:
 
 
 def _base_candidates(root: Path, requested: str | None) -> Iterable[str]:
-    """What to try, most explicit first.
-
-    Deliberately short, and deliberately without a guess at ``main`` or ``master``. A
-    guessed branch that happens to exist would let the check report a comparison it did not
-    make — against a branch this change was never proposed for — and the failure mode of a
-    check that quietly measures the wrong thing is worse than one that says it measured
-    nothing.
-    """
+    """What to try, most explicit first. Never a guess at ``main`` or ``master``."""
     if requested:
         yield requested
         return
@@ -1130,16 +781,7 @@ def _base_candidates(root: Path, requested: str | None) -> Iterable[str]:
 
 
 def _git_output(root: Path, *arguments: str) -> bytes | None:
-    """Run git in the instance, returning its raw output, or ``None`` if it failed.
-
-    Every failure is one answer — "git cannot tell us" — and they are not distinguishable
-    in a way this module would act on differently: git missing, not a repository, an
-    unknown revision and a shallow clone all mean the same thing to check 6. What must not
-    happen is any of them reaching an operator as a traceback about ``subprocess``.
-
-    Bytes rather than text, because one caller is reading a committed CSV whose encoding
-    is the instance's business and not the console's.
-    """
+    """Run git in the instance, returning its raw output, or ``None`` for any failure."""
     try:
         completed = subprocess.run(
             ["git", *arguments],
@@ -1176,12 +818,7 @@ def _skipped(number: int, why: str) -> CheckOutcome:
 
 
 def _sort_key(issue: Issue) -> tuple[str, str, str]:
-    """Where every listing of issues in this module sorts from (spec 6.1.5).
-
-    Issues are collected in sets — one problem found by two checks is one problem — so an
-    order that ties on any field comes out by string hashing, and CI output that reorders
-    between runs is output nobody can diff.
-    """
+    """The order every listing of issues in this module uses (spec 6.1.5)."""
     return issue.sort_key
 
 
@@ -1190,13 +827,7 @@ def _count(number: int, noun: str) -> str:
 
 
 def _one_line(error: Exception) -> str:
-    """A library's message as one line.
-
-    pyshacl's carry a "For reference, see <spec URL>" continuation, and a parser's carry
-    the offending text. An issue is rendered as one bullet by ``CheckResult.summary`` and
-    pasted into a pull request body (spec 6.2), so a newline inside one silently ends the
-    list it was in — the same trap the run report hit with source-supplied labels.
-    """
+    """A library's message as one line, since an issue becomes one Markdown bullet (spec 6.2)."""
     return " ".join(str(error).split())
 
 
@@ -1210,18 +841,8 @@ _IRI_POLICY_TARGETS: Sequence[tuple[Kind, tuple[URIRef, ...], str]] = (
     (Kind.SCHEME, (SKOS_CONCEPT_SCHEME,), "a scheme"),
     (Kind.TAXONOMY_VALUE, (), "a taxonomy value"),
 )
-"""Which classes each kind's IRI rule targets, and how its message names them.
-
-``Kind.ENTITY`` covers attributes and business terms too: spec 3.1 partitions the IRI
-space by kind of *thing*, and all three are concepts minted in ``c:`` — the same reason
-``Kind.prefix`` maps them together. A taxonomy value has no class of its own and arrives
-through the SPARQL target instead.
-
-The phrase is written out rather than derived from ``Kind``: these messages are what an
-operator reads when a run refuses an IRI, and the enum's own spelling would produce "a
-entity" and "a taxonomy-value" — and would claim the ``c:`` rule is about entities when it
-is equally about the other two.
-"""
+"""Which classes each kind's IRI rule targets, and how its message names them (spec 3.1).
+A taxonomy value has no class of its own and arrives through the SPARQL target."""
 
 
 def _root(repo_root: Path | None) -> Path:
@@ -1229,15 +850,9 @@ def _root(repo_root: Path | None) -> Path:
 
 
 def _parse_files(directory: Path, what: str, root: Path) -> Mapping[str, Graph]:
-    """Every ``.ttl`` below ``directory``, one graph each, keyed by path from ``root``.
+    """Every ``.ttl`` below ``directory``, one graph each, keyed by POSIX path from ``root``.
 
-    An absent directory is no files, not an error: an instance with no overlays and no
-    local shapes is an ordinary instance, and spec 4.2's layout is a place to put them
-    rather than an obligation to have any.
-
-    Keyed relative to the instance root, and as a posix path, because these keys are what
-    an :class:`~semprini.model.Issue` reports as its location — a steward reads
-    ``shapes/local/regions.ttl`` and knows which file to open, on any platform.
+    An absent directory is no files. Raises :class:`ValidationError` for a file that does not parse.
     """
     if not directory.is_dir():
         return {}
@@ -1249,8 +864,6 @@ def _parse_files(directory: Path, what: str, root: Path) -> Mapping[str, Graph]:
             graph = Graph()
             graph.parse(path, format="turtle")
         except (OSError, UnicodeDecodeError, SyntaxError) as error:
-            # Hand-written RDF is where a syntax error is *likely* (spec 4.2), so it is
-            # named and collected rather than left to surface as an rdflib traceback.
             issues.append(Issue(Severity.ERROR, f"cannot read {what}: {error}", str(path)))
         else:
             files[name] = graph
@@ -1265,27 +878,15 @@ _CORE_NAMESPACES: Sequence[tuple[str, str]] = (
     ("sem", SEM),
     ("shp", SHAPES_NAMESPACE),
 )
-"""The two namespaces an instance does not own, and the prefixes a message names them by.
-
-``sem:`` is the metamodel, whose inventory is fixed by spec 3.2/3.3 and published at one
-IRI for every instance in existence; ``shp:`` is the core shapes. Whole namespaces rather
-than the terms and shapes that exist today, deliberately: a local file that claimed an
-unused IRI in either would be broken by the release that adds one, and the answer to
-"where do my own terms go" is spec 3.6's ``x:`` in both cases.
-"""
+"""The two namespaces an instance does not own (spec 3.2, 3.3, 3.6), and the prefixes a
+message names them by. Whole namespaces, not the terms that exist today."""
 
 _CONSTRAINS_NOTHING: Sequence[tuple[URIRef, Literal, str]] = (
     (SH.minCount, Literal(0), "sh:minCount 0"),
     (SH.uniqueLang, Literal(False), "sh:uniqueLang false"),
     (SH.closed, Literal(False), "sh:closed false"),
 )
-"""Constraint parameters at the value that makes them a no-op.
-
-Each is legal SHACL that constrains nothing at all — ``sh:minCount 0`` is satisfied by
-every node, and ``sh:uniqueLang``/``sh:closed`` only constrain when true. So refusing them
-cannot block a rule anyone meant, and each is what "make the core rule optional" looks
-like when someone writes it down.
-"""
+"""Constraint parameters at the value that makes them a no-op."""
 
 
 def _not_additive(name: str, graph: Graph) -> Iterable[Issue]:
@@ -1319,7 +920,7 @@ def _not_additive(name: str, graph: Graph) -> Iterable[Issue]:
 
 
 def _owned_by_the_plane(prefix: str, subject: URIRef) -> str:
-    """Why a statement about a core IRI is refused, said in the terms of the one it hit."""
+    """Why a statement about a core IRI is refused."""
     if prefix == "sem":
         return (
             f"makes a statement about {_short(subject)}, a metamodel term: an instance "
@@ -1337,12 +938,7 @@ def _owned_by_the_plane(prefix: str, subject: URIRef) -> str:
 def _relaxes(graph: Graph, subject: Node, written: str) -> str:
     """Why a no-op constraint is refused, naming the path it was written against.
 
-    The subject is usually a blank node — a property shape written inline — so the path is
-    what makes the message point at something a steward can find in their file.
-
-    ``min`` rather than ``Graph.value``, which picks arbitrarily among several: a property
-    shape carrying two paths is malformed but perfectly possible to write, and a message
-    chosen by rdflib's iteration order is a message that differs between machines.
+    ``min`` rather than ``Graph.value``, which picks arbitrarily among several paths.
     """
     path = min(graph.objects(subject, SH.path), key=str, default=None)
     about = f" on {_short(path)}" if isinstance(path, URIRef) else ""
@@ -1366,11 +962,8 @@ def _is_core_shape(value: Node) -> bool:
 
 
 def _short(value: Node) -> str:
-    """How a message names a term: a core IRI prefixed, anything else in full.
-
-    A blank node is named by what it is rather than by its identifier: an inline shape's
-    ``N4f3a...`` appears in no file, so quoting it would send a steward looking for a
-    string their editor cannot find.
+    """How a message names a term: a core IRI prefixed, a blank node by what it is, anything else in
+    full.
     """
     if isinstance(value, BNode):
         return "an unnamed shape"
@@ -1389,12 +982,7 @@ def _severity(report: Graph, result: Node) -> Severity:
 
 
 def _message(report: Graph, result: Node) -> str:
-    """Every ``sh:resultMessage``, joined in a fixed order.
-
-    Sorted rather than taken one at a time: a shape may carry several messages, rdflib
-    holds them in a set, and picking "the" message would follow string hashing — the same
-    trap the run report hit when choosing among a node's labels.
-    """
+    """Every ``sh:resultMessage``, joined in sorted order."""
     messages = sorted(str(value) for value in report.objects(result, SH.resultMessage))
     return "; ".join(messages) if messages else "constraint violated"
 
@@ -1415,11 +1003,8 @@ def _add_all(graph: Graph, subject: IdentifiedNode, *statements: tuple[URIRef, N
 
 
 def _blank(graph: Graph, *statements: tuple[URIRef, Node]) -> Node:
-    """A blank node carrying ``statements``.
-
-    Fine here, unlike anywhere else in this project: spec 5.5's no-blank-nodes rule
-    governs an instance's generated Turtle, and a shapes graph is neither serialized nor
-    committed.
+    """A blank node carrying ``statements``. Fine in a shapes graph, which is never serialized (spec
+    5.5).
     """
     node = BNode()
     _add_all(graph, node, *statements)

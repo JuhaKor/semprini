@@ -1,12 +1,8 @@
 """Source adapters (spec 5.2, 5.3).
 
-Adapters are discovered through the ``semprini.adapters`` entry-point group, not
-imported by name, so any installed distribution can add a source without forking the
-plane. Bundled adapters are ordinary plugins that happen to ship here.
-
-This is the import an adapter author writes against — ``BaseAdapter`` and the errors
-they raise — and the one the compiler uses to find them. It deliberately imports no
-adapter module: the bundled ones are found the same way a third party's is.
+The import an adapter author writes against, and the one the compiler discovers adapters
+through. It imports no adapter module: bundled adapters are found through the
+``semprini.adapters`` entry-point group like any third party's.
 """
 
 from __future__ import annotations

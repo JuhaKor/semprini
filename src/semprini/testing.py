@@ -1,13 +1,6 @@
 """The adapter contract, as an executable test (spec 5.2).
 
-Spec 5.2 promises that a new source system is added by installing a package — no fork,
-no patch. That promise is empty unless an author outside this project can find out
-whether their adapter actually holds up its end, and the obligations it has to meet are
-mostly *negative*: it must not write, must not mint, must not quietly return half a
-source. Nothing about a passing adapter looks different from a failing one until an
-instance has already committed the damage.
-
-So the contract ships as code. An adapter author writes one test::
+Ships in the wheel and imports no test framework. An adapter author writes one test::
 
     from semprini.testing import check_contract
     from my_package import MyAdapter
@@ -19,22 +12,12 @@ So the contract ships as code. An adapter author writes one test::
             unreachable={"path": str(tmp_path / "not-there")},
         )
 
-and gets every check below. It is deliberately framework-free — no pytest import, no
-base class to inherit — so that it runs under whatever the author's project already
-uses, and so that this module can be part of the shipped wheel rather than of this
-repository's test suite.
+and gets every check below. ``settings`` must make the adapter work and ``unreachable``
+must make its source unreadable; the second is required because an adapter that returns
+a partial model would deprecate everything missing from it (spec 5.4).
 
-Two of the checks need something only the author can supply: a ``settings`` mapping that
-makes the adapter work, and an ``unreachable`` one that makes its source impossible to
-read. The second is required rather than optional. Every source can fail — a file that
-is not there, a host that does not answer — and an adapter that has never been asked
-what it does when its source is down is exactly the adapter that will one day answer
-"deprecate everything" (spec 5.4).
-
-The write guard is a guard and not a proof: it intercepts the ways Python ordinarily
-opens a file for writing. An adapter determined to write behind it can, but an adapter
-that writes *by accident* — a cache, a debug dump, a temporary file next to the source —
-is caught, and that is the failure this is here for.
+The write guard intercepts the ordinary ways Python opens a file for writing. It catches
+an accidental write, not a determined one.
 """
 
 from __future__ import annotations
@@ -63,26 +46,18 @@ from semprini.model import (
 __all__ = ["AdapterContractError", "check_contract"]
 
 CONTRACT_BASE_IRI = "https://semantics.example.com/"
-"""The base IRI the default context mints under — an RFC 2606 example domain, so an
-adapter that leaks it into a test report has leaked nothing real."""
+"""The base IRI the default context mints under; an RFC 2606 example domain."""
 
 _WRITE_MODES = frozenset("wax+")
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
 
 _GUARDED_OS_CALLS = ("mkdir", "rmdir", "remove", "unlink", "rename", "replace")
-"""Every :mod:`os` call that changes the filesystem without opening a file.
-
-Names, not objects: ``os.remove`` and ``os.unlink`` are separate attributes bound to
-separate functions, and :mod:`pathlib` reaches each of these by its own name."""
+"""Every :mod:`os` call that changes the filesystem without opening a file. Names, because
+``os.remove`` and ``os.unlink`` are separate attributes and :mod:`pathlib` uses each."""
 
 
 class AdapterContractError(IssueError):
-    """An adapter does not meet the contract of spec 5.2.
-
-    Carries every violation found, not the first: an author fixing a new adapter should
-    see the whole list once rather than one per run, for the same reason a configuration
-    error does (spec 5.1).
-    """
+    """An adapter does not meet the contract of spec 5.2. Carries every violation found."""
 
     noun = "contract violation"
 
@@ -104,8 +79,6 @@ def check_contract(
     issues: list[Issue] = []
     _check_the_class(adapter, issues)
     if issues:
-        # Nothing below can run against something that is not an adapter, and a hundred
-        # consequential failures would bury the one that explains them.
         raise AdapterContractError(issues)
 
     ctx = context if context is not None else _default_context()
@@ -133,8 +106,6 @@ def _check_the_class(adapter: type[BaseAdapter], issues: list[Issue]) -> None:
     if not isinstance(name, str) or not name:
         _fail(issues, "name", "has no 'name' — the entry-point name it is registered under")
     elif not is_slug(name):
-        # It is written by hand into config/semprini.yaml and read back out of the ID
-        # map, so it stays to characters that need no escaping or quoting anywhere.
         _fail(issues, "name", f"name {name!r} is not a slug (lower case, digits, '-', '_')")
 
 
@@ -160,9 +131,6 @@ def _check_construction_and_fetch(
         with _no_writes() as writes:
             model = instance.fetch()
     except Exception as error:
-        # Reported before the failure itself: a fetch that wrote and *then* failed is the
-        # case the no-writes rule exists for — a run that fails midway has to leave the
-        # instance exactly as it found it, and a half-written cache is how it does not.
         _report_writes(issues, writes, "no-writes", "fetch()")
         _fail(issues, "fetch", f"raised on a configuration that should work: {error!r}")
         return
@@ -196,13 +164,7 @@ def _check_source_refs(model: InternalModel, source_name: str, issues: list[Issu
 
 
 def _check_nothing_is_minted(model: InternalModel, ctx: RunContext, issues: list[Issue]) -> None:
-    """No adapter-supplied value is an IRI in the instance's or the metamodel's space.
-
-    There is no exception. ``Scheme.enumerates`` used to be one — it held an IRI the
-    instance configured by hand — and is now a ``SourceRef`` like every other
-    cross-reference (spec 5.3), so an adapter has nothing left that is allowed to look
-    like an IRI and the rule reads the same for every field.
-    """
+    """No adapter-supplied value is an IRI in the instance's or the metamodel's space."""
     for object_ in model.objects:
         for name, value in _strings(object_):
             if ctx.base_iri in value:
@@ -222,17 +184,11 @@ def _check_nothing_is_minted(model: InternalModel, ctx: RunContext, issues: list
 
 
 def _check_text_is_normalized(model: InternalModel, issues: list[Issue]) -> None:
-    """Nothing an adapter returned still carries an invisible or decomposed character.
+    """Nothing an adapter returned still carries an invisible or decomposed character (spec 5.5 rule
+    9).
 
-    Every string routed through ``Text`` or ``SourceRef`` is normalized by construction
-    (spec 5.5 rule 9), so this passes for free — which is the point. What it catches is a
-    field that reaches neither: a value an author assembled from source text and stored as
-    a plain ``str``, where the two failures are invisible ones. A key that differs from
-    another key by a character nobody can see mints a second IRI and freezes it; a label
-    that does splits a hierarchy and reports the halves as orphans.
-
-    Named with the character's code point, because the whole difficulty of this class of
-    bug is that quoting the value shows the author nothing.
+    Catches a plain ``str`` field that bypassed ``Text`` and ``SourceRef``. The offending
+    characters are named by code point.
     """
     for object_ in model.objects:
         for name, value in _strings(object_):
@@ -253,12 +209,7 @@ def _check_text_is_normalized(model: InternalModel, issues: list[Issue]) -> None
 
 
 def _check_it_normalizes(model: InternalModel, issues: list[Issue]) -> None:
-    """The model the adapter returned is internally consistent.
-
-    An adapter may report one object twice — the same entity in two domain models is
-    ordinary (spec 5.3) — but the two reports have to agree, and one source key may not
-    name two different things.
-    """
+    """The model the adapter returned merges with itself (spec 5.3)."""
     try:
         model.normalized()
     except Exception as error:
@@ -266,12 +217,7 @@ def _check_it_normalizes(model: InternalModel, issues: list[Issue]) -> None:
 
 
 def _check_it_repeats(instance: BaseAdapter, model: InternalModel, issues: list[Issue]) -> None:
-    """Two fetches of an unchanged source agree.
-
-    Determinism is the property the whole plane rests on (spec 5.5): a compile that
-    reordered or renamed something per run would put a diff in front of a steward that
-    no one caused.
-    """
+    """Two fetches of an unchanged source agree (spec 5.5)."""
     writes: list[str] = []
     try:
         with _no_writes() as writes:
@@ -332,12 +278,10 @@ def _check_validate_config(instance: BaseAdapter, issues: list[Issue]) -> None:
 
 
 def _check_summary(instance: BaseAdapter, issues: list[Issue]) -> None:
-    """The report line is one line — it is rendered into a Markdown table (spec 5.6)."""
+    """The report line is one line; it is rendered into a Markdown table (spec 5.6)."""
     try:
         summary = instance.summary()
     except Exception as error:
-        # Collected like every other violation rather than escaping as a traceback: an
-        # author running this wants the list, not the first thing that went wrong.
         _fail(issues, "summary", f"summary() raised: {error!r}")
         return
     if not isinstance(summary, str):
@@ -353,11 +297,8 @@ def _check_unreachable_raises(
     source_name: str,
     issues: list[Issue],
 ) -> None:
-    """A source that cannot be read raises, and returns nothing at all (spec 5.2).
-
-    Guarded too, and for the sharpest version of the reason: an adapter that writes what
-    it managed to download before giving up leaves a file behind on precisely the run
-    that was supposed to change nothing.
+    """A source that cannot be read raises :class:`SourceUnreachableError` and writes nothing (spec
+    5.2).
     """
     writes: list[str] = []
     try:
@@ -402,24 +343,15 @@ def _fail(issues: list[Issue], check: str, message: str) -> None:
 
 
 def _report_writes(issues: list[Issue], writes: list[str], check: str, what: str) -> None:
-    """Report anything written during a guarded call, whatever else that call did.
-
-    Its own function because every guarded block has a failure path as well as a success
-    one, and the failure path is where a write matters most: the check that only looked
-    at the success path certified an adapter that wrote a partial file and then raised.
+    """Report anything written during a guarded call, on its failure path as well as its success
+    path.
     """
     if writes:
         _fail(issues, check, f"{what} wrote to {writes[0]}; adapters never write")
 
 
 def _strings(object_: SemanticObject) -> Iterator[tuple[str, str]]:
-    """Every string an adapter chose, field by field, however it is nested.
-
-    Recursive through dataclasses, because a :class:`~semprini.model.SourceRef` is one —
-    and ``Attribute.entity``, ``Relationship.source``/``target`` and
-    ``TaxonomyValue.parent`` are exactly the fields an author is tempted to write an IRI
-    into, since each of them names another object.
-    """
+    """Every string an adapter chose, field by field, recursing into nested dataclasses."""
     for descriptor in fields(object_):
         yield from (
             (descriptor.name, found) for found in _strings_in(getattr(object_, descriptor.name))
@@ -456,17 +388,8 @@ def _snapshot(value: Any) -> Any:
 def _no_writes() -> Iterator[list[str]]:
     """Record any attempt to open a file for writing, and let it happen anyway.
 
-    Recording rather than blocking: an adapter that is refused a write may take a
-    confusing second path, and what the author needs to see is the one line naming the
-    file it tried to write.
-
-    ``io.open`` is patched as well as ``builtins.open`` even though they are the same
-    function, because :mod:`pathlib` holds its own reference — ``Path.write_text`` would
-    otherwise pass straight through. For the same reason the :mod:`os` calls are patched
-    by name from :data:`_GUARDED_OS_CALLS` rather than one at a time: ``os.remove`` and
-    ``os.unlink`` are two attributes bound to two different objects, so patching one
-    leaves ``Path.unlink()`` — deletion, the most damaging thing an adapter could do to
-    an instance — entirely unrecorded.
+    ``io.open`` is patched as well as ``builtins.open`` because :mod:`pathlib` holds its
+    own reference, and the :mod:`os` calls by name for the same reason.
     """
     written: list[str] = []
     real_open, real_io_open, real_os_open = builtins.open, io.open, os.open
