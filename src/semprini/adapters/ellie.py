@@ -1,44 +1,15 @@
 """Bundled Ellie adapter (spec 5.3).
 
-Reads domain models **exported** from an Ellie instance as JSON — one file per model,
-committed under ``sources/ellie/`` and reviewed with the instance like any other source.
-A direct call to Ellie's REST API is a later mode of this same adapter, and deliberately
-not a second adapter: identity is keyed by ``(source name, Ellie UUID)``, so a source that
-switched adapters would re-mint every IRI it owns (spec 5.4). The exported document is the
-response body of ``GET /api/v1/models/{id}``, which is why the switch will change how the
-bytes arrive and nothing about what they mean.
+Reads domain models exported from one Ellie instance as JSON, one file per model, the
+body of ``GET /api/v1/models/{id}``. One Ellie instance is one configured source, since
+entity UUIDs are unique across an instance and the same entity may appear in several
+models. The ``models:`` list is an allowlist; a listed model that cannot be read fails
+the run, and a file whose ``modelId`` disagrees with its entry is refused.
 
-**One Ellie instance is one configured source.** Entity UUIDs are unique across an
-instance, not within a model — that is precisely what lets the same entity appear in two
-domain models and resolve to one node with two ``skos:inScheme`` triples (spec 5.3). So
-the models of one instance must share a source name, or the same entity would take two
-identities; and two Ellie instances must *not*, or their UUID spaces would be assumed to
-be one. This is the opposite arrangement to the Excel adapter, and for the opposite
-reason: a workbook's keys are unique only within the file.
-
-**The allowlist is the ``models:`` list.** Nothing is read that is not listed, and a
-listed model that cannot be read fails the run rather than being skipped, because a model
-that silently went missing would look exactly like a model whose contents were all deleted
-— and the compiler would deprecate every object in it (spec 5.4). Each entry states the
-model's Ellie ``id`` as well as its ``path``, and a file whose ``modelId`` disagrees is
-refused: an export copied over the wrong file is otherwise a scheme quietly changing what
-it contains.
-
-Two mappings are worth stating here because they are decisions rather than transcriptions:
-
-*Inheritance becomes ``skos:broader``.* Ellie draws a supertype relationship as an
-ordinary relationship whose ends are typed ``superType``/``subType`` — and gives it no
-name and no verb labels. Reifying it as a ``sem:Relationship`` would mean inventing a
-label no modeller wrote; ``skos:broader`` between the two entities says exactly the fact
-the modeller stated, using a reused SKOS term that costs the metamodel no new vocabulary
-(spec 3.3).
-
-*Only what the metamodel can hold is carried.* ``progressStatus``, ``Source systems``,
-``Administrated by``, relationship cardinality and the attribute metadata beyond
-``Description`` are read by nobody yet. Each would need a term that does not exist, and
-inventing one per Ellie field is what the removal of ``sem:ellieId`` ruled out (spec 3.3).
-They are deferred rather than dismissed — an attribute's ``Data type`` and ``Semantic
-link`` in particular are what ``sem:represents`` is reserved for (spec 3.1).
+Two mappings are decisions rather than transcriptions. A supertype relationship, which
+Ellie gives no name or labels, becomes ``skos:broader`` between its ends rather than a
+``sem:Relationship`` (spec 3.3). Metadata the metamodel cannot hold, such as
+``progressStatus`` and an attribute's ``Data type``, is not carried (spec 3.1, 3.3).
 """
 
 from __future__ import annotations
@@ -69,38 +40,24 @@ __all__ = ["EllieAdapter", "EllieContentError"]
 _SETTINGS = frozenset({"base_url", "models"})
 _MODEL_SETTINGS = frozenset({"id", "path", "scheme_slug"})
 
-# The cardinality values that mean inheritance rather than an association. Ellie states
-# them on the two ends of an otherwise ordinary relationship (spec 5.3).
+# The end types that mark a relationship as inheritance (spec 5.3).
 _SUPERTYPE = "superType"
 _SUBTYPE = "subType"
 
-# Entity and attribute metadata this adapter reads. Everything else in `metadata` is
-# tolerated and ignored: an export is a working document that gains fields with each
-# release of the tool, so an unknown one is not an error the way an unknown *config* key
-# is (spec 5.1).
+# The metadata this adapter reads; anything else in `metadata` is ignored.
 _DESCRIPTION = "Description"
 _SYNONYMS = "Synonyms"
 _EXAMPLES = "Examples"
 
 _SOURCE = "source"
-"""The one label direction that reads *backwards*, target → source — "Order line *is part
-of* Order". Everything else, ``"target"`` included and an absent direction with it, reads
-source → target. Stated as the exception rather than as a list of accepted values on
-purpose: a relationship carrying a single label often omits `direction` altogether, and
-holding out for the literal string ``"target"`` would discard the only verb the modeller
-wrote and then fail the run for having no label."""
+"""The one label direction that reads target → source. Everything else, an absent
+direction included, reads source → target."""
 
 
 class EllieContentError(AdapterError):
-    """An export was read but says something the compiler cannot act on.
+    """An export was read but says something the compiler cannot act on — exit code 1 (spec 5.1).
 
-    Exit code 1, not 3: the file was perfectly readable and its content is wrong, which is
-    a modeller's problem rather than a retry (spec 5.1).
-
-    Every problem across every configured model is collected into one of these. An export
-    is machine-written, so its mistakes are not the bulk edits a workbook produces — but
-    one broken cross-reference usually means several, and they are read in CI, where one
-    problem per round trip costs a run each.
+    Collects every problem across every configured model.
     """
 
     def __init__(self, issues: Sequence[Issue]) -> None:
@@ -140,31 +97,23 @@ class EllieAdapter(BaseAdapter):
     Settings:
 
     ``base_url``
-        The Ellie instance these models were exported from, ``https://<slug>.ellie.ai/api/v1``.
-        Recorded rather than called in this mode: UUIDs are unique *within* an instance,
-        so which instance a source's keys belong to is part of what the source name means
-        (spec 5.4), and it appears in the run report so a reviewer can see it. The later
-        API mode reads it and adds a ``token_env`` beside it, leaving identity untouched.
+        The Ellie instance these models were exported from, such as
+        ``https://<slug>.ellie.ai/api/v1``. Recorded, not called; it appears in the run report.
     ``models``
-        The allowlist. Each entry carries ``id`` (Ellie's model id), ``path`` (the
-        exported JSON, relative to the instance repository) and ``scheme_slug`` (the
-        permanent slug of the ``skos:ConceptScheme`` the model becomes — its IRI local
-        name and its output file, both frozen by the ID map on the run that mints them).
+        The allowlist. Each entry carries ``id`` (Ellie's model id), ``path`` (the exported
+        JSON, relative to the instance repository) and ``scheme_slug`` (the permanent slug
+        of the scheme the model becomes).
     """
 
     name = "ellie"
 
     _read: tuple[_ModelRead, ...] = ()
-    """What the last fetch read, for :meth:`summary`. Empty until then — an adapter is
-    constructed by ``semprini check`` without ever fetching (spec 6.1)."""
+    """What the last fetch read, for :meth:`summary`."""
 
     # --------------------------------------------------------------------- the contract
 
     def fetch(self) -> InternalModel:
-        # Its own configuration, checked before it is used: `validate_config()` is on no
-        # compile path (spec 6.1 calls it, a run does not), so without this a run that
-        # skipped `semprini check` would reach the files with settings nobody validated.
-        # Exit 2, the same as any other configuration error.
+        # Spec 5.3: an adapter validates its own settings before reading anything.
         issues = [issue for issue in self.validate_config() if issue.severity is Severity.ERROR]
         if issues:
             raise ConfigError(issues)
@@ -176,11 +125,7 @@ class EllieAdapter(BaseAdapter):
             try:
                 document = self._document(entry)
             except EllieContentError as error:
-                # Batched with the rest rather than raised here: a file that will not parse
-                # is exactly as much a content problem as a file that parses and says the
-                # wrong thing, and stopping on the first would hand the operator one
-                # problem per CI round trip. `SourceUnreachableError` is deliberately not
-                # caught — that is exit 3, a retry rather than an edit (spec 5.1).
+                # Batched; SourceUnreachableError is not caught (spec 5.1).
                 problems.extend(error.issues)
                 continue
             part = _read_model(document, source=self.source_name, entry=entry, issues=problems)
@@ -198,15 +143,9 @@ class EllieAdapter(BaseAdapter):
         )
         self._read = tuple(read)
         try:
-            # An entity in several models is one object with several schemes (spec 5.3),
-            # and merging it here rather than leaving it to the run loop means this
-            # adapter returns the same model however many files described it — which is
-            # what the contract's two fetches compare.
+            # An entity in several models is one object with several schemes (spec 5.3).
             return model.normalized()
         except MergeConflictError as error:
-            # Reachable only from hand-edited exports: Ellie's own cross-model reuse gives
-            # one UUID one set of statements. Re-raised as a content error so it reaches
-            # the operator as an issue naming the source, not as a traceback.
             raise EllieContentError(
                 [
                     Issue(
@@ -289,12 +228,8 @@ class EllieAdapter(BaseAdapter):
             if _plain(model_id) == "":
                 issues.append(Issue(Severity.ERROR, "a model needs Ellie's 'id'", f"{at}.id"))
             else:
-                # Compared as text throughout: it is the scheme's source key, and the ID
-                # map's columns are text (spec 5.4). YAML gives an int, an export gives an
-                # int, and a quoted id in either must not mint a second scheme. Read
-                # through `_plain` on both sides so that the allowlist and the export are
-                # compared after the same normalization — an id pasted into the config
-                # with an invisible character would otherwise match no file at all.
+                # Compared as normalized text on both sides: it is the scheme's source key (spec
+                # 5.4).
                 first = seen_ids.setdefault(_plain(model_id), index)
                 if first != index:
                     issues.append(
@@ -339,8 +274,6 @@ class EllieAdapter(BaseAdapter):
             else:
                 first = seen_slugs.setdefault(str(slug), index)
                 if first != index:
-                    # Two models in one file: the second would overwrite the first's
-                    # output and the ID map would hold two source keys for one IRI.
                     issues.append(
                         Issue(
                             Severity.ERROR,
@@ -370,9 +303,7 @@ class EllieAdapter(BaseAdapter):
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as error:
-            # The one failure that is exit 3, and the one spec 5.3 insists must fail the
-            # run rather than be skipped: a listed model that cannot be read is not an
-            # empty model, and treating it as one would deprecate everything in it.
+            # Exit 3; a listed model that cannot be read fails the run (spec 5.3).
             raise SourceUnreachableError(
                 f"source {self.source_name!r}: cannot read model {entry.model_id} "
                 f"at {path}: {error}"
@@ -394,11 +325,7 @@ class EllieAdapter(BaseAdapter):
 def _unwrap(document: Any, entry: _ModelEntry) -> Mapping[str, Any]:
     """The model object, whether or not the export wraps it in ``model``.
 
-    Both shapes occur, so both are accepted — but on **structure**, not on the presence of
-    a key. A document that is neither is refused by name rather than read as a model with
-    no entities, which would compile to an empty scheme and deprecate everything the model
-    used to hold (spec 5.4). That is the same failure the Excel adapter's strict headers
-    exist to prevent: a lenient reader does not fail, it produces a different graph.
+    A document that is neither shape is refused rather than read as an empty model (spec 5.4).
     """
     if not isinstance(document, Mapping):
         raise EllieContentError(
@@ -447,9 +374,6 @@ def _read_model(
     where = entry.path
     stated = _plain(document.get("modelId"))
     if stated != entry.model_id:
-        # The allowlist is keyed by Ellie's model id (spec 5.3), so the file has to be the
-        # model the configuration named. An export copied over the wrong path otherwise
-        # replaces a scheme's whole contents and the run reports it as ordinary change.
         issues.append(
             Issue(
                 Severity.ERROR,
@@ -466,10 +390,7 @@ def _read_model(
         return None
 
     if "entities" not in document:
-        # An empty `entities` list is a model that genuinely holds nothing and is read as
-        # such; an *absent* one is a truncated file. The two are worth separating because
-        # reading the second as the first deprecates every object the model holds (spec
-        # 5.4) — the same failure `_unwrap` refuses a wrapper-shaped document for.
+        # An empty list is an empty model; an absent key is a truncated file (spec 5.4).
         issues.append(
             Issue(
                 Severity.ERROR,
@@ -481,9 +402,7 @@ def _read_model(
         return None
 
     scheme = Scheme(
-        # Keyed by Ellie's model id, not by the slug: the slug is this instance's name for
-        # the scheme and the id is the source's, and the ID map is keyed by the source's
-        # (spec 5.4). Renaming the model in Ellie then costs no identity.
+        # Keyed by Ellie's model id, not the slug (spec 5.4).
         source_refs={source: entry.model_id},
         pref_label=name,
         definition=_plain(document.get("description")) or None,
@@ -521,11 +440,8 @@ def _read_relationships(
     entry: _ModelEntry,
     issues: list[Issue],
 ) -> tuple[tuple[Relationship, ...], Mapping[str, tuple[SourceRef, ...]]]:
-    """The model's relationships, with its inheritance separated out.
-
-    Read before the entities because inheritance is stated *as* a relationship and lands
-    on the narrower entity as ``skos:broader``, which has to be known before that entity
-    is constructed.
+    """The model's relationships, with inheritance separated out as ``skos:broader`` per narrower
+    entity.
     """
     relationships: list[Relationship] = []
     broader: dict[str, list[SourceRef]] = {}
@@ -549,10 +465,7 @@ def _read_relationships(
         if _plain(source_end.get("startType")) == _SUPERTYPE or (
             _plain(target_end.get("endType")) == _SUBTYPE
         ):
-            # Inheritance: the target is a specialization of the source. No reified
-            # relationship is emitted for it — Ellie gives these rows no name and no
-            # labels, so a sem:Relationship would need a prefLabel nobody wrote, and
-            # skos:broader already states the fact once (spec 3.3).
+            # Inheritance: the target is a specialization of the source (spec 3.3).
             if source_id == target_id:
                 issues.append(Issue(Severity.ERROR, f"{source_id} is its own supertype", where))
                 continue
@@ -561,9 +474,7 @@ def _read_relationships(
 
         labels = _labels(raw)
         forward = [label for label, direction in labels if direction.casefold() != _SOURCE]
-        # Ellie's own `name` first, when a modeller filled it in; the reading verb
-        # otherwise. A name appearing later re-labels the node without re-minting it, so
-        # preferring it costs no identity (spec 5.4).
+        # Ellie's own `name` when a modeller filled it in; the forward verb otherwise.
         preferred = _plain(raw.get("name")) or (forward[0] if forward else "")
         if not preferred:
             issues.append(
@@ -615,9 +526,7 @@ def _read_entities(
                 pref_label=name,
                 definition=_plain(metadata.get(_DESCRIPTION)) or None,
                 alt_labels=_synonyms(metadata.get(_SYNONYMS)),
-                # Unsplit, unlike the synonyms: Ellie's Examples field is one prose cell —
-                # "Drill, hammer, spanner" is a sentence a modeller wrote, and cutting it
-                # on its commas would invent three statements where the source made one.
+                # Unsplit, unlike the synonyms: Examples is one prose cell.
                 examples=tuple(filter(None, (_plain(metadata.get(_EXAMPLES)),))),
                 schemes=(entry.slug,),
                 broader=broader.get(key, ()),
@@ -626,10 +535,8 @@ def _read_entities(
         attributes.extend(
             _read_attributes(raw, source=source, entry=entry, owner=key, issues=issues)
         )
-    # Inheritance lands *on* the narrower entity, so a supertype relationship pointing at
-    # an entity this model does not hold has nowhere to go — and, unlike every other
-    # cross-reference, nothing downstream would notice: the build stage checks the refs an
-    # object carries, and this one was never carried. Reported here or not at all.
+    # A supertype relationship whose narrower entity the model does not hold is carried by
+    # nothing, so nothing downstream would notice it.
     for orphan in sorted(set(broader) - held):
         issues.append(
             Issue(
@@ -650,12 +557,8 @@ def _read_attributes(
     owner: str,
     issues: list[Issue],
 ) -> list[Attribute]:
-    """One entity's attributes — ``sem:Attribute`` nodes pointing back at it.
-
-    First-class nodes rather than RDF properties, because Ellie gives them identity and a
-    description of their own (spec 3.2). Only ``Description`` is carried; the rest of an
-    attribute's metadata — ``PK``, ``Data type``, ``Semantic link`` — has no home in the
-    metamodel yet.
+    """One entity's attributes as ``sem:Attribute`` nodes (spec 3.2). Only ``Description`` is
+    carried.
     """
     attributes: list[Attribute] = []
     raw_attributes = entity.get("attributes")
@@ -687,12 +590,7 @@ def _read_attributes(
 def _items(
     document: Mapping[str, Any], key: str, entry: _ModelEntry, issues: list[Issue]
 ) -> list[Mapping[str, Any]]:
-    """A top-level array of objects, refusing anything that is not one.
-
-    A missing array is an empty one — a model may genuinely hold no relationships — but a
-    *malformed* one is refused rather than skipped, since silently reading nothing is how
-    a whole model's worth of objects disappears from an instance in one run.
-    """
+    """A top-level array of objects. Missing is empty; malformed is refused."""
     raw = document.get(key)
     if raw is None:
         return []
@@ -726,12 +624,7 @@ def _labels(relationship: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
 
 
 def _synonyms(raw: object) -> tuple[str, ...]:
-    """``"Shipment, Dispatch, Consignment"`` → three ``skos:altLabel``s.
-
-    Comma-separated is what the field holds; a synonym containing a comma is not something
-    the format can express, and guessing otherwise would emit one label nobody wrote
-    instead of the several they did.
-    """
+    """``"Shipment, Dispatch, Consignment"`` → three ``skos:altLabel``s."""
     text = _plain(raw)
     if not text:
         return ()
@@ -739,26 +632,15 @@ def _synonyms(raw: object) -> tuple[str, ...]:
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
-    """A nested JSON object, or an empty one where the export omitted it.
-
-    An absent ``metadata`` block and an empty one say the same thing, and neither is worth
-    a separate branch at every field that reads out of one.
-    """
+    """A nested JSON object, or an empty one where the export omitted it."""
     if isinstance(value, Mapping):
         return {str(key): item for key, item in value.items()}
     return {}
 
 
 def _plain(value: object) -> str:
-    """A JSON scalar as trimmed text; ``null`` and absent both become ``""``.
-
-    Ellie writes ``null`` where a field is unset and ``""`` where it was cleared, and the
-    difference is not one the graph can hold: an empty description emits no
-    ``skos:definition`` either way (spec 5.3).
-
-    Normalized as well as trimmed (spec 5.5 rule 9). A modelling tool holds prose typed
-    and pasted by people exactly as a spreadsheet does, and the keys read through here are
-    identifiers: an invisible character in one mints a second IRI for one entity.
+    """A JSON scalar as normalized text (spec 5.5 rule 9); ``null``
+    and absent both become ``""``.
     """
     if value is None:
         return ""

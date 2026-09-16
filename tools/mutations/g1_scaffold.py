@@ -79,8 +79,6 @@ MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
         "the base IRI is judged by a looser rule than the serializer's",
         SCAFFOLD,
         """    try:
-        # The serializer's own rule, so a base IRI accepted here cannot fail when the
-        # instance writes its first file (spec 5.5).
         namespaces(base_iri)
     except ValueError as error:
         issues.append(Issue(Severity.ERROR, str(error), "--base-iri"))""",

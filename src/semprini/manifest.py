@@ -1,26 +1,7 @@
-"""``generated/.manifest.json`` — what makes ``generated/`` machine-owned (spec 4.3, 7).
-
-Every other rule about ``generated/`` is a convention until something enforces it. This
-module is that something: it records a content hash of every file the compiler wrote,
-plus the compiler and ontology versions that wrote them, so that CI can answer two
-questions no amount of review discipline answers reliably.
-
-*Did a human edit a generated file?* A hand-corrected label in ``concepts-sales.ttl`` is
-invisible in a PR that also contains a real change, and it would be silently reverted by
-the next compile — after living in the graph long enough for something to depend on it.
-A recomputed hash catches it (spec 6.1 check 2).
-
-*Is this output still the output of the running compiler?* An upgrade that reflows files
-must be a deliberate "recompile with `<version>`" PR, not a surprise mixed into a content
-change (spec 7). The recorded versions are what make that drift visible (spec 6.1 check 3).
-
-The manifest carries **no timestamps** and nothing else that varies between two runs of
-the same input: it is itself a governed file, and one that changed on every run would make
-every scheduled compile open an empty PR.
-
-Two files under ``generated/`` are deliberately **not** hashed: this one, which cannot
-contain its own hash, and ``.report.md``, which is prose about a run rather than governed
-content and is written on different terms (spec 5.6).
+"""``generated/.manifest.json`` — what makes ``generated/`` machine-owned (spec 4.3, 7). A content
+hash of every file the compiler wrote, plus the compiler and ontology versions that wrote them,
+so that CI detects a hand edit (spec 6.1 check 2) and version drift (spec 6.1 check 3). No
+timestamps. The manifest itself and ``.report.md`` are not hashed (spec 5.6).
 """
 
 from __future__ import annotations
@@ -66,22 +47,12 @@ _DIGEST = re.compile(rf"{_ALGORITHM}:[0-9a-f]{{64}}")
 
 
 def digest(data: bytes) -> str:
-    """The recorded hash of one file's bytes.
-
-    The algorithm is written into every value rather than declared once at the top of the
-    document, so that a line of the manifest means something on its own and a change of
-    algorithm cannot be mistaken for a change of content.
-    """
+    """The recorded hash of one file's bytes, algorithm included."""
     return f"{_ALGORITHM}:{hashlib.sha256(data).hexdigest()}"
 
 
 class ManifestError(IssueError):
-    """The manifest is missing, malformed, or disagrees with the files — exit code 1.
-
-    A validation failure rather than a configuration error (spec 5.1): the manifest is
-    written by the compiler, so an operator fixes it by running the compiler, not by
-    editing a setting.
-    """
+    """The manifest is missing, malformed, or disagrees with the files — exit code 1 (spec 5.1)."""
 
     noun = "manifest error"
 
@@ -94,19 +65,10 @@ class Manifest:
     ontology_version: str
 
     files: Mapping[str, str] = field(hash=False)
-    """File name under ``generated/`` → :func:`digest` of its bytes.
-
-    Excluded from the generated ``__hash__`` but not from ``__eq__``, the pattern every
-    frozen dataclass here that holds a mapping follows: a mapping is unhashable, and a
-    class advertised as frozen that cannot go in a set is a trap for the next caller."""
+    """File name under ``generated/`` → :func:`digest` of its bytes."""
 
     def __post_init__(self) -> None:
-        # The invariant, enforced where a manifest is built rather than where a path is
-        # composed from it: a recorded name is used as a path segment under generated/,
-        # so one that escapes would have verification read and hash a file outside the
-        # machine-owned directory this class exists to bound (spec 4.3). ``loads`` filters
-        # these out first, with the offending key named; this catches every other way one
-        # could arrive.
+        # A recorded name becomes a path segment under generated/ (spec 4.3).
         for name in self.files:
             if not is_generated_file_name(name):
                 raise ManifestError(
@@ -126,14 +88,9 @@ class Manifest:
     ) -> Manifest:
         """Record the files a run produced.
 
-        ``compiler`` and ``ontology`` are injected so that a test can pin them; production
-        callers pass neither and get the versions actually running (spec 7).
-
-        An uninstalled compiler is **refused**. Running from a source tree with nothing
-        installed reports version ``0.0.0+source``, which pins nothing: two different
-        working trees record the same string, and the drift check (spec 6.1 check 3) would
-        pass between them. A manifest is a promise about which release produced a file,
-        and a source tree cannot make it.
+        ``compiler`` and ``ontology`` let a test pin the versions; production callers pass
+        neither (spec 7). Raises :class:`ManifestError` for an uninstalled compiler, whose
+        version identifies no release, and for a file that is never recorded.
         """
         recorded = compiler_version() if compiler is None else compiler
         if recorded == UNINSTALLED_VERSION:
@@ -152,8 +109,6 @@ class Manifest:
         hashes: dict[str, str] = {}
         for file in files:
             if file.name in _NOT_RECORDED:
-                # A caller bug, not a file to skip quietly: passing the manifest to itself
-                # means whatever it recorded would be stale the moment it was written.
                 raise ManifestError(
                     [
                         Issue(
@@ -176,12 +131,7 @@ class Manifest:
         )
 
     def dumps(self) -> str:
-        """The manifest as it is written — sorted, indented, one trailing LF.
-
-        Sorted at both levels and formatted the same way every time, for the same reason
-        the Turtle is (spec 5.5): a reviewer reads the diff, and a re-ordered JSON object
-        would make one changed file look like a rewritten manifest.
-        """
+        """The manifest as it is written: sorted, indented, one trailing LF (spec 5.5)."""
         document = {
             "compiler_version": self.compiler_version,
             "files": dict(self.files),
@@ -190,11 +140,8 @@ class Manifest:
         return json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
     def to_file(self) -> OutputFile:
-        """The manifest as one of the run's output files.
-
-        Returned this way so that it is written by the same call that writes the Turtle
-        (:func:`semprini.build.write_all`), rather than through a second writer that could
-        disagree about encoding or line endings. ``graph`` is ``None``: it is not RDF.
+        """The manifest as one of the run's output files, written by
+        :func:`semprini.build.write_all`.
         """
         return OutputFile(name=MANIFEST_FILE, text=self.dumps())
 
@@ -202,11 +149,8 @@ class Manifest:
 
     @classmethod
     def load(cls, repo_root: Path | None = None) -> Manifest:
-        """Read ``<repo_root>/generated/.manifest.json``.
-
-        A missing manifest is an error, unlike a missing ID map: ``semprini init`` writes
-        one (spec 5.7 step 4), so an instance without one has had it deleted, and treating
-        that as "nothing to check" would turn the integrity check off by removing a file.
+        """Read ``<repo_root>/generated/.manifest.json``. A missing
+        manifest is an error (spec 5.7).
         """
         path = (Path.cwd() if repo_root is None else Path(repo_root)) / GENERATED_DIR
         path = path / MANIFEST_FILE
@@ -251,9 +195,6 @@ class Manifest:
             )
 
         for key in sorted(set(document) - set(_KEYS)):
-            # Rejected rather than ignored, for the reason configuration rejects unknown
-            # keys (spec 5.1): a key the compiler does not read is either a typo or a
-            # newer manifest this version cannot honestly check.
             issues.append(Issue(Severity.ERROR, f"unknown key {key!r}", key))
         for key in _KEYS:
             if key not in document:
@@ -276,14 +217,8 @@ class Manifest:
     def verify(self, repo_root: Path | None = None) -> tuple[Issue, ...]:
         """Recompute every hash and compare (spec 6.1 check 2).
 
-        Three ways to fail, and all three are the same underlying event — something other
-        than the compiler wrote in ``generated/``: a recorded file whose bytes changed, a
-        recorded file that is gone, and a file present that the manifest does not know
-        about. The third matters as much as the first: an instance can otherwise
-        accumulate output from a scheme that no longer exists, and a consumer loading the
-        directory from Git would read statements no source still makes.
-
-        Every problem is returned, not the first: these are read in CI.
+        Reports a changed file, a missing file and an unrecorded file alike; every
+        problem is returned, not the first.
         """
         directory = (Path.cwd() if repo_root is None else Path(repo_root)) / GENERATED_DIR
         issues: list[Issue] = []
@@ -326,23 +261,8 @@ class Manifest:
     ) -> tuple[Issue, ...]:
         """Compare the recorded versions with the running ones (spec 6.1 check 3, 7).
 
-        Drift is not a defect in the output — the committed files are exactly what the
-        recorded version produced. It is a statement that the instance has not been brought
-        to the running release, which is a separate, reviewable PR precisely so that an
-        upgrade's reflow never arrives mixed into a content change.
-
-        The message names ``semprini migrate`` rather than "recompile", which is what it said
-        before that command existed (G3). The difference matters to whoever reads it: a
-        recompile needs the sources and a credential, and for an object no source reports any
-        more it carries the *old* statements forward (spec 3.5, 7) — so on the one kind of
-        release where it seems interchangeable, it is not.
-
-        **Which way the drift points decides the advice**, and getting that wrong is worse than
-        saying nothing. An instance already migrated to a newer release, checked by CI that
-        still pins the old one, drifts *backwards* — and telling that operator to migrate to the
-        installed version names a command that is refused, since migrations only ever move
-        forward (spec 7). It is a reachable state and an ordinary one: it is what a pull request
-        looks like between the migration commit and the workflow pin being updated.
+        The advice depends on which way the drift points: an instance ahead of the
+        installed release has a stale pin, not a migration to run.
         """
         running = {
             "compiler": compiler_version() if compiler is None else compiler,
@@ -363,14 +283,8 @@ class Manifest:
 
 
 def _advice(recorded: str, running: str) -> str:
-    """What to do about drift, given which of the two compiler versions is the newer.
-
-    Three answers, because there are three states and only one of them is the upgrade
-    everybody pictures. Ahead of the installed release, the instance does not need migrating —
-    the *pin* is stale, and migrating backwards is refused. Unorderable versions (a hand-edited
-    manifest, a compiler running from a source tree) get the one sentence that is true either
-    way rather than a guess dressed as an instruction.
-    """
+    """What to do about drift: migrate forward, fix a stale pin, or, when the versions
+    cannot be ordered, make them agree."""
     here, there = version_parts(running), version_parts(recorded)
     if here is None or there is None:
         return "the two must agree before this instance can be committed"
@@ -385,13 +299,7 @@ def _advice(recorded: str, running: str) -> str:
 
 
 def _present(directory: Path) -> list[str]:
-    """Every file under ``generated/``, relative to it, or none if it does not exist.
-
-    Walked recursively although ``generated/`` is flat (spec 4.2), because the point of
-    the unrecorded-file check is stale output a consumer would still load from Git:
-    ``generated/old/concepts-retired.ttl`` is read by anyone who parses the directory,
-    and a check that only looked at the top level would pass it.
-    """
+    """Every file under ``generated/``, recursively, relative to it; none if it does not exist."""
     if not directory.is_dir():
         return []
     return [
@@ -400,8 +308,7 @@ def _present(directory: Path) -> list[str]:
 
 
 def _string(document: Mapping[str, Any], key: str, issues: list[Issue]) -> str | None:
-    # An absent key is already reported; a key present but null is not the same thing and
-    # is reported here, or a manifest could disable a version check by nulling it out.
+    # An absent key is already reported; a present but null one is reported here.
     if key not in document:
         return None
     value = document[key]
@@ -422,10 +329,6 @@ def _files(document: Mapping[str, Any], issues: list[Issue]) -> Mapping[str, str
     for name, recorded in value.items():
         location = f"files.{name}"
         if not is_generated_file_name(name):
-            # A recorded name is used as a path segment under generated/, so a
-            # hand-edited manifest holding "../../secrets" would have verification read
-            # and hash a file outside the machine-owned directory it is meant to bound
-            # (spec 4.3). The same escape the build stage refuses for a scheme slug.
             issues.append(
                 Issue(Severity.ERROR, f"not a file name in generated/: {name!r}", location)
             )
@@ -445,14 +348,8 @@ def _files(document: Mapping[str, Any], issues: list[Issue]) -> Mapping[str, str
 
 
 def is_generated_file_name(name: Any) -> bool:
-    """Whether ``name`` names a file directly inside ``generated/`` and nothing else.
-
-    Public because more than one thing composes a path under ``generated/`` from a name
-    it was handed: the manifest from its own keys, and a migration from the file names a
-    step returned (spec 7). Both are refused the same way, in one definition.
-    """
+    """Whether ``name`` names a file directly inside ``generated/`` and nothing else."""
     if not isinstance(name, str) or not name or name in {".", ".."}:
         return False
-    # Both separators, whatever the platform: a manifest written on one machine is
-    # verified on another, and a backslash is a path segment on exactly one of them.
+    # Both separators, whatever the platform.
     return "/" not in name and "\\" not in name and not PurePosixPath(name).is_absolute()

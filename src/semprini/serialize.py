@@ -1,22 +1,7 @@
-"""Canonical Turtle serialization (spec 5.5).
-
-The linchpin of the design: reviewable PR diffs, safe upgrades and the CI determinism
-check all reduce to this module being correct. ``rdflib``'s own Turtle output is not
-deterministic — prefixes, subject order and blank-node labels all vary between runs —
-so the compiler never uses it for anything an instance commits.
-
-Two properties are load-bearing, and every choice below serves one of them:
-
-*Byte-determinism.* The same graph serializes to the same bytes in any process, on any
-platform, whatever order the triples were added in. That is what lets CI recompile from
-a cached fetch snapshot and demand an identical file (spec 6.1).
-
-*Diff legibility.* A reviewer reads the output as governance, so one changed fact is one
-changed line: predicates with several objects repeat the predicate rather than sharing a
-comma list, and blocks are separated so an added subject is an added hunk.
-
-A change to anything here changes every instance's generated files, which makes it a
-major version bump with a migration (spec 7).
+"""Canonical Turtle serialization (spec 5.5). ``rdflib``'s own Turtle output is not deterministic,
+so nothing an instance commits uses it. The same graph serializes to the same bytes on any
+platform in any insertion order, one triple per line. A change to anything here is a major
+version bump with a migration (spec 7).
 """
 
 from __future__ import annotations
@@ -52,9 +37,8 @@ _FIXED_NAMESPACES = {
     "xsd": _XSD_NAMESPACE,
 }
 
-# Namespaces derived from the instance's base IRI (spec 3.1). The instance IRI space is
-# partitioned by kind of thing, so the suffix is part of the identity contract: changing
-# one would re-mint every IRI under it.
+# Namespaces derived from the instance's base IRI (spec 3.1). Part of the identity
+# contract: changing a suffix would re-mint every IRI under it.
 _INSTANCE_SUFFIXES = {
     "c": "concepts/",
     "r": "relationships/",
@@ -65,23 +49,17 @@ _INSTANCE_SUFFIXES = {
     "d": "docs/",
 }
 
-# Spec 5.5 rule 1: a fixed block, in the order spec 3.1 introduces the namespaces —
-# the metamodel, the per-instance content namespaces, the reused standard vocabularies,
-# then the two reserved for later versions. Emitted whether or not a file uses them, so
-# that adding the first triple in a namespace is not also a change to the prefix block.
+# Spec 5.5 rule 1: a fixed block in spec 3.1's order, emitted whether or not a file uses it.
 CANONICAL_PREFIXES = ("sem", "c", "r", "sch", "v", "x", "skos", "dcterms", "xsd", "a", "d")
 
 _INDENT = "  "
 
-# Local names that can be written after a prefix without escaping. Deliberately
-# narrower than Turtle's PN_LOCAL: minted local names are UUIDs and slugs, and anything
-# unusual falls back to the unambiguous <full IRI> form rather than risking a rule this
-# module gets subtly wrong.
+# Local names that can follow a prefix without escaping. Narrower than Turtle's PN_LOCAL;
+# anything unusual is written as a full <IRI> instead.
 _SAFE_LOCAL_NAME = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_.\-]*[A-Za-z0-9_\-])?")
 
-# Characters Turtle's IRIREF production forbids between the angle brackets. rdflib does
-# not validate a URIRef when it is constructed, so an adapter or a hand-written overlay
-# can carry one through to here; writing it raw would emit a file that no longer parses.
+# Characters Turtle's IRIREF production forbids. rdflib does not validate a URIRef on
+# construction, so one can reach here.
 _UNSAFE_IRI_CHARACTER = re.compile(r"[\x00-\x20<>\"{}|^`\\]")
 
 _ESCAPES = {
@@ -94,18 +72,16 @@ _ESCAPES = {
     "\f": "\\f",
 }
 
-# Predicates with a fixed position, ahead of the lexicographic tail (rule 3): the type
-# says what the block is, the label says which thing it is, and a reader scanning a diff
-# wants both before the detail.
+# Predicates with a fixed position ahead of the lexicographic tail (rule 3).
 _PREDICATE_RANK = {RDF.type: 0, SKOS.prefLabel: 1}
 _TAIL_RANK = max(_PREDICATE_RANK.values()) + 1
 
 
 def namespaces(base_iri: str) -> Mapping[str, str]:
-    """Return the prefix block for ``base_iri``, in canonical order (spec 3.1, 5.5).
+    """The prefix block for ``base_iri``, in canonical order (spec 3.1, 5.5).
 
-    Also the one place the per-kind namespace suffixes are written down: identity
-    (spec 3.4) mints into these same namespaces and reads them from here.
+    The one definition of the per-kind namespaces; identity (spec 3.4) mints into them.
+    Raises ``ValueError`` for a base IRI that is not a usable namespace root.
     """
     _check_base_iri(base_iri)
     resolved = {**_FIXED_NAMESPACES, **{p: base_iri + s for p, s in _INSTANCE_SUFFIXES.items()}}
@@ -113,11 +89,8 @@ def namespaces(base_iri: str) -> Mapping[str, str]:
 
 
 def is_safe_local_name(name: str) -> bool:
-    """Whether ``name`` can follow a prefix here without escaping.
-
-    Public because identity (spec 3.4) refuses to mint a local name this module would
-    have to write as a full ``<IRI>`` instead: a slug arrives from an adapter's own
-    configuration, and the ID map would freeze whatever it produced.
+    """Whether ``name`` can follow a prefix without escaping. Identity (spec 3.4) refuses to mint
+    anything else.
     """
     return _SAFE_LOCAL_NAME.fullmatch(name) is not None
 
@@ -132,8 +105,6 @@ def serialize(graph: Graph, base_iri: str) -> str:
     prefixes = namespaces(base_iri)
     lines = [f"@prefix {prefix}: <{namespace}> ." for prefix, namespace in prefixes.items()]
     for block in _blocks(graph, prefixes):
-        # Blank line before every block, which also separates the first block from the
-        # prefixes. Subjects are whole hunks in a diff rather than run together.
         lines.append("")
         lines.append(block)
 
@@ -141,11 +112,7 @@ def serialize(graph: Graph, base_iri: str) -> str:
 
 
 def write(path: Path, graph: Graph, base_iri: str) -> None:
-    """Write canonical Turtle to ``path`` as UTF-8 with LF line endings (rule 5).
-
-    ``newline`` is not a detail: the platform default would translate every line ending
-    on Windows and make the same graph produce different bytes on different machines.
-    """
+    """Write canonical Turtle to ``path`` as UTF-8 with LF line endings (rule 5)."""
     path.write_text(serialize(graph, base_iri), encoding="utf-8", newline="\n")
 
 
@@ -153,15 +120,10 @@ def _check_base_iri(base_iri: str) -> None:
     if not base_iri.startswith(("http://", "https://")):
         raise ValueError(f"base IRI must be an http(s) IRI, got {base_iri!r}")
     if not base_iri.endswith("/"):
-        # Every per-instance namespace is the base plus a suffix (spec 3.1); without the
-        # separator the two would run together into a different namespace entirely.
         raise ValueError(f"base IRI must end with '/', got {base_iri!r}")
     unsafe = _UNSAFE_IRI_CHARACTER.search(base_iri)
     if unsafe is not None:
-        # The prefix block is the one place an IRI is written without escaping — a
-        # namespace cannot be escaped and still be the namespace an instance's IRIs were
-        # minted in. So this is refused rather than repaired: it is a configuration error
-        # (spec 3.4), and one the namespace lock would then freeze for ever.
+        # A namespace is written unescaped in the prefix block, so it is refused, not repaired.
         raise ValueError(
             f"base IRI may not contain {unsafe.group()!r}, which Turtle forbids in an IRI: "
             f"{base_iri!r}"
@@ -169,12 +131,7 @@ def _check_base_iri(base_iri: str) -> None:
 
 
 def _rejected(node: Node, position: str) -> ValueError:
-    """Explain why a node cannot be written, before anything is written.
-
-    Blank-node labels are not stable across runs, so a single one would make the
-    determinism check fail somewhere far from its cause (rule 7). Whatever seems to need
-    one needs a minted IRI instead (spec 3.4).
-    """
+    """The error for a node that cannot be written: a blank node (rule 7) or a literal subject."""
     if isinstance(node, BNode):
         return ValueError(
             f"generated output may contain no blank nodes (spec 5.5 rule 7): "
@@ -216,13 +173,10 @@ def _blocks(graph: Graph, prefixes: Mapping[str, str]) -> Iterator[str]:
 
 
 def _plain(object_: URIRef | Literal) -> URIRef | Literal:
-    """Collapse an ``xsd:string`` literal onto the plain literal it is equal to.
+    """Collapse an ``xsd:string`` literal onto the plain literal it equals.
 
-    ``rdflib`` keeps the two as separate entries in a graph even though RDF 1.1 makes
-    them the same term, so a graph built from two sources can hold both. Both write as
-    ``"value"``, and without this the block would carry the same statement twice — a file
-    that re-parses to fewer triples than it was serialized from, so recompiling after a
-    round trip would produce a spurious diff and fail the determinism check (spec 6.1).
+    ``rdflib`` keeps the two as separate triples; both write as ``"value"``, and the block
+    would otherwise carry one statement twice.
     """
     if isinstance(object_, Literal) and not object_.language and object_.datatype == _XSD_STRING:
         return Literal(str(object_))
@@ -232,23 +186,13 @@ def _plain(object_: URIRef | Literal) -> URIRef | Literal:
 def _statement_key(
     predicate: URIRef, object_: URIRef | Literal
 ) -> tuple[int, str, tuple[int, str, str, str]]:
-    """Order within a subject block (rule 3).
-
-    One triple per line means a predicate with several objects repeats the predicate, so
-    the objects have to be ordered too — otherwise insertion order would leak into the
-    file and two runs could disagree.
-    """
+    """Order within a subject block (rule 3): ranked predicates, then predicate, then object."""
     rank = _PREDICATE_RANK.get(predicate, _TAIL_RANK)
     return (rank, str(predicate), _object_key(object_))
 
 
 def _object_key(object_: URIRef | Literal) -> tuple[int, str, str, str]:
-    """A total order over objects: IRIs first, then literals by value, tag, datatype.
-
-    "Sorted lexicographically" (rule 3) settles IRIs but not a mix of IRIs and typed or
-    tagged literals, and an undefined comparison there is exactly the kind of thing that
-    stays stable for a year and then reorders a file for no reason.
-    """
+    """A total order over objects: IRIs first, then literals by value, tag, datatype."""
     if isinstance(object_, URIRef):
         return (0, str(object_), "", "")
     return (1, str(object_), object_.language or "", str(object_.datatype or ""))
@@ -273,16 +217,13 @@ def _iri(node: URIRef, prefixes: Mapping[str, str]) -> str:
             continue
         if not is_safe_local_name(iri[len(namespace) :]):
             continue
-        # Longest namespace wins, so a nested namespace never loses to its parent and
-        # the choice does not depend on the block's order.
+        # Longest namespace wins, independent of the block's order.
         if best is None or len(namespace) > len(prefixes[best[0]]):
             best = (prefix, iri[len(namespace) :])
 
     if best is not None:
         return f"{best[0]}:{best[1]}"
-    # Escaping rather than raising: it is lossless — the IRI parses back unchanged — and
-    # an unusable IRI is the source's problem to report, not a reason to write a file
-    # that no parser will read.
+    # Escaped rather than refused: lossless, and the file still parses.
     return f"<{_UNSAFE_IRI_CHARACTER.sub(_as_uchar, iri)}>"
 
 
@@ -292,19 +233,12 @@ def _literal(node: Literal, prefixes: Mapping[str, str]) -> str:
         return f"{text}@{node.language}"
     if node.datatype is not None:
         return f"{text}^^{_iri(node.datatype, prefixes)}"
-    # An xsd:string literal reaches here already collapsed onto its plain form by
-    # _plain(), which is where that rule lives — repeating the test here would leave two
-    # places to change it and only one of them exercised.
+    # An xsd:string literal arrives already collapsed by _plain().
     return text
 
 
 def _escape(text: str) -> str:
-    """Escape a literal for a single-line quoted string.
-
-    Newlines are escaped rather than written as a triple-quoted literal: rule 4's one
-    triple per line is what makes a diff readable, and a multi-line literal would break
-    it for every triple that follows.
-    """
+    """Escape a literal for a single-line quoted string (rule 4)."""
     escaped = []
     for character in text:
         if character in _ESCAPES:

@@ -20,7 +20,8 @@ govern the work, alongside one prior-project prototype:
 - `TASKS.md` — the build order, one task per session. **Start here.** Each task names the spec
   sections it implements and defines its own verification; a task is done when that verification is
   automated and green, not when the code exists. Tick the box and note anything the next session
-  needs before moving on.
+  needs before moving on. Completed phases A–G live verbatim in `docs/history/tasks-phases-a-g.md`;
+  the live file holds only open work.
 - `background-material/kg-converter-old/` — a working converter from an **earlier, similar but
   different** project. Not maintained, **not authoritative for any specification decision** — mine it
   for learnings, never cite it as a requirement.
@@ -92,7 +93,7 @@ published form. And every ontology version that has ever resolved must go on res
 build currently publishes only the *current* version, so a version bump would 404 a path w3id
 promises is permanent. **G5 owns that fix** before any second ontology version ships.
 
-TASKS.md A2 is the only record of the routing and hosting decisions — the w3id files live in the
+Task A2 in `docs/history/tasks-phases-a-g.md` is the only record of the routing and hosting decisions — the w3id files live in the
 gitignored `background-material/w3id/semprini/` and are absent from this repo's history.
 
 Base IRIs are no longer a project-level decision: each instance chooses its own at bootstrap and the

@@ -1,26 +1,9 @@
 """``semprini init`` — an empty instance repository, ready to compile (spec 5.7).
 
-The one command that writes an instance rather than reading one, and the only place a
-base IRI is chosen. Everything else about an instance is revisable: sources come and go,
-labels change, the compiler is upgraded. The two values decided here — the base IRI and
-the instance id — are frozen into ``mappings/namespace.lock`` on the spot and are
-permanent in the strong sense, because every IRI this instance ever mints is built from
-them and IRIs are never reused (spec 3.4).
-
-Three properties follow.
-
-*Nothing is written until everything is known.* The whole tree is rendered in memory and
-every refusal is raised before the first byte reaches the disk, so a bad argument or an
-existing instance leaves the target directory exactly as it was. There is no half-created
-instance to clean up.
-
-*Nothing here reaches the network.* No repository is created, no remote is configured, no
-version is looked up (spec 11 #8). What an adopter does with the tree afterwards is
-theirs; ``init`` produces files and a list of next steps.
-
-*A source tree cannot bootstrap an instance.* The scaffold pins the plane version into two
-workflows and into a manifest, and a version that identifies no release pins nothing (spec
-4.3, 7).
+The only place a base IRI and instance id are chosen; both are frozen into
+``mappings/namespace.lock`` (spec 3.4). The tree is rendered in memory and every refusal
+raised before anything is written. Nothing reaches the network (spec 11 #8), and a
+source tree cannot bootstrap an instance because its version pins nothing (spec 4.3, 7).
 """
 
 from __future__ import annotations
@@ -65,19 +48,11 @@ __all__ = [
 
 INSTANCE_TEMPLATES = Path(__file__).parent / "templates" / "instance"
 """The platform-neutral tree, materialized verbatim apart from placeholder substitution.
-
-Inside the package rather than at the repository root, for the reason ``ontology/sem.ttl``
-and ``shapes/core.ttl`` are: an adopter installs a wheel with pip and never sees this
-repository, so anything ``init`` materializes has to travel in the distribution (spec 4.1).
-"""
+Inside the package so that it travels in the wheel (spec 4.1)."""
 
 WORKFLOW_TEMPLATES = Path(__file__).parent / "workflows"
-"""CI definitions, one directory per platform (spec 6.3).
-
-Separate from the tree above because *where* a workflow file goes is platform-specific
-while everything else in an instance is not. A port to GitLab adds a directory here and a
-line in :data:`WORKFLOW_DIRS`, and touches no other part of the scaffold.
-"""
+"""CI definitions, one directory per platform (spec 6.3). A new platform adds a directory
+here and a line in :data:`WORKFLOW_DIRS`."""
 
 WORKFLOW_PLATFORM = "github"
 """The platform ``init`` materializes. The only GitHub-specific thing in the scaffold."""
@@ -89,20 +64,12 @@ WORKFLOWS: tuple[str, ...] = ("compile.yml", "validate.yml")
 
 WORKFLOW_DIR = WORKFLOW_DIRS[WORKFLOW_PLATFORM]
 
-# `%%name%%` rather than the more usual `{{ name }}`: the workflow templates are full of
-# GitHub's own `${{ ... }}` expressions, and a substitution syntax that collided with them
-# would either eat one or make "is every placeholder resolved?" unanswerable.
+# `%%name%%`, because the workflow templates are full of GitHub's own `${{ ... }}`.
 _PLACEHOLDER = re.compile(r"%%(\w+)%%")
 
 
 class ScaffoldError(ConfigError):
-    """``init`` refuses to run — CLI exit code 2 (spec 5.1).
-
-    A :class:`~semprini.config.ConfigError` because every way this command refuses is
-    about the arguments it was given or the directory it was pointed at, which is exactly
-    what exit 2 tells an operator: go and fix the invocation, nothing was written. It
-    writes no content, so it can never produce a validation failure.
-    """
+    """``init`` refuses to run — CLI exit code 2 (spec 5.1). Nothing was written."""
 
     noun = "bootstrap error"
 
@@ -112,20 +79,14 @@ class ScaffoldFile:
     """One file of a new instance, rendered but not yet written."""
 
     path: PurePosixPath
-    """Relative to the instance root, in POSIX form: a scaffold is described the same way
-    on every platform, and these paths are printed and compared in tests."""
+    """Relative to the instance root, in POSIX form on every platform."""
 
     text: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Scaffold:
-    """A complete instance, rendered in memory (spec 5.7).
-
-    Held before it is written for the reason a run holds its output: a refusal has to
-    leave the target directory untouched, and there is no way to promise that while
-    writing file by file.
-    """
+    """A complete instance, rendered in memory before anything is written (spec 5.7)."""
 
     root: Path
     files: tuple[ScaffoldFile, ...]
@@ -135,12 +96,7 @@ class Scaffold:
     """The plane version pinned into the workflows and recorded in the manifest."""
 
     def write(self) -> tuple[Path, ...]:
-        """Write every file, creating the directories it needs.
-
-        LF line endings throughout, like everything else the compiler owns: the instance's
-        ``.gitattributes`` says the repository is LF (spec 4.3), and a scaffold written
-        with the platform default would contradict it on the machine that created it.
-        """
+        """Write every file with LF line endings, creating the directories it needs (spec 4.3)."""
         written: list[Path] = []
         for file in self.files:
             path = self.root / Path(file.path)
@@ -150,13 +106,8 @@ class Scaffold:
         return tuple(written)
 
     def summary(self) -> tuple[str, ...]:
-        """The instance, its secrets and what to do next — step 6 of spec 5.7.
-
-        Deliberately ASCII, like a run's summary: this is printed to whatever console the
-        command was started from, and a decorative character on a Windows cp1252 console
-        would raise ``UnicodeEncodeError`` after the tree was written, turning a successful
-        bootstrap into a traceback.
-        """
+        """The instance, its secrets and what to do next (spec 5.7 step 6). ASCII only, for
+        a cp1252 console."""
         lines = [f"created an instance in {self.root}", ""]
         lines.extend(f"  {file.path}" for file in self.files)
         lines.extend(
@@ -225,13 +176,9 @@ def create(
 ) -> Scaffold:
     """Render the instance ``init`` would write, without writing it.
 
-    ``compiler``, ``ontology`` and ``today`` are injected for the reason a run injects
-    them — a test pins them, and nothing but the caller reads a clock (spec 4.3) — and a
-    production caller passes none of the three.
-
-    Raises :class:`ScaffoldError` for anything that would produce an instance nobody can
-    use: an argument that cannot be frozen, a plane version that pins nothing, or a target
-    directory that already holds one.
+    ``compiler``, ``ontology`` and ``today`` let a test pin them (spec 4.3). Raises
+    :class:`ScaffoldError` for a bad argument, an uninstalled plane, or a target that
+    already holds an instance or any file the scaffold would write.
     """
     root = Path.cwd() if target is None else Path(target)
     version = compiler_version() if compiler is None else compiler
@@ -246,10 +193,7 @@ def create(
         "org": org,
         "default_language": default_language,
         "version": version,
-        # The address the instance installs the plane from, since there is no package index
-        # to name it by (spec 11 #3). Rendered rather than written into the template, so the
-        # one definition of that URL stays in `semprini.wheel_url` — where the release notes
-        # and the release check read it too.
+        # Rendered, not written into the template, so `semprini.wheel_url` stays the one definition.
         "wheel_url": wheel_url(version),
     }
     files = tuple(
@@ -271,15 +215,9 @@ def create(
 
 
 def _check_arguments(base_iri: str, org: str, default_language: str) -> None:
-    """Every argument that will be frozen, checked before any of it is (spec 3.4).
-
-    Collected rather than raised one at a time, like every other refusal in this project:
-    an operator retyping a bootstrap command deserves all of what is wrong with it.
-    """
+    """Every argument that will be frozen, checked before any of it is (spec 3.4)."""
     issues: list[Issue] = []
     try:
-        # The serializer's own rule, so a base IRI accepted here cannot fail when the
-        # instance writes its first file (spec 5.5).
         namespaces(base_iri)
     except ValueError as error:
         issues.append(Issue(Severity.ERROR, str(error), "--base-iri"))
@@ -301,18 +239,7 @@ def _check_arguments(base_iri: str, org: str, default_language: str) -> None:
 
 
 def _check_the_plane_is_installed(version: str) -> None:
-    """A source tree cannot bootstrap an instance (spec 4.3, 7).
-
-    Two of the files below pin this version: the workflows, which an adopter's CI installs
-    from, and the manifest, whose whole job is to say which release produced ``generated/``.
-    ``0.0.0+source`` identifies no release — two different working trees report the same
-    string — so an instance created from one would carry a workflow that cannot install and
-    a manifest the drift check cannot use.
-
-    :meth:`semprini.manifest.Manifest.create` refuses the same value and is the backstop;
-    this is here so that the message names the pin an operator would otherwise discover
-    from a failing CI job weeks later.
-    """
+    """A source tree cannot bootstrap an instance: its version pins nothing (spec 4.3, 7)."""
     if version == UNINSTALLED_VERSION:
         raise ScaffoldError(
             [
@@ -329,21 +256,10 @@ def _check_the_plane_is_installed(version: str) -> None:
 
 
 def _check_nothing_is_overwritten(root: Path, files: Sequence[ScaffoldFile]) -> None:
-    """Refuse to write over an instance that already exists (spec 5.7).
-
-    The namespace lock is the case the spec names and the one that matters: it is the
-    frozen record of a decision that cannot be taken twice, so a second ``init`` over an
-    existing instance would replace permanent identity with a fresh copy while
-    ``mappings/id-map.csv`` went on describing the old one.
-
-    Every other file it would write is refused too. Nothing in the scaffold is safe to
-    clobber -- a steward's ``config/semprini.yaml``, their overlays README, a workflow they
-    have upgraded -- and "it only overwrote the ones you had not touched" is not a state
-    anyone can reason about afterwards.
+    """Refuse to write over an existing instance, or over any file the scaffold would write (spec
+    5.7).
     """
     if root.exists() and not root.is_dir():
-        # Otherwise the first mkdir raises an OSError naming a path and nothing else, from
-        # inside a write that has already begun.
         raise ScaffoldError([Issue(Severity.ERROR, "is not a directory", str(root))])
     if (root / NAMESPACE_LOCK_PATH).exists():
         raise ScaffoldError(
@@ -380,14 +296,8 @@ def _templated(
 ) -> Iterator[ScaffoldFile]:
     """Every file under ``directory``, rendered and re-rooted at ``prefix``.
 
-    Read as text and re-written with LF, never copied byte for byte: a template checked out
-    on a machine with ``core.autocrlf=true`` holds CRLF, and an instance whose
-    ``.gitattributes`` promises LF must not be created with the opposite.
-
-    A missing template directory is refused rather than read as an empty one. These files
-    ship inside the wheel (spec 4.1), so their absence means a broken or partial install —
-    and the alternative is an instance created without its configuration, its workflows or
-    its ``.gitattributes``, which nothing downstream would attribute to this.
+    Read as text, so a CRLF checkout is written as LF. A missing directory is a broken
+    install (spec 4.1) and raises :class:`ScaffoldError`.
     """
     if not directory.is_dir():
         raise ScaffoldError(
@@ -407,12 +317,7 @@ def _templated(
 
 
 def _render(text: str, values: Mapping[str, str]) -> str:
-    """Substitute ``%%name%%`` throughout, refusing to leave one unresolved.
-
-    An unknown placeholder is a bug in this package's own templates, not in anything an
-    adopter did — and one that would otherwise ship a literal ``%%og%%`` into a new
-    instance's README, where nobody would ever trace it back here.
-    """
+    """Substitute ``%%name%%`` throughout; an unknown placeholder is a template bug and raises."""
 
     def substitute(match: re.Match[str]) -> str:
         name = match.group(1)
@@ -429,13 +334,8 @@ def _render(text: str, values: Mapping[str, str]) -> str:
 def _identity(
     *, base_iri: str, org: str, ontology: str, today: datetime.date
 ) -> Iterator[ScaffoldFile]:
-    """``mappings/`` — the lock, and the two registers with their headers (spec 5.7 step 3).
-
-    Written through the classes that own the files rather than as literal text, so that a
-    column added to either register reaches a new instance without anyone remembering to
-    edit a template. Both registers are empty and both are legal empty: a fresh instance
-    has minted nothing and merged nothing.
-    """
+    """``mappings/``: the lock and the two empty registers, rendered by the classes that
+    own them (spec 5.7 step 3)."""
     lock = NamespaceLock(base_iri=base_iri, instance_id=org, ontology_version=ontology, date=today)
     yield ScaffoldFile(PurePosixPath(NAMESPACE_LOCK_PATH.as_posix()), lock.dumps())
     yield ScaffoldFile(PurePosixPath(ID_MAP_PATH.as_posix()), IdMap().dumps())
@@ -443,14 +343,8 @@ def _identity(
 
 
 def _generated(*, compiler: str, ontology: str) -> Iterator[ScaffoldFile]:
-    """``generated/`` — the metamodel copy and its manifest (spec 5.7 step 4).
-
-    A fresh instance has no content, so this is the whole of ``generated/``: the pinned
-    ontology, copied verbatim as every run copies it (spec 4.2), and a manifest recording
-    its hash and the two versions. That is what lets ``semprini check`` pass on an instance
-    that has never been compiled — the alternative, an empty directory git cannot even
-    commit, would have a new adopter's very first CI run fail on a missing manifest.
-    """
+    """``generated/``: the metamodel copy and its manifest, so that ``semprini check`` passes
+    before the first compile (spec 5.7 step 4)."""
     copy = OutputFile(name=ONTOLOGY_FILE, text=ONTOLOGY_PATH.read_text(encoding="utf-8"))
     manifest = Manifest.create([copy], compiler=compiler, ontology=ontology)
     for file in (copy, manifest.to_file()):

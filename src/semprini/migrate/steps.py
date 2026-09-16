@@ -1,15 +1,10 @@
-"""The migrations this release ships, in release order (spec 7).
-
-Empty, and that is a statement rather than a gap: nothing has been released yet, so no
-instance in existence was compiled by an earlier version of this compiler, and a step
-"from" a version nobody ran would be fiction. The machinery around it is what this task
-delivers; the first real entry belongs to the first release that changes emitted output.
+"""The migrations this release ships (spec 7). Empty until a release changes emitted output.
 
 **How to add one.** A step is a pure function from the committed state to the state the new
-release would have written, and the framework does everything around it — it re-serializes,
-refreshes the ontology copy, restamps the manifest, writes the report, and refuses the whole
-migration if the step minted an IRI, dropped a node, moved a ``dcterms:modified`` date or
-touched the ID map beyond its ``note`` column. So a step is usually a few lines:
+release would have written. The framework re-serializes, refreshes the ontology copy,
+restamps the manifest, writes the report, and refuses the whole migration if the step
+minted an IRI, dropped a node, moved a ``dcterms:modified`` date or touched the ID map
+beyond its ``note`` column. A step is usually a few lines:
 
 .. code-block:: python
 
@@ -29,22 +24,9 @@ touched the ID map beyond its ``note`` column. So a step is usually a few lines:
         ),
     )
 
-Three things to know before writing one.
-
-*A migration is not a recompile.* It rewrites what is committed without reading the
-sources, which is what lets an adopter review the upgrade as a diff that provably changed
-no content. The next scheduled compile is what reconciles content, and it will replace the
-migration report with its own.
-
-*Reaching for the sources is the tell that a step is wrong.* If the new output cannot be
-derived from the old, the release is asking adopters to recompile rather than to migrate,
-and the honest answer is to ship no step and say so in the CHANGELOG.
-
-*A recompile is not a substitute for a migration either*, which is the reason this module
-exists at all. Nodes no source reports any more are re-emitted verbatim from the previous
-run's files (spec 3.5), so a compile carries their **old** statements forward untouched. A
-term rename applied by recompiling would therefore reach every active node and quietly miss
-every deprecated one.
+A step never reads the sources: if the new output cannot be derived from the old, ship no
+step and say so in the CHANGELOG. A recompile is not a substitute either, because deprecated
+nodes are carried forward verbatim (spec 3.5) and would keep their old statements.
 """
 
 from __future__ import annotations
@@ -54,5 +36,4 @@ from semprini.migrate.registry import Migration
 __all__ = ["MIGRATIONS"]
 
 MIGRATIONS: tuple[Migration, ...] = ()
-"""Every migration this release ships, in any order — :func:`~semprini.migrate.registry.plan`
-sorts them by version and refuses two for one release."""
+"""Every migration this release ships; :func:`~semprini.migrate.registry.plan` orders them."""

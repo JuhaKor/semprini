@@ -1,25 +1,8 @@
-"""Deprecation, carry-forward and the merge register (spec 3.5, 5.4).
-
-The stage that decides what happens to an object when its source stops mentioning it. The
-answer is never "delete": an IRI that has been published is pointed at by queries,
-dashboards and other organizations' `skos:exactMatch` triples, so a node is retained with
-its last-known statements and marked `sem:status "deprecated"` (spec 3.5). Deletion is the
-one operation this project has no way to undo, which is why nothing here can perform one.
-
-Two rules carry the weight.
-
-*Deprecation is judged against the union of all configured sources* (spec 5.4). Never
-against one source, and never against one model — an entity that vanished from the sales
-model but is still in the finance model has not been deleted, it has moved, and it loses
-one `skos:inScheme` triple. The unit of the question is the object, and the evidence is
-every source the instance configures. Every run fetches every configured source (spec
-5.1), so every run can answer the question, and removing a source from the configuration
-deprecates what it owned rather than leaving it in limbo.
-
-*The register is a steward's statement, not the compiler's inference.* Sources usually
-implement a merge by deleting one of the two objects, which on its own is indistinguishable
-from a deletion. ``mappings/merges.csv`` is where a steward says which object survived; the
-compiler emits `dcterms:isReplacedBy` from it and infers nothing.
+"""Deprecation, carry-forward and the merge register (spec 3.5, 5.4). A node no configured source
+reports any more is retained with its last-known statements and marked deprecated; nothing here
+deletes. Deprecation is judged against the union of all configured sources, so removing a source
+deprecates what it owned. The merge register is a steward's statement; the compiler emits
+``dcterms:isReplacedBy`` from it and infers nothing.
 """
 
 from __future__ import annotations
@@ -58,27 +41,16 @@ MERGES_PATH = Path("mappings") / "merges.csv"
 """The hand-maintained merge register (spec 4.2, 5.4), relative to the instance root."""
 
 MERGES_COLUMNS = ("deprecated_iri", "replaced_by_iri", "date", "note")
-"""Exactly the columns of spec 5.4, in that order. Checked on load for the reason the ID
-map's are: a column quietly renamed or reordered would make the register silently do
-nothing, and its whole purpose is to be consulted on the day an object disappears."""
+"""Exactly the columns of spec 5.4, in that order; checked on load."""
 
 _ISO_DATE = "%Y-%m-%d"
 
-# Statements this stage derives rather than carries. sem:status is what deprecation
-# changes; dcterms:isReplacedBy comes from the register as it reads *now*, so removing a
-# row removes a triple; and dcterms:modified is recomputed for every node the run writes,
-# which is what lets a carried node keep the date it had (spec 3.3).
+# Statements this stage derives rather than carries (spec 3.3).
 _DERIVED = frozenset({SEM_STATUS, DCTERMS.isReplacedBy, DCTERMS.modified})
 
 
 class LifecycleError(IssueError):
-    """Lifecycle state the compiler refuses to act on — CLI exit code 1 (spec 5.1).
-
-    A compile failure rather than a configuration error: a malformed merge register, a
-    register row for an IRI nothing knows, or generated output holding a node the ID map
-    has never heard of all mean the repository's committed state disagrees with itself,
-    and no edit of ``config/semprini.yaml`` addresses any of them.
-    """
+    """Lifecycle state the compiler refuses to act on — CLI exit code 1 (spec 5.1)."""
 
     noun = "lifecycle error"
 
@@ -93,9 +65,7 @@ class MergeRow:
     deprecated_iri: str
     replaced_by_iri: str
     date: datetime.date
-    """When the merge was recorded. Steward-supplied and never read by the compiler — it
-    is here so a reviewer reading the register three years later knows when someone
-    decided this, which the generated output cannot tell them."""
+    """When the merge was recorded. Steward-supplied; never read by the compiler."""
 
     note: str = ""
 
@@ -110,13 +80,10 @@ class MergeRow:
 
 
 class MergeRegister:
-    """``mappings/merges.csv`` in memory, validated as it is built (spec 5.4).
+    """``mappings/merges.csv`` in memory (spec 5.4).
 
-    Hand-maintained, unlike the ID map, so every way of getting it wrong is a way a person
-    can get it wrong: naming one object twice, pointing a row at itself, or writing a chain
-    that closes on itself. Each is refused at construction, because a register that cannot
-    name a survivor is worse than no register — it would deprecate an object and leave
-    nothing to redirect its consumers to.
+    Construction raises :class:`LifecycleError` for a self-replacement, a deprecated IRI
+    with two successors, or a cycle.
     """
 
     def __init__(self, rows: Iterable[MergeRow] = (), *, origin: str | None = None) -> None:
@@ -158,17 +125,10 @@ class MergeRegister:
 
     @classmethod
     def load(cls, repo_root: Path | None = None) -> MergeRegister:
-        """Read ``<repo_root>/mappings/merges.csv``.
-
-        A missing file is an empty register, not an error: an instance that has never
-        merged two concepts has nothing to record, and one bootstrapped before this file
-        existed must still compile.
-        """
+        """Read ``<repo_root>/mappings/merges.csv``. A missing file is an empty register."""
         path = (Path.cwd() if repo_root is None else Path(repo_root)) / MERGES_PATH
         try:
-            # utf-8-sig for the ID map's reason: stewards edit this in Excel, which writes
-            # a byte-order mark, and left in place it joins the first column name and makes
-            # the header error print two column lists that look identical.
+            # utf-8-sig: Excel saves CSV with a byte-order mark.
             text = path.read_text(encoding="utf-8-sig")
         except FileNotFoundError:
             return cls(origin=str(path))
@@ -189,8 +149,6 @@ class MergeRegister:
         try:
             header = next(reader)
         except StopIteration:
-            # An empty file, as opposed to an absent one: `semprini init` writes headers
-            # (spec 5.7 step 3), so a file with none has been damaged.
             raise LifecycleError(
                 [Issue(Severity.ERROR, "the merge register is empty; it must carry a header row")],
                 origin=origin,
@@ -236,27 +194,15 @@ class MergeRegister:
         return iter(self._rows)
 
     def replacement(self, iri: str) -> str | None:
-        """The successor this register names for ``iri``, or ``None``.
-
-        Exactly what the row says, never the end of a chain. If a steward recorded A → B
-        and later B → C, then A's successor is B: that is the statement they made, and
-        rewriting it to C would put a triple in a governed file that no row in the register
-        supports. A consumer that wants the survivor follows the chain, which is well
-        defined because a circular register is refused.
-        """
+        """The successor this register names for ``iri``, or ``None``. The row's own
+        statement, never the end of a chain."""
         row = self._by_deprecated.get(iri)
         return None if row is None else row.replaced_by_iri
 
     # ------------------------------------------------------------------ checks
 
     def check_against(self, id_map: IdMap) -> tuple[Issue, ...]:
-        """Both IRIs of every row must be known to the ID map (spec 5.4).
-
-        The register is the one file in an instance where a person types an IRI by hand, so
-        a mistyped one is the expected failure rather than an exotic one — and an unchecked
-        row would deprecate nothing, or point a successor at an IRI this instance never
-        minted, with nothing in the diff to show either.
-        """
+        """Both IRIs of every row must be known to the ID map (spec 5.4)."""
         issues: list[Issue] = []
         for row in self._rows:
             for column, iri in (
@@ -276,13 +222,7 @@ class MergeRegister:
         return tuple(issues)
 
     def _cycles(self) -> list[Issue]:
-        """Refuse a register whose rows lead back to where they started.
-
-        A cycle names no survivor: every object in it is deprecated in favour of another
-        object that is itself deprecated, so a consumer following `dcterms:isReplacedBy`
-        never arrives anywhere. Rows that merely *chain* — A → B, B → C — are fine and are
-        left alone.
-        """
+        """One issue per cycle in the register. A cycle names no survivor; a chain is fine."""
         issues: list[Issue] = []
         reported: set[frozenset[str]] = set()
         for start in sorted(self._by_deprecated):
@@ -296,8 +236,6 @@ class MergeRegister:
             if current not in seen:
                 continue
             cycle = path[path.index(current) :]
-            # One issue per cycle, not one per member: every IRI in a cycle finds the same
-            # cycle, and reporting it n times would bury the n other problems in the file.
             if frozenset(cycle) in reported:
                 continue
             reported.add(frozenset(cycle))
@@ -315,7 +253,7 @@ class MergeRegister:
     # ------------------------------------------------------------------ writing
 
     def dumps(self) -> str:
-        """Render the register as CSV — LF-terminated, whatever platform wrote it."""
+        """Render the register as CSV, LF-terminated on every platform."""
         buffer = io.StringIO(newline="")
         writer = csv.writer(buffer, lineterminator="\n")
         writer.writerow(MERGES_COLUMNS)
@@ -323,11 +261,8 @@ class MergeRegister:
         return buffer.getvalue()
 
     def save(self, repo_root: Path | None = None) -> Path:
-        """Write the register to ``<repo_root>/mappings/merges.csv``.
-
-        Here for ``semprini init``, which creates the file with its headers (spec 5.7).
-        Every row in it is a steward's decision, so no compile ever writes it.
-        """
+        """Write the register to ``<repo_root>/mappings/merges.csv``. Used by ``semprini init``
+        only (spec 5.7); no compile writes it."""
         path = (Path.cwd() if repo_root is None else Path(repo_root)) / MERGES_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.dumps(), encoding="utf-8", newline="\n")
@@ -335,7 +270,7 @@ class MergeRegister:
 
 
 def _row_from_csv(values: Sequence[str], location: str, issues: list[Issue]) -> MergeRow | None:
-    """Build one row, appending an issue instead of raising, so every bad row is seen."""
+    """Build one row, appending an issue instead of raising."""
     if len(values) != len(MERGES_COLUMNS):
         issues.append(
             Issue(
@@ -346,10 +281,7 @@ def _row_from_csv(values: Sequence[str], location: str, issues: list[Issue]) -> 
         )
         return None
 
-    # Stripped, unlike the ID map's columns, because these are the one pair of IRIs in an
-    # instance that a person types rather than the compiler writes. A trailing space would
-    # otherwise match nothing in the ID map and be reported as an unknown IRI, which is
-    # true and unhelpful. The note is left exactly as written.
+    # Stripped, because a person typed these. The note is left as written.
     deprecated_iri, replaced_by_iri, date = (value.strip() for value in values[:3])
     note = values[3]
     for column, value in (
@@ -382,13 +314,11 @@ class LifecyclePlan:
     """What lifecycle decided, handed to the build stage (spec 3.5)."""
 
     carried: tuple[CarriedNode, ...] = ()
-    """Every node retained from the previous output — all of them deprecated, since a run
-    that fetched every source judges every node. Passed to :func:`semprini.build.build`
-    as ``carried``."""
+    """Every node retained from the previous output, all deprecated. Passed to
+    :func:`semprini.build.build` as ``carried``."""
 
     deprecated: tuple[str, ...] = ()
-    """IRIs this run moved from active to deprecated, sorted. A node that was already
-    deprecated is not listed: it did not change, and the run report counts changes."""
+    """IRIs this run moved from active to deprecated, sorted."""
 
 
 def plan(
@@ -400,20 +330,12 @@ def plan(
 ) -> LifecyclePlan:
     """Decide what happens to every node the previous run wrote (spec 3.5, 5.4).
 
-    Runs **before** the build stage and after the sources have been fetched: it compares
-    what the sources now report against what ``generated/`` currently holds, and produces
-    the nodes build must retain. ``previous`` is
-    :func:`semprini.build.read_previous_files` — per file, because a retained node stays
-    in the file that held it.
+    ``previous`` is :func:`semprini.build.read_previous_files`, per file, because a
+    retained node stays in the file that held it. A node no object in ``model`` resolves
+    to is deprecated, whatever source used to own it. Nothing is minted here.
 
-    Every run fetches every configured source (spec 5.1), so the question is the same for
-    every node: does any source still report it. One that none does is deprecated,
-    whatever source used to own it — including a source the configuration no longer
-    lists, which reports nothing and so keeps nothing alive (spec 5.4).
-
-    Deliberately reads the ID map without resolving the model, so nothing is minted here.
-    An object new to this run has no IRI yet, and a node in the previous output always
-    has one — that asymmetry is exactly what makes "absent from the sources" answerable.
+    Raises :class:`LifecycleError` for a register row the ID map does not know, a
+    merged-away object the sources still report, or a generated node with no ID-map row.
     """
     register = MergeRegister() if merges is None else merges
     issues = list(register.check_against(registry.id_map))
@@ -432,22 +354,14 @@ def plan(
     for subject in sorted(index, key=str):
         blocks = index[subject]
         if not any(block.defines for block in blocks):
-            # Something stated *about* a node rather than a description of it — the
-            # sem:relatesTo shortcut (spec 4.2). It is re-derived by the build stage from
-            # the relationship it belongs to, so there is nothing to decide here: if that
-            # relationship survives, build writes the shortcut again, and if it does not,
-            # the shortcut goes with it — which is what a retired relation means.
+            # A sem:relatesTo shortcut (spec 4.2); build re-derives it from its relationship.
             continue
         iri = str(subject)
         if iri in live:
             continue
 
         if not registry.id_map.owners(iri):
-            # Generated output holding a node the ID map does not: the row was deleted or
-            # the file was hand-edited (spec 4.3). Refused rather than dropped, because
-            # dropping it is the deletion this whole module exists to make impossible —
-            # and refused here rather than left to spec 6.1 check 6, which needs git to
-            # compare against a base revision and this does not.
+            # A deleted row or a hand-edited file (spec 4.3); refused, never dropped.
             issues.append(
                 Issue(
                     Severity.ERROR,
@@ -469,14 +383,7 @@ def plan(
 
 
 def _check_merges_are_gone(register: MergeRegister, live: Collection[str]) -> list[Issue]:
-    """A merged-away object must actually be gone from the sources.
-
-    The register records a merge the source tool has already performed by deleting one of
-    the objects (spec 5.4). If the sources still report it, the two disagree, and the
-    compiler is not the one to settle it: deprecating an object every source still
-    describes would override the sources from a one-line CSV edit, while ignoring the row
-    would make the register silently inert. The run stops and says which it is.
-    """
+    """A merged-away object must be gone from the sources (spec 5.4)."""
     return [
         Issue(
             Severity.ERROR,
@@ -495,10 +402,7 @@ def _deprecate(
 ) -> Iterator[CarriedNode]:
     """Re-emit a node's last-known statements with its status changed (spec 3.5).
 
-    Everything the previous run said is kept, so the node goes on answering the queries it
-    always did; only the three statements this stage owns are replaced. `sem:status` and
-    `dcterms:isReplacedBy` go on the block that *describes* the node — a node is described
-    once however many files mention it (spec 4.2).
+    Only the statements in ``_DERIVED`` are replaced, on the block that defines the node (spec 4.2).
     """
     for block in blocks:
         statements = {(p, o) for p, o in block.statements if p not in _DERIVED}
@@ -521,8 +425,9 @@ class _PreviousBlock:
     file: str
     statements: frozenset[tuple[URIRef, Node]]
     defines: bool
-    """Whether this block carries the node's ``skos:prefLabel`` — which is what it means
-    for a file to *define* a node rather than merely mention it (spec 4.2)."""
+    """Whether this block carries the node's ``skos:prefLabel``, which is what defines a node (spec
+    4.2).
+    """
 
     @property
     def was_active(self) -> bool:
@@ -536,9 +441,7 @@ def _index(previous: Mapping[str, Graph]) -> Mapping[URIRef, tuple[_PreviousBloc
         statements: dict[URIRef, set[tuple[URIRef, Node]]] = {}
         for subject, predicate, object_ in previous[name]:
             if not isinstance(subject, URIRef) or not isinstance(predicate, URIRef):
-                # The serializer refuses to write either (spec 5.5 rule 7), so this is a
-                # hand-edited file; spec 6.1 check 2 is what reports it, and reading past
-                # it here keeps this stage from deciding it on the strength of a triple.
+                # A hand-edited file (spec 5.5 rule 7); check 2 reports it.
                 continue
             statements.setdefault(subject, set()).add((predicate, object_))
         for subject, found in sorted(statements.items(), key=lambda item: str(item[0])):

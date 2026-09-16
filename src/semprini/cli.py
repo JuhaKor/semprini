@@ -1,10 +1,6 @@
-"""The whole CLI surface (spec 5.1).
+"""The whole CLI surface (spec 5.1). All logic lives here, never in workflow YAML (spec 6.3).
 
-Every check and every side effect lives here rather than in workflow YAML (spec 6.3),
-so an adopter on another CI platform ports a config file instead of reimplementing
-logic, and ``semprini check`` behaves identically on a laptop and in CI.
-
-Exit codes are part of the published contract — see :class:`ExitCode`.
+Exit codes are part of the published contract; see :class:`ExitCode`.
 """
 
 from __future__ import annotations
@@ -49,19 +45,12 @@ class ExitCode(IntEnum):
     """A configured source was unreachable."""
 
 
-# Subcommands that operate on a configured instance, and therefore fail on a broken
-# configuration before doing anything else. `init` is excluded — it writes the
-# configuration — and `adapters` and `version` describe the installation, not an
-# instance.
+# Subcommands that read a configured instance and fail on a broken configuration first.
 _NEEDS_CONFIG = frozenset({"run", "check", "migrate"})
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the full argument parser of spec 5.1.
-
-    The complete surface is declared now, stubs included, so that ``--help`` documents
-    the contract and later tasks add behaviour rather than syntax.
-    """
+    """Build the argument parser of spec 5.1."""
     parser = argparse.ArgumentParser(
         prog=_PROGRAM,
         description=(
@@ -128,19 +117,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _say(text: str, *, stream: TextIO | None = None) -> None:
-    """Print one line, degrading rather than failing on a console that cannot spell it.
+    """Print one line, replacing characters a console cannot encode rather than failing.
 
-    Much of what ``semprini check`` prints is text nobody in this project wrote: a SHACL
-    message quotes the node it is about, and a node's label is whatever a modeller typed
-    into a workbook. On Windows a *redirected* stream still encodes as cp1252 with strict
-    errors, and cp1252 holds Latin-1 plus a little punctuation and nothing else — so an
-    arrow in a relationship's verb or any CJK label raises ``UnicodeEncodeError`` and
-    turns a report about someone's instance into a traceback about ours. It lands on a
-    *passing* check as readily as a failing one, since warnings are printed too.
-
-    Replaced rather than avoided: keeping our own strings ASCII (which spec 5.6's report
-    does) cannot help here, because the text is not all ours. A replaced character is a
-    legible line with a ``?`` in it; the alternative is no output and exit 1.
+    Much of the output quotes labels nobody in this project wrote, and a redirected
+    Windows stream still encodes as strict cp1252.
     """
     output = sys.stdout if stream is None else stream
     try:
@@ -154,8 +134,7 @@ def _version() -> int:
     try:
         ontology = ontology_version()
     except (OSError, SyntaxError, ValueError) as error:
-        # SyntaxError covers rdflib's BadSyntax on a corrupt sem.ttl — a malformed
-        # bundled document is a compile failure with a message, not a traceback.
+        # SyntaxError covers rdflib's BadSyntax on a corrupt sem.ttl.
         _say(f"{_PROGRAM}: cannot read the bundled ontology: {error}", stream=sys.stderr)
         return ExitCode.FAILURE
 
@@ -167,10 +146,8 @@ def _version() -> int:
 def _adapters() -> int:
     """List the installed adapter plugins (spec 5.1, 5.2).
 
-    Describes the *installation*, not an instance, so it reads no configuration and
-    works outside an instance repository. This is the one command that deliberately
-    imports every discovered plugin: "is this adapter actually usable" is the question
-    it exists to answer, and it cannot be answered from metadata alone.
+    Reads no configuration. The one command that imports every discovered plugin, since
+    whether an adapter is usable cannot be answered from metadata.
     """
     entries = adapters.discover()
     if not entries:
@@ -193,9 +170,7 @@ def _adapters() -> int:
     for name, provider, summary in rows:
         _say(f"{name:<{name_width}}  {provider:<{provider_width}}  {summary}".rstrip())
 
-    # A name two distributions claim is an installation that does not work, even though
-    # every plugin in it imports: `adapter: <name>` cannot be resolved, so the run would
-    # fail where the listing said everything was fine.
+    # A name two distributions claim is unusable even though both plugins import.
     broken.extend(adapters.ambiguities(entries))
 
     if broken:
@@ -207,23 +182,15 @@ def _adapters() -> int:
 
 
 def _summary(adapter: type[BaseAdapter]) -> str:
-    """The adapter's one-line self-description — the first line of its own docstring.
-
-    ``__doc__`` rather than ``inspect.getdoc``, which walks the MRO: an adapter that
-    documents nothing would otherwise be listed as "One source system, normalized into
-    the internal model", which is ``BaseAdapter``'s docstring and reads as the adapter
-    describing itself. An empty column is honest; an inherited sentence is not.
+    """The first line of the adapter's own docstring; empty rather than inherited from
+    ``BaseAdapter``.
     """
     lines = (adapter.__doc__ or "").strip().splitlines()
     return lines[0].strip() if lines else ""
 
 
 def _init(arguments: argparse.Namespace) -> int:
-    """``semprini init`` — bootstrap an instance repository (spec 5.1, 5.7).
-
-    The one command that writes an instance instead of reading one, so it is also the one
-    that does not load configuration first: it creates the file every other command reads.
-    """
+    """``semprini init`` — bootstrap an instance repository (spec 5.1, 5.7)."""
     result = scaffold.init(
         Path(arguments.dir) if arguments.dir else None,
         base_iri=arguments.base_iri,
@@ -236,12 +203,7 @@ def _init(arguments: argparse.Namespace) -> int:
 
 
 def _run(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
-    """``semprini run`` — fetch, compile, write (spec 5.1).
-
-    Every decision belongs to :func:`semprini.run.run`; this reports what it did. The
-    split is the one spec 6.3 requires between the compiler and the surface an operator
-    sees, and it is why a run behaves identically on a laptop and in CI.
-    """
+    """``semprini run`` — fetch, compile, write (spec 5.1)."""
     result = run.run(settings, dry_run=arguments.dry_run)
     for line in result.summary():
         _say(line)
@@ -249,11 +211,8 @@ def _run(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
 
 
 def _check(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
-    """``semprini check`` — every check of spec 6.1, and nothing written (spec 5.1).
-
-    The command CI runs on every pull request, so what it prints is what a reviewer reads:
-    each check by number and name, its findings underneath, and one line saying whether
-    the instance is committable. Warnings appear and do not fail it (spec 6.1.5).
+    """``semprini check`` — every check of spec 6.1, nothing written (spec 5.1). Warnings do not
+    fail it.
     """
     result = validate.check(settings, base=arguments.base)
     for line in result.summary():
@@ -264,11 +223,7 @@ def _check(arguments: argparse.Namespace, settings: config.InstanceConfig) -> in
 def _migrate(arguments: argparse.Namespace, settings: config.InstanceConfig) -> int:
     """``semprini migrate`` — rewrite what is committed for a new release (spec 5.1, 7).
 
-    Writes; the operator then reviews the diff and runs ``semprini check``, which is what
-    says whether the migrated instance is committable. This command deliberately does not
-    run those checks itself: they are ``semprini check``'s, CI already runs them on the
-    resulting pull request, and a migration that reported them would be answering for its
-    own work.
+    Runs none of ``semprini check``'s checks; CI runs them on the resulting pull request.
     """
     result = migrate.migrate(settings, to=arguments.to)
     for line in result.summary():
@@ -277,40 +232,19 @@ def _migrate(arguments: argparse.Namespace, settings: config.InstanceConfig) -> 
 
 
 def _load_config(arguments: argparse.Namespace) -> config.InstanceConfig:
-    """Load the instance's configuration and check its namespace lock (exit code 2).
-
-    Raises rather than returning a code: :func:`main` maps every error to its exit code
-    in one place, which is the CI contract (5.1). ``NamespaceLockError`` is a
-    ``ConfigError``, so both land there as exit 2 — spec 5.1 makes them one category, and
-    the lock is the one configured value an instance may not edit.
-    """
+    """Load the instance's configuration and verify its namespace lock (exit code 2, spec 5.1)."""
     installed = adapters.adapter_names()
-    # Passing `None` skips the adapter-name check. An installation with no adapters at
-    # all cannot judge a name — checking against an empty set would reject every valid
-    # configuration — and that is a real state only until the bundled adapters register
-    # themselves (D2, D3). From then on every installation has some, and a misspelled
-    # `adapter:` is exit 2 naming the key.
+    # None skips the adapter-name check: an installation with no adapters cannot judge one.
     loaded = config.load(known_adapters=installed or None)
-    # Every command aborts on a mismatch rather than minting a second set of IRIs
-    # beside the ID map's; the base IRI is permanent (3.4).
     identity.verify_namespace_lock(loaded)
     return loaded
 
 
 def exit_code_for(error: Exception) -> ExitCode:
-    """The published exit code for an error (spec 5.1).
-
-    One place, because the codes are contract: an adopter's CI branches on them, and a
-    command that invented its own mapping would make "3" mean something different
-    depending on which subcommand produced it. Everything unrecognized is a failure
-    rather than a configuration error, since exit 2 tells an operator to go and edit a
-    file and being wrong about that costs them a search.
-    """
+    """The published exit code for an error (spec 5.1). Anything unrecognized is a failure."""
     if isinstance(error, config.ConfigError):
         return ExitCode.CONFIG
     if isinstance(error, SourceUnreachableError):
-        # The source was down, not wrong: a scheduled compile that hits this is retried,
-        # and nothing about the instance needs a human (spec 5.2).
         return ExitCode.UNREACHABLE
     return ExitCode.FAILURE
 
@@ -321,17 +255,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
 
     if arguments.command is None:
-        # No command is a usage error, not a success: CI must be able to tell the
-        # difference between "nothing to do" and "invoked wrongly".
         parser.print_help(sys.stderr)
         return ExitCode.CONFIG
 
     try:
         return _dispatch(arguments)
     except (IssueError, AdapterError) as error:
-        # Every error the compiler raises deliberately carries what an operator has to
-        # know; a traceback would carry it too, plus forty lines of this package's
-        # internals for them to read past.
         _say(f"{_PROGRAM}: {error}", stream=sys.stderr)
         return exit_code_for(error)
 
@@ -347,8 +276,6 @@ def _dispatch(arguments: argparse.Namespace) -> int:
         return _init(arguments)
 
     if arguments.command in _NEEDS_CONFIG:
-        # A command that will read the instance owes the operator the configuration error
-        # first, with the key that caused it.
         settings = _load_config(arguments)
         if arguments.command == "run":
             return _run(arguments, settings)
@@ -357,8 +284,5 @@ def _dispatch(arguments: argparse.Namespace) -> int:
         if arguments.command == "migrate":
             return _migrate(arguments, settings)
 
-    # Unreachable: argparse rejects any subcommand not declared above, and every declared
-    # one is dispatched. An assertion rather than a message about an unimplemented feature —
-    # there are none left — so that adding a subcommand and forgetting to dispatch it fails
-    # loudly instead of exiting non-zero with no explanation.
+    # argparse rejects undeclared subcommands, so only a forgotten dispatch reaches here.
     raise AssertionError(f"no dispatch for subcommand {arguments.command!r}")

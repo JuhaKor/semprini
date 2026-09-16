@@ -1,16 +1,8 @@
 """Finding installed adapters (spec 5.2).
 
-Adapters are **discovered, not imported**. Nothing in the compiler names an adapter
-module: a distribution declares a ``semprini.adapters`` entry point, and installing it is
-what makes ``adapter: <name>`` a thing an instance may write. The adapters bundled with
-the plane arrive by exactly this route, so there is no privileged path a third party is
-kept off (spec 5.2).
-
-Discovery therefore never imports anything on its own. Listing what is installed is a
-question about metadata, and answering it by importing every plugin would run arbitrary
-third-party code every time a configuration is loaded. Import happens in
-:meth:`AdapterEntry.load`, at the point where an adapter is actually going to be used —
-or in ``semprini adapters``, whose whole job is to report whether the installation works.
+Adapters are discovered through the ``semprini.adapters`` entry-point group, never
+imported by name. Listing reads metadata only; a plugin is imported in
+:meth:`AdapterEntry.load`, at the point it is used.
 """
 
 from __future__ import annotations
@@ -35,7 +27,7 @@ __all__ = [
 ]
 
 ENTRY_POINT_GROUP = "semprini.adapters"
-"""The entry-point group every adapter registers in — bundled or third-party."""
+"""The entry-point group every adapter registers in."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,12 +38,10 @@ class AdapterEntry:
     """The entry-point name, which is what an instance writes as ``adapter:``."""
 
     value: str
-    """``module:attribute`` — kept so that a broken plugin can be reported precisely
-    enough to fix, rather than as "something called ellie does not work"."""
+    """``module:attribute``, for naming a broken plugin precisely."""
 
     distribution: str | None = None
-    """Which installed distribution provides it. ``None`` only for an entry point that
-    reached us outside the metadata machinery, which in practice means a test."""
+    """Which installed distribution provides it; ``None`` outside the metadata machinery."""
 
     version: str | None = None
 
@@ -65,18 +55,16 @@ class AdapterEntry:
         return f"{self.distribution} {self.version}"
 
     def load(self) -> type[BaseAdapter]:
-        """Import the adapter class, refusing anything unusable (spec 5.2).
+        """Import the adapter class (spec 5.2).
 
-        Every refusal here is an installation problem rather than a data problem, and
-        each one is worth a specific message: the operator's next action is to reinstall
-        or uninstall something, and they need to know which distribution to blame.
+        Raises :class:`AdapterLoadError`, naming the distribution, if the import fails, the
+        object is not a concrete :class:`BaseAdapter` subclass, or its ``name`` differs from
+        the registration.
         """
         try:
             loaded = EntryPoint(self.name, self.value, ENTRY_POINT_GROUP).load()
         except Exception as error:
-            # Deliberately broad: this is the moment a third party's module body runs,
-            # and it can fail in any way a Python module can. Whatever it raises, the
-            # operator's problem is the same one and it is not a Semprini traceback.
+            # Broad on purpose: a third party's module body can fail in any way.
             raise AdapterLoadError(
                 f"adapter {self.name!r} from {self.provider} could not be imported "
                 f"({self.value}): {error}"
@@ -106,10 +94,7 @@ class AdapterEntry:
 def discover() -> tuple[AdapterEntry, ...]:
     """Every adapter registration this installation offers, in a stable order.
 
-    Duplicate names are kept rather than resolved. Two distributions claiming one name
-    is a genuine ambiguity — ``adapter: ellie`` would mean different things on two
-    machines — so it is reported where it can be fixed rather than silently decided
-    here (see :func:`load_adapter`).
+    Duplicate names are kept; :func:`load_adapter` and :func:`ambiguities` report them.
     """
     found = [_entry(point) for point in entry_points(group=ENTRY_POINT_GROUP)]
     return tuple(
@@ -128,11 +113,8 @@ def _entry(point: EntryPoint) -> AdapterEntry:
 
 
 def adapter_names() -> frozenset[str]:
-    """The names an instance may write as ``adapter:`` on this installation.
-
-    What :mod:`semprini.config` validates a source's ``adapter`` against (spec 5.1).
-    Names only, and no imports: a typo in one source's configuration must not depend on
-    an unrelated plugin being importable.
+    """The names an instance may write as ``adapter:`` on this
+    installation (spec 5.1). No imports.
     """
     return frozenset(entry.name for entry in discover())
 
@@ -167,10 +149,8 @@ def _ambiguity(name: str, matching: Sequence[AdapterEntry]) -> str:
 def ambiguities(entries: Iterable[AdapterEntry]) -> tuple[str, ...]:
     """One message per entry-point name that more than one distribution claims.
 
-    Shared with :func:`load_adapter` so that ``semprini adapters`` reports the clash in
-    the same words the run will fail with. The command exists to say whether the
-    installation works, and an installation where ``adapter: ellie`` cannot be resolved
-    does not — even though every plugin in it imports perfectly.
+    The same words :func:`load_adapter` fails with, so ``semprini adapters`` reports the
+    clash a run would hit.
     """
     grouped: dict[str, list[AdapterEntry]] = {}
     for entry in entries:
@@ -181,9 +161,5 @@ def ambiguities(entries: Iterable[AdapterEntry]) -> tuple[str, ...]:
 
 
 def create(source: SourceConfig, ctx: RunContext) -> BaseAdapter:
-    """The adapter instance for one configured source (spec 5.1, 5.2).
-
-    Construction only — nothing is fetched, and nothing may be: ``semprini check``
-    constructs adapters purely to call ``validate_config()`` (spec 6.1).
-    """
+    """The adapter instance for one configured source (spec 5.1, 5.2). Nothing is fetched."""
     return load_adapter(source.adapter)(source.name, source.settings, ctx)

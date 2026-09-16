@@ -1,23 +1,8 @@
 """``generated/.report.md`` — the reviewer's summary of a run (spec 5.6).
 
-The compile workflow pastes this file into the pull request it opens (spec 6.2), so it is
-the only part of a compile most people will ever read. Everything here is written for
-that reader: someone deciding whether a diff of a few hundred Turtle lines is the change
-they expected.
-
-Two rules keep it honest.
-
-*It says only what the output says.* Counts, new and changed nodes and the warning
-categories are all derived from the graphs the run produced and the state it replaced —
-never from what an adapter believed it fetched. A report that could disagree with the
-files beside it would be worse than no report.
-
-*It is not rewritten when nothing changed.* A run that produces byte-identical output
-leaves this file alone. Written unconditionally, a no-op compile would rewrite "12 new"
-to "0 new" and open a pull request containing nothing else — which is exactly the empty
-diff the whole design exists to avoid (spec 1.2, 4.3). The report next to a set of
-generated files is therefore always the report of the run that produced them, which is
-also what a reviewer wants it to be.
+Pasted into the pull request the compile workflow opens (spec 6.2). Everything in it is
+derived from the graphs the run produced and the state they replace, never from what an
+adapter said it fetched, and it is not rewritten when nothing changed.
 """
 
 from __future__ import annotations
@@ -49,15 +34,9 @@ __all__ = [
 REPORT_FILE = ".report.md"
 
 LISTING_LIMIT = 20
-"""How many nodes a listing names before it stops counting them out.
+"""How many nodes a listing names before it stops; the count above it is always complete."""
 
-A cap rather than a complete list because the report's destination is a pull request
-description: a first compile of a large instance would otherwise paste thousands of lines
-into it and bury the counts that matter. The count above each listing is always complete.
-"""
-
-# The classes the builder emits (spec 3.2), in the order a reader thinks about them:
-# the schemes an instance is organized into, then what is in them.
+# The classes the builder emits (spec 3.2).
 _CLASS_NAMES: Mapping[URIRef, str] = {
     URIRef(f"{SEM_NAMESPACE}Entity"): "sem:Entity",
     URIRef(f"{SEM_NAMESPACE}Attribute"): "sem:Attribute",
@@ -66,9 +45,7 @@ _CLASS_NAMES: Mapping[URIRef, str] = {
     SKOS.ConceptScheme: "skos:ConceptScheme",
 }
 
-# Missing definitions are reported for exactly the classes spec 6.1's warning names —
-# entities, attributes and taxonomy concepts. A relationship's label is its verb and a
-# scheme's is its title; neither is a term a steward is expected to define.
+# The classes spec 6.1's missing-definition warning names.
 _WANT_DEFINITIONS = (
     URIRef(f"{SEM_NAMESPACE}Entity"),
     URIRef(f"{SEM_NAMESPACE}Attribute"),
@@ -80,19 +57,12 @@ _STATUS = URIRef(f"{SEM_NAMESPACE}status")
 
 @dataclass(frozen=True, slots=True, order=True)
 class NodeRef:
-    """One node as the report names it: its label, and its IRI shortened.
-
-    Ordered by label first, because that is the column a reader scans; the IRI breaks
-    ties, so two nodes sharing a label still have one fixed order (spec 5.5's determinism
-    applies to this file too).
-    """
+    """One node as the report names it: its label, then its shortened IRI as a tie-break."""
 
     label: str
 
     iri: str
-    """Shortened against the instance's prefixes where possible — ``c:7f3a…`` rather than
-    the full IRI, because a reviewer reads this in a pull request and the prefixed form is
-    the one that also appears in the Turtle beside it."""
+    """Shortened against the instance's prefixes where possible."""
 
     def __str__(self) -> str:
         return f"{_inline(self.label)} — `{self.iri}`"
@@ -108,21 +78,14 @@ class ClassCount:
 class FileCount:
     name: str
     subjects: int
-    """Nodes this file *defines* — the ones it carries a label for. A file may mention a
-    node it does not define; the ``sem:relatesTo`` shortcut does (spec 4.2)."""
+    """Nodes this file defines, meaning carries a label for (spec 4.2)."""
 
     triples: int
 
 
 @dataclass(frozen=True, slots=True, order=True)
 class NameClash:
-    """Several nodes of one class sharing a label (spec 5.3, 5.6).
-
-    Not an error: two source systems legitimately call two different things "Account". It
-    is reported because it is the one ambiguity a reviewer can resolve and the compiler
-    cannot — identity comes from source keys, so two same-named objects stay two objects
-    however obvious the duplication looks to a human.
-    """
+    """Several nodes of one class sharing a label (spec 5.3, 5.6). A warning, not an error."""
 
     label: str
     term: str
@@ -131,11 +94,7 @@ class NameClash:
 
 @dataclass(frozen=True, slots=True)
 class SourceSummary:
-    """What one configured source contributed (spec 5.6).
-
-    Supplied by the caller rather than derived here: only the run knows which adapters it
-    invoked and what they said. :func:`semprini.run.run` fills these in as it fetches.
-    """
+    """What one configured source contributed (spec 5.6). Supplied by :func:`semprini.run.run`."""
 
     name: str
     """The source's configured ``name``, as it appears in ``sem:sourceRef`` (spec 5.1)."""
@@ -143,8 +102,7 @@ class SourceSummary:
     adapter: str
     objects: int
     note: str = ""
-    """Anything the adapter wants a reviewer to know: models fetched, rows read, a
-    deprecation warning from the source system."""
+    """Anything the adapter wants a reviewer to know."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -157,18 +115,11 @@ class RunReport:
     files: tuple[FileCount, ...] = ()
     new: tuple[NodeRef, ...] = ()
     changed: tuple[NodeRef, ...] = ()
-    """Nodes this run says something different about, **excluding** the ones it
-    deprecated. A deprecation is a change — its ``sem:status`` moved — but a reviewer
-    reading "Changed 12 · Deprecated 3" needs to know whether that is twelve or fifteen
-    nodes, so the three categories partition the nodes between them (spec 5.6)."""
+    """Nodes this run says something different about, excluding the ones it deprecated,
+    so that the three categories partition the nodes (spec 5.6)."""
 
     deprecated: tuple[NodeRef, ...] = ()
-    """Nodes this run moved to ``sem:status "deprecated"`` (spec 3.5).
-
-    Read out of the graphs like everything else here, not taken from the caller: deciding
-    that an object is gone belongs to :mod:`semprini.lifecycle`, but the decision is
-    visible in the output once made, and a report derived from the files it describes
-    cannot contradict them."""
+    """Nodes this run moved to ``sem:status "deprecated"`` (spec 3.5), read from the graphs."""
 
     missing_definitions: tuple[NodeRef, ...] = ()
     name_clashes: tuple[NameClash, ...] = ()
@@ -176,20 +127,15 @@ class RunReport:
 
     @property
     def warnings(self) -> int:
-        """How many warnings the run raised — what a reviewer scans for first."""
+        """How many warnings the run raised."""
         return len(self.missing_definitions) + len(self.name_clashes)
 
     def render(self) -> str:
-        """The report as Markdown, ending in exactly one newline.
-
-        Deterministic in the same sense the Turtle is (spec 5.5): no timestamps, no run
-        identifiers, nothing that varies between two runs of one input.
-        """
+        """The report as Markdown, ending in exactly one newline. No timestamps (spec 5.5)."""
         return "\n".join(chain.from_iterable(self._sections())).rstrip("\n") + "\n"
 
     def to_file(self) -> OutputFile:
-        """The report as one of the run's output files, written by the same writer as the
-        Turtle so that nothing can disagree about encoding or line endings."""
+        """The report as one of the run's output files."""
         return OutputFile(name=REPORT_FILE, text=self.render())
 
     # ------------------------------------------------------------------ rendering
@@ -309,12 +255,7 @@ def _more(total: int) -> list[str]:
 
 
 def table(header: Sequence[str], rows: Sequence[Sequence[str]], *, empty: str = "") -> list[str]:
-    """One Markdown table, every cell escaped (:func:`_cell`).
-
-    Public because the migration report renders tables too (spec 7), and a second
-    implementation would be a second answer to "what happens to a label holding a
-    pipe" — in a file that is pasted verbatim into a pull request description.
-    """
+    """One Markdown table, every cell escaped. Shared with the migration report (spec 7)."""
     if not rows and empty:
         return [empty]
     return [
@@ -325,13 +266,7 @@ def table(header: Sequence[str], rows: Sequence[Sequence[str]], *, empty: str = 
 
 
 def _inline(text: str) -> str:
-    """Free text as one line of Markdown.
-
-    Labels and adapter notes are whatever a source system holds — an Excel cell with a
-    line break in it, a description someone pasted — and this file is rendered verbatim
-    into a pull request description (spec 6.2). A newline in a label would silently end
-    the bullet list it was in, so runs of whitespace collapse to one space.
-    """
+    """Free text as one line of Markdown: a newline in a label would end its bullet list."""
     return " ".join(text.split())
 
 
@@ -354,14 +289,9 @@ def create(
 ) -> RunReport:
     """Derive the report from what a run produced (spec 5.6).
 
-    ``files`` are the run's output files as :func:`semprini.build.build` returned them,
-    and ``previous`` the state they replace — the same graph the builder used to carry
-    ``dcterms:modified`` forward, so that "changed" in the report and a refreshed date in
-    the Turtle can never tell different stories.
-
-    ``sources`` is supplied rather than derived: only the run knows which adapters it
-    invoked and what they said, and none of it is visible in the emitted graphs.
-    ``compiler`` and ``ontology`` are injected only so that a test can pin them.
+    ``files`` are the run's output files and ``previous`` the state they replace, the
+    same graph the builder dated against. ``sources`` is supplied by the run.
+    ``compiler`` and ``ontology`` let a test pin the versions.
     """
     graphs = {file.name: file.graph for file in files if file.graph is not None}
     union = Graph()
@@ -381,10 +311,6 @@ def create(
             sorted(
                 FileCount(
                     name=name,
-                    # Counted from the file's own labels rather than by asking every
-                    # node in the instance whether it is in this file: the second costs
-                    # one store lookup per node per file, and this module is written for
-                    # instances large enough to need LISTING_LIMIT.
                     subjects=len(set(g.subjects(SKOS.prefLabel))),
                     triples=len(g),
                 )
@@ -405,31 +331,20 @@ def create(
 
 
 def _labels(graph: Graph) -> Mapping[URIRef, str]:
-    """Every node the run *defines*, with the label the report calls it by.
-
-    Carrying a ``skos:prefLabel`` is what defines a node: a file may state something about
-    a node it does not define — the ``sem:relatesTo`` shortcut does (spec 4.2) — and the
-    report counts a node once, where it lives.
+    """Every node the run defines (carries a ``skos:prefLabel`` for), with its report label (spec
+    4.2).
     """
     labels: dict[URIRef, str] = {}
     for subject, object_ in graph.subject_objects(SKOS.prefLabel):
         if not isinstance(subject, URIRef):  # pragma: no cover - the serializer refuses these
             continue
-        # Sorted rather than "the first one rdflib yields": a node with labels in several
-        # languages must not have its report entry decided by iteration order.
+        # min(), not the first rdflib yields: iteration order must not reach the report.
         labels[subject] = min(str(object_), labels.get(subject, str(object_)))
     return labels
 
 
 def _types(graph: Graph, labels: Mapping[URIRef, str]) -> Mapping[URIRef, URIRef]:
-    """The one class each node is counted as.
-
-    Chosen with ``min`` for the same reason a label is: rdflib holds a subject's objects
-    in a set, so a node carrying two types would otherwise have its class count, its
-    clash grouping and its missing-definition warning decided by string hashing —
-    identical all day on one machine and different on the next. The builder emits exactly
-    one type per node, but :func:`create` is public and takes whatever graphs it is given.
-    """
+    """The one class each node is counted as; ``min`` over its types, for determinism."""
     types: dict[URIRef, URIRef] = {}
     for subject in labels:
         for object_ in graph.objects(subject, RDF.type):
@@ -443,8 +358,7 @@ def _classes(types: Mapping[URIRef, URIRef]) -> tuple[ClassCount, ...]:
     for term in types.values():
         name = _CLASS_NAMES.get(term, str(term))
         counts[name] = counts.get(name, 0) + 1
-    # Every class the metamodel defines is listed even at zero: "0 relationships" is
-    # information — it says the run found none, not that the report forgot to look.
+    # Every class is listed even at zero.
     return tuple(ClassCount(term=term, objects=count) for term, count in sorted(counts.items()))
 
 
@@ -454,12 +368,7 @@ def _new(current: Graph, previous: Graph | None) -> Iterable[URIRef]:
 
 
 def _changed(current: Graph, previous: Graph | None) -> Iterable[URIRef]:
-    """Nodes this run says something different about than the committed output does.
-
-    Compared through :func:`semprini.build.statements_by_subject`, which is also what
-    decides whether ``dcterms:modified`` is carried forward — one definition of "changed",
-    so the report and the dates in the Turtle cannot disagree.
-    """
+    """Nodes this run says something different about, by the same rule that dates them."""
     if previous is None:
         return ()
     before = statements_by_subject(previous)
@@ -471,15 +380,8 @@ def _changed(current: Graph, previous: Graph | None) -> Iterable[URIRef]:
 
 
 def _deprecated(current: Graph, previous: Graph | None) -> Iterable[URIRef]:
-    """Nodes this run marked deprecated that the committed output does not (spec 3.5).
-
-    Newly deprecated, not every deprecated node: a node deprecated three runs ago is
-    carried forward unchanged, and listing it again in every report afterwards would make
-    the one section a reviewer reads to see what a run *did* grow without bound.
-    """
+    """Nodes newly marked deprecated by this run (spec 3.5)."""
     if previous is None:
-        # A first compile has nothing to have deprecated: every node it writes is new,
-        # and lifecycle can only retain what a previous run wrote.
         return ()
     before = frozenset(_deprecations(previous))
     return (subject for subject in _deprecations(current) if subject not in before)
@@ -506,12 +408,7 @@ def _clashes(
     types: Mapping[URIRef, URIRef],
     prefixes: Mapping[str, str],
 ) -> tuple[NameClash, ...]:
-    """Nodes of one class whose labels differ only by case, if at all.
-
-    Compared case-insensitively because "Customer" and "customer" are the same ambiguity
-    to the steward who has to resolve them, and within one class because a taxonomy value
-    sharing a name with the entity it classifies is ordinary rather than suspicious.
-    """
+    """Nodes of one class whose labels differ only by case, if at all."""
     groups: dict[tuple[URIRef, str], list[URIRef]] = {}
     for subject, label in labels.items():
         term = types.get(subject)
@@ -521,8 +418,6 @@ def _clashes(
     return tuple(
         sorted(
             NameClash(
-                # The labels differ only in case, so any of them names the group; the
-                # smallest is chosen rather than an arbitrary one.
                 label=min(labels[subject] for subject in subjects),
                 term=_CLASS_NAMES.get(term, str(term)),
                 nodes=_nodes(subjects, labels, prefixes),
@@ -547,13 +442,7 @@ def _nodes(
 
 
 def _short(iri: str, prefixes: Mapping[str, str]) -> str:
-    """``https://…/concepts/7f3a…`` as ``c:7f3a…`` where the prefixes allow it.
-
-    Display only, and deliberately separate from the serializer's own abbreviation (spec
-    5.5): that one decides what parses, this one decides what reads well in a pull
-    request. It leans on the same safe-local-name rule so the two cannot claim a term is
-    abbreviable when the other would not write it that way.
-    """
+    """``https://…/concepts/7f3a…`` as ``c:7f3a…`` where the prefixes allow it. Display only."""
     for prefix, namespace in sorted(prefixes.items(), key=lambda item: -len(item[1])):
         if iri.startswith(namespace):
             local = iri[len(namespace) :]

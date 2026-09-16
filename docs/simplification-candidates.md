@@ -133,6 +133,8 @@ Spec: §5.1 (the credentials paragraph — keep the rule, drop "this is enforced
 
 ### A4. The migration framework
 
+NOTE: before starting this, confirm if we really want to remove this!
+
 `src/semprini/migrate/` is 942 lines and `MIGRATIONS = ()`. What `semprini migrate` does
 today is: refuse a manifest mismatch, re-serialize every committed graph, refresh the
 ontology copy, restamp the manifest, write a migration report. The snapshot-and-four-refusals
@@ -306,7 +308,7 @@ still fails with the offending key. Battery: `tools/mutations/c_source_config.py
 
 ---
 
-## D. Prose
+## D. Prose — **done**
 
 - `src/semprini/` holds 3,825 lines of docstrings and comments against 5,811 of code. Most
   argue design rationale at line level and cite spec sections (`validate.py` alone cites
@@ -319,6 +321,16 @@ still fails with the offending key. Battery: `tools/mutations/c_source_config.py
 - `TASKS.md` is 3,048 lines, most of it completed phases. Archive A–G into
   `docs/history/` and keep the open pilot tasks and decision gates at the top level.
 
+**Done** (2026-09-16). Every docstring and comment under `src/semprini/` was trimmed to the
+contract — what it takes, returns and raises — with a spec section reference where the
+reasoning lives; no behaviour changed. Docstrings went from 2,863 lines to 1,113 and comments
+from 649 to 177, a tree of 11,130 lines to 8,786. The `hash=False` explanation now appears
+once, in `model.py`'s module docstring. The rationale that was removed is in git history and,
+where it was load-bearing, in the spec. Three battery anchors that were pinned to deleted
+comments were re-pointed (`a2_namespace`, `f3_validate`, `g1_scaffold`); all nine batteries
+apply. `TASKS.md` is 345 lines; phases A–G and their sequencing notes are verbatim in
+`docs/history/tasks-phases-a-g.md`, and `CLAUDE.md` points there.
+
 ---
 
 ## Suggested order
@@ -329,7 +341,9 @@ still fails with the offending key. Battery: `tools/mutations/c_source_config.py
 3. **B1, B2, B3** as mechanical refactors under the mutation batteries
    (`python tools/mutate.py <battery> --list` first; anchors will move).
 4. **B4–B9** opportunistically, whenever the file in question is open for another reason.
-5. **D** last, since it is safe at any time and easiest once the code has settled.
+5. ~~**D** last, since it is safe at any time and easiest once the code has settled.~~ Done
+   ahead of A3–A5 and B; the batteries, not the docstrings, now anchor the code, so later
+   refactors cost only anchor updates.
 
 After A1 and A4 land, re-run the line count. The expectation is a source tree near 7,000
 lines and a test suite near 11,000, with every core guarantee (determinism check, ID map
